@@ -1,0 +1,4 @@
+title = "Homestay showcase secret-scanning policy"
+
+[extend]
+useDefault = true

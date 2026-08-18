@@ -1,0 +1,2598 @@
+{
+  "files": [
+    {
+      "executable": false,
+      "path": ".env.example",
+      "sha256": "13dd3706ff04bdec9588b472ab0e56513d3bc3395980b6dad48c52329adde122",
+      "size": 469
+    },
+    {
+      "executable": false,
+      "path": ".github/workflows/ci.yml",
+      "sha256": "1bc78ed8cd13b654e171377c08b31c8c5206b9d4b66d98dfaab5a0ea8b204804",
+      "size": 954
+    },
+    {
+      "executable": false,
+      "path": ".gitignore",
+      "sha256": "72cd9e8ce34690ae32bb9c6530ad431537219be5047fc63dcccd86a713567a65",
+      "size": 199
+    },
+    {
+      "executable": false,
+      "path": ".gitleaks.toml",
+      "sha256": "afe848fc9bc6a47127abd821f9f3a81548e229d332d0bce6390c1c0d45b63140",
+      "size": 79
+    },
+    {
+      "executable": false,
+      "path": "LICENSE",
+      "sha256": "f1f640858c19aae8f4fa61a228c725ec3b2cb37f11e89c95197fbdbd944dcda3",
+      "size": 1087
+    },
+    {
+      "executable": false,
+      "path": "README.md",
+      "sha256": "812b6ce8c25fca26dec35955062589751d9e8d43b8b2e193583a370c921dc67c",
+      "size": 1930
+    },
+    {
+      "executable": false,
+      "path": "backend/Dockerfile",
+      "sha256": "80337af294433c3760b479e960c802af0d9b93455d88cc921de1c416977822ae",
+      "size": 839
+    },
+    {
+      "executable": false,
+      "path": "backend/alembic.ini",
+      "sha256": "6ec0754abebfe1e54811e2a40b322f6e9a50e5ed42b015237462a575ed904d65",
+      "size": 627
+    },
+    {
+      "executable": false,
+      "path": "backend/app/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    {
+      "executable": false,
+      "path": "backend/app/alembic/env.py",
+      "sha256": "931cb08fa8eb670ada098ad71e0556c1c0d98d4958fd75737aec1415b81e05e7",
+      "size": 2089
+    },
+    {
+      "executable": false,
+      "path": "backend/app/alembic/script.py.mako",
+      "sha256": "304a8bfb6a804e5493f5300e79882c70c9f5bb2e87512f4d16f0e097dddd323f",
+      "size": 635
+    },
+    {
+      "executable": false,
+      "path": "backend/app/alembic/versions/.gitkeep",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    {
+      "executable": false,
+      "path": "backend/app/alembic/versions/075db9ba3b94_v2_4_settlement_cost_share_breakdown_.py",
+      "sha256": "04d23631e88e84fe39dde0d3e134fa3e8afd49c24bc03ba9a1cdca52ca10a074",
+      "size": 1059
+    },
+    {
+      "executable": false,
+      "path": "backend/app/alembic/versions/2735db4afb5b_issue_3_guest_phone_nullable.py",
+      "sha256": "bfa8eeaec00688bc44a1f15e6ac4474dc344a4e1547e410b907c0cfcbd2113ef",
+      "size": 1484
+    },
+    {
+      "executable": false,
+      "path": "backend/app/alembic/versions/3fef7e5887be_v2_1_expense_categories_share_ratio_.py",
+      "sha256": "aac49f4e80473afdb0ed59b087f6b3d54c32ddf667dc2c0581af07792f96da40",
+      "size": 2208
+    },
+    {
+      "executable": false,
+      "path": "backend/app/alembic/versions/5c0b1a2d3e4f_add_smart_lock_tables.py",
+      "sha256": "9612fbe86a13f1f153b3c312075be3eec50fd5e2adcd6bcae6c4c93df55bc0c1",
+      "size": 4238
+    },
+    {
+      "executable": false,
+      "path": "backend/app/alembic/versions/925d967c7c54_v2_6_seed_default_cost_share_rules.py",
+      "sha256": "61bbfb36d2ff76b199707b5c2a8d621cab3f42235ecf7ae6ad9a931823ff80b1",
+      "size": 2746
+    },
+    {
+      "executable": false,
+      "path": "backend/app/alembic/versions/a1b2c3d4e5f6_order_room_metadata.py",
+      "sha256": "e65346443280e0dd17a7b57204ffbb1d1c791d7366aeb61cebd99037a1b5bbf1",
+      "size": 884
+    },
+    {
+      "executable": false,
+      "path": "backend/app/alembic/versions/a7c1e2f3b4d5_add_room_previous_status.py",
+      "sha256": "51caa36163dd78e53bc16da20bc208d9a1aa1848878888522dd83469014469b9",
+      "size": 1061
+    },
+    {
+      "executable": false,
+      "path": "backend/app/alembic/versions/a7c3e1f9b2d4_add_cleaning_requests.py",
+      "sha256": "a1e85ead1017818f0732f37c49441288f806533cf40de0dcafb33d05fbe768df",
+      "size": 2810
+    },
+    {
+      "executable": false,
+      "path": "backend/app/alembic/versions/a7c9b2e4f1d8_payment_soft_delete.py",
+      "sha256": "8eb271b93a5f4f1be04bd5b927899246565d0a2c72efed40ff06df7a64001192",
+      "size": 1460
+    },
+    {
+      "executable": false,
+      "path": "backend/app/alembic/versions/a814bypms01_company_sponsored_stays.py",
+      "sha256": "6fa2b07f8e617df29dbedeaa28b530d05937afa0fa28396db432206aab132fb6",
+      "size": 27963
+    },
+    {
+      "executable": false,
+      "path": "backend/app/alembic/versions/a814syncconf_order_sync_conflicts.py",
+      "sha256": "7fa436f2d83fc23aac766bc631d8dcf0b04840276a75c33678410ba64e55a188",
+      "size": 5034
+    },
+    {
+      "executable": false,
+      "path": "backend/app/alembic/versions/a817pg16_task10_schema_parity.py",
+      "sha256": "23ad3a82716c35b6e601ebf22fe7f565ad63440d77843ae0d90e2335ff65e1d4",
+      "size": 5975
+    },
+    {
+      "executable": false,
+      "path": "backend/app/alembic/versions/a817pg17_fix_snapshot_trigger_pg16.py",
+      "sha256": "8364e2005afe5bbed2f8362ceca605388643100448d97f5a11a7657da694f90a",
+      "size": 5039
+    },
+    {
+      "executable": false,
+      "path": "backend/app/alembic/versions/a817srcovr_admin_source_price_override.py",
+      "sha256": "5039bd0c242214bac8a01ec680a001dafe417caa5b42e789e13fa884ebbef857",
+      "size": 9080
+    },
+    {
+      "executable": false,
+      "path": "backend/app/alembic/versions/a9f1_owner_hide_amounts.py",
+      "sha256": "6f67a6a8cbaf33d9ff924b9561b37ee16ceff42a602a9ee27958d9c6259e9f2e",
+      "size": 1683
+    },
+    {
+      "executable": false,
+      "path": "backend/app/alembic/versions/b56beadd972a_baseline_issue_1.py",
+      "sha256": "696e025cb761e91f6a83d688b3cc356fca23949612ee7b503ea19d953b4d9436",
+      "size": 15823
+    },
+    {
+      "executable": false,
+      "path": "backend/app/alembic/versions/b6c7d8e9f0a1_hosting_leads_table.py",
+      "sha256": "e2191f098bfbbe29ca8d2f6e00656c49180fda961095f71719cfdc29d09e6305",
+      "size": 1462
+    },
+    {
+      "executable": false,
+      "path": "backend/app/alembic/versions/b8d1e4f2a6c7_add_task_cleaning_start.py",
+      "sha256": "e3f0bcb769a66295ee796be99496477122c38bb47bd96d0e511d9d2863649bfc",
+      "size": 850
+    },
+    {
+      "executable": false,
+      "path": "backend/app/alembic/versions/billrecon0802_recon_tables.py",
+      "sha256": "7086cb6852c2c2fa30b1b548ea81b47fd0b1061ab08d921210939d92baa84c20",
+      "size": 3142
+    },
+    {
+      "executable": false,
+      "path": "backend/app/alembic/versions/c1d2e3f4a5b6_expand_channel_enum_v2.py",
+      "sha256": "ec17c274d48503b2803d8abd5183876e7ce24ea5facfa251c65306b6f8ea2df2",
+      "size": 2047
+    },
+    {
+      "executable": false,
+      "path": "backend/app/alembic/versions/c8d9e0f1a2b3_add_fliggy_channel.py",
+      "sha256": "fd72cc2b517f3060d319c596b13f60ceaf0ff6ed884510c5a30c0d14e5183ac5",
+      "size": 970
+    },
+    {
+      "executable": false,
+      "path": "backend/app/alembic/versions/c9f2a7b3e1d5_add_order_room_checked_out_at.py",
+      "sha256": "054b1c7d4038e915253e667af62927c9f8aa83cebe29fcb2d8b0d95bd6afc1dc",
+      "size": 920
+    },
+    {
+      "executable": false,
+      "path": "backend/app/alembic/versions/d2b4f6a8c1e3_add_stay_group_id.py",
+      "sha256": "9f0f5ee5ebf83b3d3a717c707f7e899d56a0add77bba741a2435518393f65f23",
+      "size": 600
+    },
+    {
+      "executable": false,
+      "path": "backend/app/alembic/versions/d2e3f4a5b6c7_add_trial_stay_channel.py",
+      "sha256": "4179d05f0202308b55aa735f7bd1ba3d821b19b734311cde437e309205b289b7",
+      "size": 1028
+    },
+    {
+      "executable": false,
+      "path": "backend/app/alembic/versions/da25ebecffd5_owner_parent_account.py",
+      "sha256": "974042510763ebffc4ce483feb9d0bc86caf4233f528e2fbdcc7e9e4f49352ad",
+      "size": 876
+    },
+    {
+      "executable": false,
+      "path": "backend/app/alembic/versions/db1e9fb8cd5d_v2_2_roomcostsharerule_table.py",
+      "sha256": "f49f55569b6014fc01d2092b9637d1871b0ed0f790b524121494d3f1fc779129",
+      "size": 2983
+    },
+    {
+      "executable": false,
+      "path": "backend/app/alembic/versions/dc4493008dc2_issue_6_booking_type_share_ratio_trial_.py",
+      "sha256": "31d78fd13fd2baffc891a49b315d42df1f1159fb2e737c9161d07422870ffadd",
+      "size": 2173
+    },
+    {
+      "executable": false,
+      "path": "backend/app/alembic/versions/e3c5a9d1f2b4_add_order_room_checked_in_at.py",
+      "sha256": "85fbb4670c3f3231344324b0cf87e7278028ccbba9396352a5ea3b85cb14b7be",
+      "size": 986
+    },
+    {
+      "executable": false,
+      "path": "backend/app/alembic/versions/e3f4a5b6c7d8_order_room_daily_prices.py",
+      "sha256": "057180c696fcb3187eb0027dab8691ed4fa3782b493604d0e111c88d642058f7",
+      "size": 2679
+    },
+    {
+      "executable": false,
+      "path": "backend/app/alembic/versions/e6031ed97daf_merge_smart_lock_into_main.py",
+      "sha256": "6b00804aef8b1eff5b8103f272b816acb481d2849289fd053d049d6736370f67",
+      "size": 537
+    },
+    {
+      "executable": false,
+      "path": "backend/app/alembic/versions/f1a2b3c4d5e6_door_code_retry_backoff.py",
+      "sha256": "716edfbc02b821902469593c4a58fa01282745f84c1ae730964a39531cf7ad93",
+      "size": 1203
+    },
+    {
+      "executable": false,
+      "path": "backend/app/alembic/versions/f4a8c1b3e7d2_multi_room_order.py",
+      "sha256": "e28b6a5f55d9610d209e70ef3766003c8c85fc806a86191f590d08d755afa540",
+      "size": 4950
+    },
+    {
+      "executable": false,
+      "path": "backend/app/alembic/versions/f5b9c2d7e3a1_deposit_returned_and_reorder_payment.py",
+      "sha256": "ee856ced2ef3a29568cd1c8cd4141f0fbf8ebc36da5322b071e86cb94e7893d6",
+      "size": 1927
+    },
+    {
+      "executable": false,
+      "path": "backend/app/alembic/versions/f7a1c2b3d4e5_service_fee_config_and_flag.py",
+      "sha256": "14127034079a2951cb61e5cd1271a445d99e8304e652865de7b85f3f94ce218e",
+      "size": 1907
+    },
+    {
+      "executable": false,
+      "path": "backend/app/alembic/versions/f7a2c1b4d8e9_add_lock_events_battery_alerted.py",
+      "sha256": "911a44341d2c50b99b2d33e7cc27028a293b2d345ad2d730c5aeefeb54611d47",
+      "size": 1822
+    },
+    {
+      "executable": false,
+      "path": "backend/app/alembic/versions/f8b3d5a1c9e2_settlement_item_owner_level.py",
+      "sha256": "265649a042285809d3dade295f93f59f85e2ae14c9551fe04c866e2c8e1bfb99",
+      "size": 1394
+    },
+    {
+      "executable": false,
+      "path": "backend/app/alembic/versions/v2_7_seed_water_proc.py",
+      "sha256": "acc8032559ed8efa7ff75bf4a9217b16bcaba186edbd784fb27e580ae1794164",
+      "size": 2214
+    },
+    {
+      "executable": false,
+      "path": "backend/app/alembic/versions/v2_7_water_prewash_expense.py",
+      "sha256": "e54af55d1eae85a92267d98ed17b95248213d43de9b0106952b6133c10b65e77",
+      "size": 1560
+    },
+    {
+      "executable": false,
+      "path": "backend/app/api/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    {
+      "executable": false,
+      "path": "backend/app/api/v1/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    {
+      "executable": false,
+      "path": "backend/app/api/v1/assistant.py",
+      "sha256": "ce6f6624345c0635c931ffc4cae6eeb723bd2f44c1b629e10ad4f30d0f2a94a3",
+      "size": 1293
+    },
+    {
+      "executable": false,
+      "path": "backend/app/api/v1/audit.py",
+      "sha256": "d596a9f0a485302d2c625901ecc1e1cf3d05b906a2d71b3c24ced7b5e48feb87",
+      "size": 1516
+    },
+    {
+      "executable": false,
+      "path": "backend/app/api/v1/auth.py",
+      "sha256": "3c8d42a90d37c53c061bf28384fd941b06c045d14955b20779b476057083ba70",
+      "size": 14059
+    },
+    {
+      "executable": false,
+      "path": "backend/app/api/v1/billing_recon.py",
+      "sha256": "90ccab424955d23eb0d00590fe49a490858a6c06efe4b4f98bab8e21a2c7922a",
+      "size": 9550
+    },
+    {
+      "executable": false,
+      "path": "backend/app/api/v1/booking.py",
+      "sha256": "bb96d51d7d53e4efe75efcdb650002a00a6765d60643aafc4babfe3bfdcaaee0",
+      "size": 12938
+    },
+    {
+      "executable": false,
+      "path": "backend/app/api/v1/customer_auth.py",
+      "sha256": "b4ad5637537d8649d2740cf2b4cb13332802995fbd45711bc21832b81e33ca04",
+      "size": 4334
+    },
+    {
+      "executable": false,
+      "path": "backend/app/api/v1/dashboard.py",
+      "sha256": "1e7223e65468a919f2563268375bad6e69b7e39b6519b851c8a87b3e86a3ec9e",
+      "size": 23854
+    },
+    {
+      "executable": false,
+      "path": "backend/app/api/v1/deposit_receipt.py",
+      "sha256": "39051bb32d24b595237d8b989a474f1ce94194cbec60dbc8650166132f1ea294",
+      "size": 6351
+    },
+    {
+      "executable": false,
+      "path": "backend/app/api/v1/export.py",
+      "sha256": "29361f2ca1194a37d8ea6ce3cd7f7157da66d34b0ec6d7e9741d9a0d9118cf25",
+      "size": 25194
+    },
+    {
+      "executable": false,
+      "path": "backend/app/api/v1/feishu_callback.py",
+      "sha256": "1d54d1e9ec4cfe6bae020964869fea0272e97815542cf78aaebc6b6c63f4e5e7",
+      "size": 2808
+    },
+    {
+      "executable": false,
+      "path": "backend/app/api/v1/finance.py",
+      "sha256": "7e6aef749213fe3c2cbac327605f3192fb2c107b7f8e5fa0d7c490d8960a126c",
+      "size": 57471
+    },
+    {
+      "executable": false,
+      "path": "backend/app/api/v1/guests.py",
+      "sha256": "abfa63ef1e59125c2a88db4c5110d047f49b8aa4716a71255af14ad3df7b4e14",
+      "size": 4920
+    },
+    {
+      "executable": false,
+      "path": "backend/app/api/v1/hosting_leads.py",
+      "sha256": "28f5dc3da1d71d9a3206b1ee673cf4f8bbccf1d1de9c65466d7fc3a5767bdc0b",
+      "size": 4644
+    },
+    {
+      "executable": false,
+      "path": "backend/app/api/v1/lock_events.py",
+      "sha256": "a76184c7e9ec82ee9ce6d0fca1cb3e0bacaf78a0cc7a6bd7c1da3f5e80afaf5d",
+      "size": 1192
+    },
+    {
+      "executable": false,
+      "path": "backend/app/api/v1/notifications.py",
+      "sha256": "bdcba0d7ee622d468d83193934f1e18fd3ab1601e4d5548b21d1502cea4dade3",
+      "size": 12430
+    },
+    {
+      "executable": false,
+      "path": "backend/app/api/v1/orders.py",
+      "sha256": "49ee44d62a9b86af074bd2a4600029087dbc4be1660e328757f168998858d72a",
+      "size": 148821
+    },
+    {
+      "executable": false,
+      "path": "backend/app/api/v1/owner_portal.py",
+      "sha256": "abecfc66e114999fad2491de9f5f2dbfd30d393966800ca7291821f403048efd",
+      "size": 40037
+    },
+    {
+      "executable": false,
+      "path": "backend/app/api/v1/owners.py",
+      "sha256": "6972b72f47941970769904c86b4053b0223542a8a1362b47441e11a44f635eb6",
+      "size": 11275
+    },
+    {
+      "executable": false,
+      "path": "backend/app/api/v1/reconciliation.py",
+      "sha256": "d22e0aa6e94063d10ae78438cd6ab6ff094bba230eeb92f4c3f7a65d18854d0a",
+      "size": 26643
+    },
+    {
+      "executable": false,
+      "path": "backend/app/api/v1/room_blocks.py",
+      "sha256": "4e6927d9f21500e70915c8de8b469cbb54d7f6d91193b36e4fbbb4dd8b54609f",
+      "size": 5696
+    },
+    {
+      "executable": false,
+      "path": "backend/app/api/v1/rooms.py",
+      "sha256": "64c4516a63c841d4498dec7c4153c12ba80e9e26c436fed143d13309d6e3ee3a",
+      "size": 35914
+    },
+    {
+      "executable": false,
+      "path": "backend/app/api/v1/search.py",
+      "sha256": "e98e8279db6623dd17c7aa66e74b9cadc8bbaba7ae07e73dd5a20ddbf3b29e38",
+      "size": 3026
+    },
+    {
+      "executable": false,
+      "path": "backend/app/api/v1/settlements.py",
+      "sha256": "883bca7aabba2998d8de52fa1e9acd5888f3878bc3dbe57d96ab4d6abf522d64",
+      "size": 30720
+    },
+    {
+      "executable": false,
+      "path": "backend/app/api/v1/staff_auth.py",
+      "sha256": "681b0ea81b77689495bfca68614490b55e3de4c8d60713f506e47d2381459aa5",
+      "size": 3189
+    },
+    {
+      "executable": false,
+      "path": "backend/app/api/v1/staff_portal.py",
+      "sha256": "f2911c3ec647a8785bb0a8ba8cca5a135007d4d1b585498352a69d56d844dc47",
+      "size": 35165
+    },
+    {
+      "executable": false,
+      "path": "backend/app/api/v1/tasks.py",
+      "sha256": "6ea9cb085c001ea7ef599116aad94e84af54eaf1b0ce2f04926c1ee987546f63",
+      "size": 13339
+    },
+    {
+      "executable": false,
+      "path": "backend/app/api/v1/unified_auth.py",
+      "sha256": "38e77d0f20413f37ddd6cddd62c86f9eae56189b0eee853b82d020baf53f320e",
+      "size": 6092
+    },
+    {
+      "executable": false,
+      "path": "backend/app/core/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    {
+      "executable": false,
+      "path": "backend/app/core/auth_handoff.py",
+      "sha256": "90c2425e5e2f14a9a8fb65636759d8d5583436ffded029d0439fc2481bb855bd",
+      "size": 1925
+    },
+    {
+      "executable": false,
+      "path": "backend/app/core/cleaning_pricing.py",
+      "sha256": "035bfa9f383296647bed62d2772426a6a6b49cc129c99cadb984f1f3908d4eb8",
+      "size": 1033
+    },
+    {
+      "executable": false,
+      "path": "backend/app/core/config.py",
+      "sha256": "bb04423a5090fbb7ae5802919468d5c57929bf72d2217d9a18ec52f2a9f0faba",
+      "size": 14980
+    },
+    {
+      "executable": false,
+      "path": "backend/app/core/database.py",
+      "sha256": "eec18064b2b531652287976053ee3ee7ec4a3fc6c1098fe11f93e937135a7181",
+      "size": 953
+    },
+    {
+      "executable": false,
+      "path": "backend/app/core/datetime_helpers.py",
+      "sha256": "234e42569ef460a582ebcfa5e5e281030b50a12034db9cb2e8a70b098d5e44de",
+      "size": 959
+    },
+    {
+      "executable": false,
+      "path": "backend/app/core/deposit_token.py",
+      "sha256": "67c353433ca8ec37471a34748d26dcc4db8ccb6eb2ab6afa9eee1bb542839086",
+      "size": 2699
+    },
+    {
+      "executable": false,
+      "path": "backend/app/core/deps.py",
+      "sha256": "4ab0e08a6c1af6f5e1d1bf0b78eb08bf72f898fbbffac7902db18f709be70bb7",
+      "size": 4985
+    },
+    {
+      "executable": false,
+      "path": "backend/app/core/free_room.py",
+      "sha256": "438988a1c6040e1c9169c58b5988ef368d15a8d0e4548c3c9d10307fed6a7a1e",
+      "size": 469
+    },
+    {
+      "executable": false,
+      "path": "backend/app/core/ids.py",
+      "sha256": "033ebc77ca3e0061ea67cad4eb37f4bfeeeb3ae1d1081ecbee8c00776d4f61c2",
+      "size": 1734
+    },
+    {
+      "executable": false,
+      "path": "backend/app/core/keepalive.py",
+      "sha256": "b2ddfbae1104886a4d15ac0a84382a344fe9cd946cf18b9c7c45f01f406c8f80",
+      "size": 1794
+    },
+    {
+      "executable": false,
+      "path": "backend/app/core/rate_limit.py",
+      "sha256": "e0d8d1816b99a048635155cb76a539bcd4784a2b326014f3932e8514638a9162",
+      "size": 1320
+    },
+    {
+      "executable": false,
+      "path": "backend/app/core/security.py",
+      "sha256": "b5b1642bc38ee3c16a1a821c7e41f70ec3754e22da65a5bd3d029b744198e6a0",
+      "size": 3719
+    },
+    {
+      "executable": false,
+      "path": "backend/app/core/token_revocation.py",
+      "sha256": "e292c37ce8faa31693b1300b994fb818e7155b2d4d668e692836e2a796b9aa47",
+      "size": 2133
+    },
+    {
+      "executable": false,
+      "path": "backend/app/core/trial_tags.py",
+      "sha256": "6a1f409c963b5622852826495e8d1aa9d04f3e6f4a32d5f64b92271fd1b55805",
+      "size": 1090
+    },
+    {
+      "executable": false,
+      "path": "backend/app/main.py",
+      "sha256": "52b82bb1793840020327bc80724f3ff6f535f82c463e074338bcd8c67bb0159a",
+      "size": 24821
+    },
+    {
+      "executable": false,
+      "path": "backend/app/models/__init__.py",
+      "sha256": "27dd733928a6d1ec9726bbdda514e447243043e1e6754d3f74fe1f4a59678fc6",
+      "size": 2673
+    },
+    {
+      "executable": false,
+      "path": "backend/app/models/audit_log.py",
+      "sha256": "3bbafc23d3be087ddfe18e05186f9acdb64c471964b484171bda36ed6d1bfdeb",
+      "size": 1572
+    },
+    {
+      "executable": false,
+      "path": "backend/app/models/cleaning_request.py",
+      "sha256": "7d8d2c56e8064088daf1669e13e3586382e591155a90ceb0920230d49a4bd0ab",
+      "size": 3054
+    },
+    {
+      "executable": false,
+      "path": "backend/app/models/company_sponsored_stay.py",
+      "sha256": "03932095cb4e4a8ebdff644ca369561a644061208c157c537f48a37f551e4ff7",
+      "size": 13957
+    },
+    {
+      "executable": false,
+      "path": "backend/app/models/company_sponsorship_adjustment.py",
+      "sha256": "ef33a2e029133b931e93cb1e0ff50b30e197382cf8861e792d86922f8c31afc0",
+      "size": 3207
+    },
+    {
+      "executable": false,
+      "path": "backend/app/models/customer.py",
+      "sha256": "5386695efd36a4cd5c5030e70febd7d1ad013bdd5b5730ed4713b9691716b4b6",
+      "size": 806
+    },
+    {
+      "executable": false,
+      "path": "backend/app/models/door_code.py",
+      "sha256": "6ad6fb18dd2e86507b4e0ca0e3e294676fb7dccbc9e2c14ec952cbd13f984ff1",
+      "size": 3982
+    },
+    {
+      "executable": false,
+      "path": "backend/app/models/expense.py",
+      "sha256": "29202be3ce6b073076a4d9a4d8b316d40b05e19591211ba51470e5200916dec6",
+      "size": 6354
+    },
+    {
+      "executable": false,
+      "path": "backend/app/models/guest.py",
+      "sha256": "7b87382fd40e1acbd3e4dccfefda2d640d9df65306fa986b77ce25eeea77064e",
+      "size": 1599
+    },
+    {
+      "executable": false,
+      "path": "backend/app/models/hosting_lead.py",
+      "sha256": "a360b374cf82722ce16eff956606ab9d2f25b13da441fe40c81bead1f007b089",
+      "size": 1273
+    },
+    {
+      "executable": false,
+      "path": "backend/app/models/lock_device.py",
+      "sha256": "87fbf109c0b7fcb743a136d9a23074aa2a373d88d07e5629c2f251ffff1f5c71",
+      "size": 1777
+    },
+    {
+      "executable": false,
+      "path": "backend/app/models/lock_event.py",
+      "sha256": "d0b734bc8a84cc32e16f19795f7d4d1d5d6771df228fefcb9dee83b4034efb56",
+      "size": 1780
+    },
+    {
+      "executable": false,
+      "path": "backend/app/models/managed_stay_group.py",
+      "sha256": "9ddb50365cf43e099362339e98e3958f896b850c5efa8ee3fd5612625dce9e56",
+      "size": 1388
+    },
+    {
+      "executable": false,
+      "path": "backend/app/models/notification.py",
+      "sha256": "42076a0df3af8e6b8c187299ae58be30f707983e18d6eef2ab894eea00aa07ac",
+      "size": 1833
+    },
+    {
+      "executable": false,
+      "path": "backend/app/models/order.py",
+      "sha256": "9293dfd8473e12fa4441d2cf868312b6686f89467ff6156e39987a55da8b1caf",
+      "size": 13886
+    },
+    {
+      "executable": false,
+      "path": "backend/app/models/order_operation.py",
+      "sha256": "8e281b6bcb3d99bb186ebf5339ce5fa631a521c067f3ad5a3728604709fabefd",
+      "size": 1933
+    },
+    {
+      "executable": false,
+      "path": "backend/app/models/order_room.py",
+      "sha256": "c0ed843632f4ae332e02b9a7919d644a9f915b48c5bb5c5de83d6819a680ee63",
+      "size": 4730
+    },
+    {
+      "executable": false,
+      "path": "backend/app/models/order_source_price_snapshot.py",
+      "sha256": "561182b3c5b2fba14411dfaf9f6caab07d2f5cd87bda51c3b8f16001d3ec3211",
+      "size": 7824
+    },
+    {
+      "executable": false,
+      "path": "backend/app/models/order_sync_conflict.py",
+      "sha256": "7933cfd789caf8f53c81d88bf7f4d66965994633fc978a2fc5e37acd034f96a9",
+      "size": 2618
+    },
+    {
+      "executable": false,
+      "path": "backend/app/models/owner.py",
+      "sha256": "f5c6e9ede6c77904924f72ca41c425e4a9816c6622e666d2afde63d90113c6ed",
+      "size": 2675
+    },
+    {
+      "executable": false,
+      "path": "backend/app/models/payment.py",
+      "sha256": "02a8c5b80f3285068d0700db85ad1507e3ad1c5fef84ff2b5017d0881298c1da",
+      "size": 1771
+    },
+    {
+      "executable": false,
+      "path": "backend/app/models/pricing.py",
+      "sha256": "5b568ec1e5e40449659c2c9a38477223405e7b16c61a597ccac8da861ad463ad",
+      "size": 1699
+    },
+    {
+      "executable": false,
+      "path": "backend/app/models/recon.py",
+      "sha256": "54af4804a7adfab239728975c2e1c7426546ae1ec346355145725a12898ff71d",
+      "size": 3790
+    },
+    {
+      "executable": false,
+      "path": "backend/app/models/refund.py",
+      "sha256": "ddc39065bff05cefdafa6a8a8b30aeb77cce9794405da06fc14b64a85e7eb815",
+      "size": 1733
+    },
+    {
+      "executable": false,
+      "path": "backend/app/models/room.py",
+      "sha256": "40781898599f3370b50d982983704f78c201a1024195a50699f87f5fd181bad1",
+      "size": 5926
+    },
+    {
+      "executable": false,
+      "path": "backend/app/models/room_block.py",
+      "sha256": "ba19c97de4bf5d956e5ddceaa957338576e79e6daa9c30095fda8d885bde55e9",
+      "size": 1181
+    },
+    {
+      "executable": false,
+      "path": "backend/app/models/room_cost_share.py",
+      "sha256": "42d737ae5fd0e79e16d88794a691249f87d1ce5960c1ce22c6bc47112e4e5c70",
+      "size": 2535
+    },
+    {
+      "executable": false,
+      "path": "backend/app/models/room_image.py",
+      "sha256": "5931759a23e63e352f3c0c39b10111fd9cd1537a06b08ed11e57e56bbb4174b0",
+      "size": 1289
+    },
+    {
+      "executable": false,
+      "path": "backend/app/models/service_fee_config.py",
+      "sha256": "492f396b6225069a908c622de54ef107ec6fbcac1fad52a9876c30a04abbc17d",
+      "size": 1770
+    },
+    {
+      "executable": false,
+      "path": "backend/app/models/settlement.py",
+      "sha256": "fb0a066abb707ff83ceedb96978e5b09359d494b9e905b4e5b1a73a9216a8929",
+      "size": 6300
+    },
+    {
+      "executable": false,
+      "path": "backend/app/models/share_ratio_template.py",
+      "sha256": "f3bf9be2266166a3113c89c8a9102be98c3d5dacf7e24e51ae0693e06f2974d6",
+      "size": 4082
+    },
+    {
+      "executable": false,
+      "path": "backend/app/models/task.py",
+      "sha256": "991aaab26233f4e345dc60c770dc323ed6799f2801e27186636893a9ee84fe66",
+      "size": 3149
+    },
+    {
+      "executable": false,
+      "path": "backend/app/models/user.py",
+      "sha256": "07dde55e126fa4dff6d4489c2b94b8fe917b612e4b30ac240f6c891207537950",
+      "size": 1401
+    },
+    {
+      "executable": false,
+      "path": "backend/app/schemas/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    {
+      "executable": false,
+      "path": "backend/app/schemas/assistant.py",
+      "sha256": "c9517f7ff7a971d648d911ac1e1401f20f229dfdf1956a9e38d746369f52589f",
+      "size": 496
+    },
+    {
+      "executable": false,
+      "path": "backend/app/schemas/auth.py",
+      "sha256": "63cf66bb653795f890af7419f36929fe654c13a60720e96599bbc415b7300764",
+      "size": 1028
+    },
+    {
+      "executable": false,
+      "path": "backend/app/schemas/booking.py",
+      "sha256": "d2f78e24385e43f13cb3a46254cd8f731e914d1cf6730b0fc053afa7c848148e",
+      "size": 2664
+    },
+    {
+      "executable": false,
+      "path": "backend/app/schemas/customer.py",
+      "sha256": "cefaf9e0aaaacbf5b6ff7d93b8d4ddd5ea76bb7634188627bcd3531ffc2a704a",
+      "size": 944
+    },
+    {
+      "executable": false,
+      "path": "backend/app/schemas/finance.py",
+      "sha256": "e38d966640f15793428cbc964075ecb25bfa94a663b9801daecab4a75260f3cf",
+      "size": 6099
+    },
+    {
+      "executable": false,
+      "path": "backend/app/schemas/guest.py",
+      "sha256": "d119f0dff357dcf885b0e5fa814d9aace3a5d5cf0052aa9fd90e601bc5a1398e",
+      "size": 770
+    },
+    {
+      "executable": false,
+      "path": "backend/app/schemas/hosting_lead.py",
+      "sha256": "8f46638105d3a66966493f652b62eee7311d9f9f9c344f08007e99b5febf697f",
+      "size": 922
+    },
+    {
+      "executable": false,
+      "path": "backend/app/schemas/order.py",
+      "sha256": "0e494102f2f5f8ae5aba0ef8d19bc41c5787302db92e82076b3e587124690a22",
+      "size": 36789
+    },
+    {
+      "executable": false,
+      "path": "backend/app/schemas/owner.py",
+      "sha256": "a17dd3e3bac7ac0c1d693a27ee9d19dc3e0a92d7dc49da25580eb863f8c9fbba",
+      "size": 2718
+    },
+    {
+      "executable": false,
+      "path": "backend/app/schemas/room.py",
+      "sha256": "995697ad9c80af0af80fbb5cf16e6b00928a00bdbc903325d1388f38aad2f1e8",
+      "size": 4342
+    },
+    {
+      "executable": false,
+      "path": "backend/app/schemas/room_cost_share.py",
+      "sha256": "8e9699c008e8090926e9117a12ec094b92229c537de9083aa6d98523be651024",
+      "size": 1518
+    },
+    {
+      "executable": false,
+      "path": "backend/app/services/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    {
+      "executable": false,
+      "path": "backend/app/services/assistant/__init__.py",
+      "sha256": "052f9e08dcbf795b2a84294a70dce701b4ae7a32be9f745049701bb879249acd",
+      "size": 327
+    },
+    {
+      "executable": false,
+      "path": "backend/app/services/assistant/actors.py",
+      "sha256": "e30be39c84187fabc339f165a449ae10f34ba028cf1e831b90db6a377c996338",
+      "size": 2070
+    },
+    {
+      "executable": false,
+      "path": "backend/app/services/assistant/forensics.py",
+      "sha256": "ac41bf12d8c0754f1665acf9ba0e38279988e08dc8a0996f328dd157b0dc0629",
+      "size": 4193
+    },
+    {
+      "executable": false,
+      "path": "backend/app/services/assistant/intent.py",
+      "sha256": "84d45ae0155ed01fdcb48d04904786cba453e097164f24c8c043e52904de6128",
+      "size": 7356
+    },
+    {
+      "executable": false,
+      "path": "backend/app/services/assistant/narrate.py",
+      "sha256": "e173c0099f8c215d03058f35106b8318fb345ac37f36ccda1a36abebd03b16f6",
+      "size": 2289
+    },
+    {
+      "executable": false,
+      "path": "backend/app/services/assistant/periods.py",
+      "sha256": "d4fd53d01ecdec8fb4df46b9a56a39e88e4939cbb9e8c86571f9f6d0f1121a6c",
+      "size": 3067
+    },
+    {
+      "executable": false,
+      "path": "backend/app/services/assistant/service.py",
+      "sha256": "9accb15c8179fa30a171f6b69c5cf1778dfcbcfdd45c1b1bebc099645be66887",
+      "size": 9086
+    },
+    {
+      "executable": false,
+      "path": "backend/app/services/assistant/timeline.py",
+      "sha256": "fb5ba8ec988782adebc6b5b2678365e231113cd5bf33c3c8a27cfde7562591a6",
+      "size": 6886
+    },
+    {
+      "executable": false,
+      "path": "backend/app/services/assistant/tools.py",
+      "sha256": "b7c0642360c1db6a94a88aa87a49510836a89d57e69df26c4cb0ffeaf28e9ec3",
+      "size": 10998
+    },
+    {
+      "executable": false,
+      "path": "backend/app/services/audit.py",
+      "sha256": "6bfa5b289854b6ac6f8ece8a5593ee45d617965dbe02aef2861ad9fa94d9efc9",
+      "size": 3270
+    },
+    {
+      "executable": false,
+      "path": "backend/app/services/billing_recon/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    {
+      "executable": false,
+      "path": "backend/app/services/billing_recon/ai_claim.py",
+      "sha256": "d1f6c162f05b2e5b577ae33c3f9eca03706ce279c779e2f4c86e21aeef3a45b0",
+      "size": 10516
+    },
+    {
+      "executable": false,
+      "path": "backend/app/services/billing_recon/ai_mapping.py",
+      "sha256": "fd75849349afba8d5cc27c3891a68fa55cfc555aa3b1de126eef2d3754f0fe49",
+      "size": 6834
+    },
+    {
+      "executable": false,
+      "path": "backend/app/services/billing_recon/engine.py",
+      "sha256": "7368c4a43ba8f6246cab6011275c384711a97d98a0ac3db7074bf91364c8395e",
+      "size": 48762
+    },
+    {
+      "executable": false,
+      "path": "backend/app/services/billing_recon/parser.py",
+      "sha256": "8c5052c9370c8a604bcb209eaac8ca6db742741151351e6589b9ae2d4c258f26",
+      "size": 12900
+    },
+    {
+      "executable": false,
+      "path": "backend/app/services/billing_recon/summary.py",
+      "sha256": "20c756893750a37a3723b2725681019a3c11cf4e37c2cd104c274de99f84c7c9",
+      "size": 2566
+    },
+    {
+      "executable": false,
+      "path": "backend/app/services/billing_recon/upload.py",
+      "sha256": "2c41fa4d101f16b55730f0722ee40aed8b5453632340d239731d6e7b1b2a5b30",
+      "size": 6007
+    },
+    {
+      "executable": false,
+      "path": "backend/app/services/bypms_pull_health.py",
+      "sha256": "c910ff0d353520480fbd7a5efe1fd0a47d83ae1dc0aa951afde04805955f4fc5",
+      "size": 4867
+    },
+    {
+      "executable": false,
+      "path": "backend/app/services/checkout_continuation.py",
+      "sha256": "33d9b9ebeb755099d11dd705b27038172b0e3579fb817874af9f05dfca884599",
+      "size": 7592
+    },
+    {
+      "executable": false,
+      "path": "backend/app/services/cleaning.py",
+      "sha256": "2df772beae5618647557ff30576dddab2115698ac9c15f09ebf311c8997819a5",
+      "size": 21797
+    },
+    {
+      "executable": false,
+      "path": "backend/app/services/cleaning_request.py",
+      "sha256": "e0ab5e4f4d72d2e0967a3a6abc5800891b58afb2f6f3ce83d9a7baf1d7452ca1",
+      "size": 25218
+    },
+    {
+      "executable": false,
+      "path": "backend/app/services/dashboard_metrics.py",
+      "sha256": "f3e0cd6fdad6131089a931d92980e6e58748984dad0e6c4bfa33f991efbaf3c2",
+      "size": 5028
+    },
+    {
+      "executable": false,
+      "path": "backend/app/services/deposit_receipt_cleanup.py",
+      "sha256": "946aae0868d93f9502b826471923fd8d1298ad047a1c493893860be15872c31f",
+      "size": 2768
+    },
+    {
+      "executable": false,
+      "path": "backend/app/services/feishu_card_actions.py",
+      "sha256": "96918511f42ab4678b95b46a2e652375a5fd8e73096605ae0a6e0bcafdb38139",
+      "size": 32695
+    },
+    {
+      "executable": false,
+      "path": "backend/app/services/feishu_card_callback.py",
+      "sha256": "c81809560def9eb0afc3c2927398e2ff1440ca41dda181ad5da4ec2ae7ad2a1b",
+      "size": 5407
+    },
+    {
+      "executable": false,
+      "path": "backend/app/services/feishu_lead_alert.py",
+      "sha256": "e4525d4779dfbde218d180f70adf9ff690d01e2c32a64d5fc9ba545b03ffce74",
+      "size": 58014
+    },
+    {
+      "executable": false,
+      "path": "backend/app/services/feishu_ws.py",
+      "sha256": "2e94d903896c6efad388c31ae5e418152dd2ae0c3a4029c43c176a05d81bcb46",
+      "size": 8001
+    },
+    {
+      "executable": false,
+      "path": "backend/app/services/guest_service.py",
+      "sha256": "ef28fcbd093cf0c0acc56cf9946e77f0176e83f97da138a05b15bfd5c073fc05",
+      "size": 2984
+    },
+    {
+      "executable": false,
+      "path": "backend/app/services/lock/__init__.py",
+      "sha256": "b7dc931d57d518e8afdfcc3ce8ac51faed7bef7143859e3c8ff29af7ae9f8ab5",
+      "size": 270
+    },
+    {
+      "executable": false,
+      "path": "backend/app/services/lock/aes.py",
+      "sha256": "46e9a9f22681dba1275a397259f20e1036fed71ea3743466ed4e9d023c17d50f",
+      "size": 1429
+    },
+    {
+      "executable": false,
+      "path": "backend/app/services/lock/base.py",
+      "sha256": "22b5e3bbc6ceaaaa5372b7dad8437197018e3db77bb2889126eb2eb9c2074318",
+      "size": 2032
+    },
+    {
+      "executable": false,
+      "path": "backend/app/services/lock/callback_health.py",
+      "sha256": "7c4659d312e74e35c9d034f5515f680dcb4bce3c2412bba6409169705447ca6b",
+      "size": 6006
+    },
+    {
+      "executable": false,
+      "path": "backend/app/services/lock/checkin_card.py",
+      "sha256": "0283aef0838e43f0b87882375ddf2a36bcda849dc62ac2c9c3be8c9733a4d203",
+      "size": 3870
+    },
+    {
+      "executable": false,
+      "path": "backend/app/services/lock/checkin_qr.py",
+      "sha256": "30580c5bdbde5c06eaac9463cc4799849b9fd614ddf82e8c10285b4d1c8b3204",
+      "size": 1820
+    },
+    {
+      "executable": false,
+      "path": "backend/app/services/lock/checkin_qr_map.json",
+      "sha256": "e9af2a86097c5187a6f2b66c69a0e521c3e961ddad7f2a5f66dd4d52abf582fd",
+      "size": 2018
+    },
+    {
+      "executable": false,
+      "path": "backend/app/services/lock/code_crypto.py",
+      "sha256": "daf2c024962dc71e3540fc123e21c85ed5488f0b8d8a83c5e3eee8e7f3bdbdc5",
+      "size": 1760
+    },
+    {
+      "executable": false,
+      "path": "backend/app/services/lock/events.py",
+      "sha256": "a6d99218bc9f8995f40bea8381cfbea587d20697f650efcf7a11d58a86d9a747",
+      "size": 7247
+    },
+    {
+      "executable": false,
+      "path": "backend/app/services/lock/factory.py",
+      "sha256": "9680327e1b877e5e4ecd366a9e8180ccb2039f21551e97b78f9245146da03f4f",
+      "size": 2174
+    },
+    {
+      "executable": false,
+      "path": "backend/app/services/lock/hooks.py",
+      "sha256": "cfad627e55bbb3f16d66c0ed331f9058b1221562dcf81ed3608c50783b26af55",
+      "size": 30142
+    },
+    {
+      "executable": false,
+      "path": "backend/app/services/lock/hxjiot.py",
+      "sha256": "4dc461545b5d115123b3e9225f8db6df4b04eb1f5f788864f2e9ea8a61252265",
+      "size": 14642
+    },
+    {
+      "executable": false,
+      "path": "backend/app/services/lock/manual.py",
+      "sha256": "cc7720f3ef3fc8e5443cdeb5859f10b8f271d990fdbb6b7799f6ed8452c75bd2",
+      "size": 1745
+    },
+    {
+      "executable": false,
+      "path": "backend/app/services/lock/orchestrator.py",
+      "sha256": "0b25c0876f22bdd10647ead9aa958d18711e712f6203e7b559c2400173925318",
+      "size": 72172
+    },
+    {
+      "executable": false,
+      "path": "backend/app/services/lock/roomstate_sync.py",
+      "sha256": "6ce61db2f82b0c8cd5a03a7bc5875ec88cb34c9bb39a1a23f73b5e574730e7b6",
+      "size": 2508
+    },
+    {
+      "executable": false,
+      "path": "backend/app/services/lock/stuck_alert_guard.py",
+      "sha256": "d1b9a8c15c15bdd58130cafc87d70c25aac76d7f6109822868b8abab3e2dfb83",
+      "size": 4090
+    },
+    {
+      "executable": false,
+      "path": "backend/app/services/lock/transport.py",
+      "sha256": "8783e19c1ad5472c3f5a754d320e7826c3506497ade002e147c2f4f9188a097b",
+      "size": 1121
+    },
+    {
+      "executable": false,
+      "path": "backend/app/services/lock/types.py",
+      "sha256": "8080d72c4e86e4d395b31ea69cda61079c9bd6f1490f6109438fdee9cf04be98",
+      "size": 2342
+    },
+    {
+      "executable": false,
+      "path": "backend/app/services/lock/util.py",
+      "sha256": "52036119f00207aa22c45ead276656b5494dcdf92043b7d0069921b6121af8fd",
+      "size": 1109
+    },
+    {
+      "executable": false,
+      "path": "backend/app/services/manual_override.py",
+      "sha256": "2f7bf74d74084799ee6e825d8e5d06ae035cd35e4a1ac70a49b18b171857a011",
+      "size": 20808
+    },
+    {
+      "executable": false,
+      "path": "backend/app/services/order_price_selfheal.py",
+      "sha256": "c74492ba42bf87d9e9216b35c1616f5eb1137939505597a091b7b870bbf0667d",
+      "size": 2471
+    },
+    {
+      "executable": false,
+      "path": "backend/app/services/order_pricing.py",
+      "sha256": "83388875a5504c0219eca16f1463e5e1defd75733c2411acbbf7f3952ab7a625",
+      "size": 9558
+    },
+    {
+      "executable": false,
+      "path": "backend/app/services/order_segmentation.py",
+      "sha256": "394ebbcd436fddce52bdead14bcb0c6a4b088e0eb65403a69cfa50e2e89d7719",
+      "size": 20809
+    },
+    {
+      "executable": false,
+      "path": "backend/app/services/order_state.py",
+      "sha256": "7d5df90fef6b94a7674a16295d99dc184dfb364e8f92b0759d5220a03a0ed3f0",
+      "size": 15998
+    },
+    {
+      "executable": false,
+      "path": "backend/app/services/order_transfer.py",
+      "sha256": "3dbafc5cec1e7c450e84d62323648bfc213de72a5f8541647f8d6104300c4c0d",
+      "size": 7288
+    },
+    {
+      "executable": false,
+      "path": "backend/app/services/oss_service.py",
+      "sha256": "6d8b6470fce35384a31350228df9620f0dde9493b0ce8e331aac127ffd878ad5",
+      "size": 4718
+    },
+    {
+      "executable": false,
+      "path": "backend/app/services/otp_service.py",
+      "sha256": "3e17fbd1a6add4f19e9adf05878595ef360b1807952cb8702ad8d06ab8cd2817",
+      "size": 5168
+    },
+    {
+      "executable": false,
+      "path": "backend/app/services/owner_scope.py",
+      "sha256": "9b10fd27af6e375ebf3bdbeaed181f656af5ddfc917e9b0c982d15b38cf3fb91",
+      "size": 988
+    },
+    {
+      "executable": false,
+      "path": "backend/app/services/owner_settlement.py",
+      "sha256": "44410d8a6eef0db045c31fadce08151b57323ac53b0b6f7f6c64e28e277cb24d",
+      "size": 23301
+    },
+    {
+      "executable": false,
+      "path": "backend/app/services/payment_service.py",
+      "sha256": "89655d7f61bd900f9a03f299f4f29f68c9936250154f52e7276168102d5dad5a",
+      "size": 2308
+    },
+    {
+      "executable": false,
+      "path": "backend/app/services/pricing_service.py",
+      "sha256": "28b93a4b5940cb603a0616d6e8c1af41ede68c06ab3369c0a16309868c075b5a",
+      "size": 17041
+    },
+    {
+      "executable": false,
+      "path": "backend/app/services/reconciliation.py",
+      "sha256": "33d1f74d611c2be7442cd5fea4e316c044bd062b42791cc74b05b562b9d63198",
+      "size": 20092
+    },
+    {
+      "executable": false,
+      "path": "backend/app/services/room_availability.py",
+      "sha256": "e09fdaa5d0747bf7bafc26e53a06f5b4b315e7db2d72411d7d71eddfd2ba54f2",
+      "size": 9426
+    },
+    {
+      "executable": false,
+      "path": "backend/app/services/service_fee_ledger.py",
+      "sha256": "aa20e8c2275fa15b83b713680849316d586995730b7ce2795f5cd0148c47da16",
+      "size": 3243
+    },
+    {
+      "executable": false,
+      "path": "backend/app/services/service_fee_reconciliation.py",
+      "sha256": "1adbf08ccb10cbfc96160029526a7d81e9f7e90bea7d1ac3f297c4b5bdc54116",
+      "size": 26703
+    },
+    {
+      "executable": false,
+      "path": "backend/app/services/service_fees.py",
+      "sha256": "52626c82362d5264f976d73d3214219e71bba33f85f9cac5a308e435d23722ac",
+      "size": 2922
+    },
+    {
+      "executable": false,
+      "path": "backend/app/services/sms_service.py",
+      "sha256": "12280ab0cd96cd12e90e779d0e7f91c4732142bce25c6601d32987d2603d5bb6",
+      "size": 2784
+    },
+    {
+      "executable": false,
+      "path": "backend/app/services/sponsorship.py",
+      "sha256": "aa5eb9e76838b19cc774e6ce968d82d1f22c39f02a04f3521fa50c9f17029fb7",
+      "size": 20241
+    },
+    {
+      "executable": false,
+      "path": "backend/app/services/stay_group.py",
+      "sha256": "c1686f6ecee3f2d7dd8c54e0ddcbcab917e56d13298b22985f1fc8237b15fe6a",
+      "size": 29201
+    },
+    {
+      "executable": false,
+      "path": "backend/app/workers/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    {
+      "executable": false,
+      "path": "backend/app/workers/async_helper.py",
+      "sha256": "10d2a3752331f684fe3bfaa22c7942307c0187eeaef2c733077eb662284aeb83",
+      "size": 1058
+    },
+    {
+      "executable": false,
+      "path": "backend/app/workers/celery_app.py",
+      "sha256": "144389fa4245dcfa0b9c04cc8832e334d21a594e2e3fee6047da9a90cb230fba",
+      "size": 7081
+    },
+    {
+      "executable": false,
+      "path": "backend/app/workers/daily_guard.py",
+      "sha256": "51f87bb9ee6f2a62cd4dc27e7c923a9f5fefd49f4295786092b4acc6807d124c",
+      "size": 3531
+    },
+    {
+      "executable": false,
+      "path": "backend/app/workers/housekeeping_tasks.py",
+      "sha256": "dc6369935f340ab89fe662f1b008cb366fd7f5dd78f69d2cace10feefd1347db",
+      "size": 14490
+    },
+    {
+      "executable": false,
+      "path": "backend/app/workers/lock_tasks.py",
+      "sha256": "5d9c12f7a745a0e853557f42edc354b4cb0d1966b8a8ae5d5ba308347d64029e",
+      "size": 6703
+    },
+    {
+      "executable": false,
+      "path": "backend/app/workers/order_maintenance.py",
+      "sha256": "27bad6bc6ccdf0ff60d37e2e83b819ea54d8d11a464d17637697690a3ef0facd",
+      "size": 5988
+    },
+    {
+      "executable": false,
+      "path": "backend/app/workers/reminder_tasks.py",
+      "sha256": "eff8e7beb102964643b92dcfcb201c2e6c583fb8aff17d50a1c524293eb68e18",
+      "size": 11490
+    },
+    {
+      "executable": false,
+      "path": "backend/app/workers/scheduler.py",
+      "sha256": "c5cd6801d108c88a92b4f911eb5b8e6d625005e60701b013bd633733df591905",
+      "size": 135
+    },
+    {
+      "executable": false,
+      "path": "backend/app/workers/settlement_tasks.py",
+      "sha256": "a30b706d8db2ba3880a857ff9925d1e9eb1144418fa4ce27581ee3342c5a4508",
+      "size": 1381
+    },
+    {
+      "executable": false,
+      "path": "backend/app/workers/sync_watchdog.py",
+      "sha256": "2cf352628b89e057be770e5616812a4d232c0882bfc0db2e823c5717def09537",
+      "size": 1493
+    },
+    {
+      "executable": false,
+      "path": "backend/requirements.txt",
+      "sha256": "f0d3188e0b083fe53a67e270148a494ed65c77e23e2e7ea46c08b24d63c33773",
+      "size": 715
+    },
+    {
+      "executable": false,
+      "path": "docker-compose.yml",
+      "sha256": "8a9878f7a0ad61d7a506df0ce21af11778259423c77e6509e5a3e85330265428",
+      "size": 3205
+    },
+    {
+      "executable": false,
+      "path": "frontend/.claude/launch.json",
+      "sha256": "892c33e902c21a4f0b6fa7c0d4cc3e40c05dd100931f09a00bfcde82e834f2ec",
+      "size": 180
+    },
+    {
+      "executable": false,
+      "path": "frontend/.eslintrc.json",
+      "sha256": "1589a15e55fbebc6519c95d91d8f0a090618f20dc78e479858b9c27552484961",
+      "size": 40
+    },
+    {
+      "executable": false,
+      "path": "frontend/DESIGN.md",
+      "sha256": "73a171f8788b7a81b3b7e899f9bb27907a4db1f89531c55bd2c22680336b2541",
+      "size": 8216
+    },
+    {
+      "executable": false,
+      "path": "frontend/Dockerfile",
+      "sha256": "ecd4a79a77bc33a0a1669ffb654da86510687878dadcb190c8d70ec2a82a322b",
+      "size": 478
+    },
+    {
+      "executable": false,
+      "path": "frontend/app/(dashboard)/assistant/page.tsx",
+      "sha256": "16034bf224636c1d8a0c622542d8810329a1e78f9bf2739490e5f14d81288cbb",
+      "size": 9251
+    },
+    {
+      "executable": false,
+      "path": "frontend/app/(dashboard)/dashboard/page.tsx",
+      "sha256": "10ece28476dfa344d0d80b199445cd569195c8f3951782cec7d69fe5acb53cec",
+      "size": 39969
+    },
+    {
+      "executable": false,
+      "path": "frontend/app/(dashboard)/error.tsx",
+      "sha256": "786fb16073824297daa28af99a28d501f530920e5fec8c2356d3a7dab8605a0c",
+      "size": 705
+    },
+    {
+      "executable": false,
+      "path": "frontend/app/(dashboard)/finance/billing-recon/page.tsx",
+      "sha256": "d37f48c7537c21a3ddd875aeaf2f27dd9e498f97cb6e4c181bc519fb3f21ba69",
+      "size": 26508
+    },
+    {
+      "executable": false,
+      "path": "frontend/app/(dashboard)/finance/page.tsx",
+      "sha256": "ede0a093472e416b3eba8a9ef4eb78cca64bb26f42bc2ad95995b5e3ce880e5c",
+      "size": 46030
+    },
+    {
+      "executable": false,
+      "path": "frontend/app/(dashboard)/finance/reconciliation/page.tsx",
+      "sha256": "a20c6ad30700a9e5ef7842338273947e7120bfae9fd60862f41e3e0231149745",
+      "size": 19743
+    },
+    {
+      "executable": false,
+      "path": "frontend/app/(dashboard)/finance/rooms/[room_id]/page.tsx",
+      "sha256": "bd2c1d1183fd6415922d481951224103395c7ddbdaaead39efa7a052c5ffbb2e",
+      "size": 10041
+    },
+    {
+      "executable": false,
+      "path": "frontend/app/(dashboard)/guests/page.tsx",
+      "sha256": "3999b77db4bd42a7ca74ebea501316155115b3565ef867dc268b9b2ef27f7e01",
+      "size": 12530
+    },
+    {
+      "executable": false,
+      "path": "frontend/app/(dashboard)/help/page.tsx",
+      "sha256": "578faeb846adf35ab989425699db017c2b9e75aa2dd94f647319f7579f86c3b1",
+      "size": 23381
+    },
+    {
+      "executable": false,
+      "path": "frontend/app/(dashboard)/layout.tsx",
+      "sha256": "1d103849cf04477f61aa6e58e4565172b240b1aa94b9b45148dfb95b2577458b",
+      "size": 17048
+    },
+    {
+      "executable": false,
+      "path": "frontend/app/(dashboard)/more/page.tsx",
+      "sha256": "6fcdd6382147f7314b98ef4548ced8ecdb82d6fd89672cc584a5713df84d3b2b",
+      "size": 3516
+    },
+    {
+      "executable": false,
+      "path": "frontend/app/(dashboard)/notifications/page.tsx",
+      "sha256": "3ccf6231eb6abd735b87ca4d5511ee35eecf757b288466eee9371ae5e195dfcb",
+      "size": 6124
+    },
+    {
+      "executable": false,
+      "path": "frontend/app/(dashboard)/orders/new/page.tsx",
+      "sha256": "616af8175a113049e515af942b5a8434db9e6736258cdf16a510830061662363",
+      "size": 16205
+    },
+    {
+      "executable": false,
+      "path": "frontend/app/(dashboard)/orders/page.tsx",
+      "sha256": "8d2a23ec769a57c9094e9b6932b0c7e54c4a05d995a22ef672e45f36ae1d9317",
+      "size": 29186
+    },
+    {
+      "executable": false,
+      "path": "frontend/app/(dashboard)/rooms/page.tsx",
+      "sha256": "f3db1ddedf716df868733d6eaa05c28eb99316675801b4540bdadc6ec28e958e",
+      "size": 57432
+    },
+    {
+      "executable": false,
+      "path": "frontend/app/(dashboard)/settlements/page.tsx",
+      "sha256": "88e7b4b2469b16986652f156e5222de2548227ef8d0b0cba3348bdb8c9691146",
+      "size": 21843
+    },
+    {
+      "executable": false,
+      "path": "frontend/app/(dashboard)/system/audit/page.tsx",
+      "sha256": "3d669d31a87de6b05d8f53cab0e292710fd0c5605423d74600f29969e1c21261",
+      "size": 8124
+    },
+    {
+      "executable": false,
+      "path": "frontend/app/(dashboard)/system/owners/page.tsx",
+      "sha256": "d2ac9a6f6d290b7202bebf42dbff285b6db46f562659955f8b218372e1334a63",
+      "size": 448
+    },
+    {
+      "executable": false,
+      "path": "frontend/app/(dashboard)/system/page.tsx",
+      "sha256": "c07ad315e61c503d28a1da20b650499e0a45da1cb0593a238cd2c89e9cdbe94f",
+      "size": 6177
+    },
+    {
+      "executable": false,
+      "path": "frontend/app/(dashboard)/system/share-config/page.tsx",
+      "sha256": "4f0a7d5f81ea0b2f47fa5519cc86fdb033026953237301d1d6c5c0546a430f59",
+      "size": 2813
+    },
+    {
+      "executable": false,
+      "path": "frontend/app/(dashboard)/system/share-ratios/page.tsx",
+      "sha256": "0b668a76041fa26a91081c43327fcc652f7715be1a944fb8f404c5ed31f74680",
+      "size": 457
+    },
+    {
+      "executable": false,
+      "path": "frontend/app/(dashboard)/system/users/page.tsx",
+      "sha256": "075a3e8bcc15832dc5742b13fb82c035b68278636d4b7cff16bc3cb4060470e9",
+      "size": 13126
+    },
+    {
+      "executable": false,
+      "path": "frontend/app/(dashboard)/tasks/page.tsx",
+      "sha256": "38ab2479181715af9989e1a94a06ffb19618ef18dc0ea805315791cde5d28aea",
+      "size": 20804
+    },
+    {
+      "executable": false,
+      "path": "frontend/app/auth/accept/page.tsx",
+      "sha256": "1ca5eb861d89db69484bcf8be254f6a138a905a1531bf283c019e22baf3823b3",
+      "size": 2973
+    },
+    {
+      "executable": false,
+      "path": "frontend/app/booking/layout.tsx",
+      "sha256": "f899a5ab4d2c31f2ff8838ad4bb2d162c9e0ce2f96b14d25f5a60770174c1113",
+      "size": 2147
+    },
+    {
+      "executable": false,
+      "path": "frontend/app/booking/login/page.tsx",
+      "sha256": "155a123387cb52b914facaec249ba630fae00aac937ee7193e1e6425a44fe122",
+      "size": 1496
+    },
+    {
+      "executable": false,
+      "path": "frontend/app/booking/me/page.tsx",
+      "sha256": "3099977e4e3916e95adf1e383b6e2bac7122b1824d76fe2c1b396a41e137f8a7",
+      "size": 2958
+    },
+    {
+      "executable": false,
+      "path": "frontend/app/booking/new/page.tsx",
+      "sha256": "e279e9c9536b3162f852f3b0372e724818eb63b9f4e982bd3780d53f6408c6eb",
+      "size": 8090
+    },
+    {
+      "executable": false,
+      "path": "frontend/app/booking/orders/page.tsx",
+      "sha256": "83bbd99cbe73f501e57eed41e1c32dcab5e47cf29ff68f3a23956f5ca645e266",
+      "size": 3991
+    },
+    {
+      "executable": false,
+      "path": "frontend/app/booking/page.tsx",
+      "sha256": "6ba4b64b3153979d6969bdbc9308c4463a385e7e22310b476bff96c6cc7dec3d",
+      "size": 5644
+    },
+    {
+      "executable": false,
+      "path": "frontend/app/booking/rooms/[id]/page.tsx",
+      "sha256": "3c93c79e2c96ec18c71809af14f3c1bc42ac47e49209354087e546affd9706c0",
+      "size": 8469
+    },
+    {
+      "executable": false,
+      "path": "frontend/app/deposit-receipt/[token]/page.tsx",
+      "sha256": "153207a09c67ae871b51141976b7720342b8093338c9c6b0ff0f8d2425673301",
+      "size": 12055
+    },
+    {
+      "executable": false,
+      "path": "frontend/app/error.tsx",
+      "sha256": "3101a86043f49999616f18609d997e2d636ca5d1dcd19300f606ea91b635eb1d",
+      "size": 771
+    },
+    {
+      "executable": false,
+      "path": "frontend/app/globals.css",
+      "sha256": "40a19328d60cc1689f80b6df2e9f40f2c6f35395280fbb2dd04fb1d5305718a6",
+      "size": 19073
+    },
+    {
+      "executable": false,
+      "path": "frontend/app/layout.tsx",
+      "sha256": "69c0e81901a8b844986c5f9e03b7ef24d55e13a658acbc327040a80a13f4f87b",
+      "size": 2007
+    },
+    {
+      "executable": false,
+      "path": "frontend/app/login/error.tsx",
+      "sha256": "1433a1d4b41934c200e94b729bd00c28080307718fc691918915aa233276e31d",
+      "size": 655
+    },
+    {
+      "executable": false,
+      "path": "frontend/app/login/page.tsx",
+      "sha256": "34087d39713b05da875f3908830d06ac73ef3083600e829b0326d1ff3af058a8",
+      "size": 22907
+    },
+    {
+      "executable": false,
+      "path": "frontend/app/owner/calendar/page.tsx",
+      "sha256": "d759fdfa8506c29aaca98df3dba191c6f40d4be4c64e5b247a2c5f1cd4041fcd",
+      "size": 7623
+    },
+    {
+      "executable": false,
+      "path": "frontend/app/owner/layout.tsx",
+      "sha256": "9cd196396802e4799aa243ebf3ff4e8f5c4af8db2997ce3bbb83cc5534556778",
+      "size": 7101
+    },
+    {
+      "executable": false,
+      "path": "frontend/app/owner/login/page.tsx",
+      "sha256": "29f0170ad3c1a1756dbceccd0a84f7b6a651ec1fb3e820841091efb1253f438f",
+      "size": 2744
+    },
+    {
+      "executable": false,
+      "path": "frontend/app/owner/me/page.tsx",
+      "sha256": "d59ff81de0796e860bde266e9fdd75eaebc8e2700a26fa3dbb2786414f1c0e45",
+      "size": 8433
+    },
+    {
+      "executable": false,
+      "path": "frontend/app/owner/page.tsx",
+      "sha256": "33a16c7101c3754352517e88116865eb4ae94a7c4964ecec841118ea9e845104",
+      "size": 46226
+    },
+    {
+      "executable": false,
+      "path": "frontend/app/owner/rooms/[id]/page.tsx",
+      "sha256": "e3f59de3d6ecd285927c596687ad8ae9fc74756e4fe6e51b23637962f5695932",
+      "size": 8979
+    },
+    {
+      "executable": false,
+      "path": "frontend/app/owner/settlements/SettlementDetailView.tsx",
+      "sha256": "afe455e017f20c18404cb95f28741b16373d550ea34d1215fb42e07bf1913623",
+      "size": 12222
+    },
+    {
+      "executable": false,
+      "path": "frontend/app/owner/settlements/page.tsx",
+      "sha256": "a5da099fa4af886ebb8f3a13a23379e33dac3c26e97fb8f54f144c28a53f2040",
+      "size": 6010
+    },
+    {
+      "executable": false,
+      "path": "frontend/app/page.tsx",
+      "sha256": "72c4bba09586cace009ad965105687a54c8b155c47e336b70f839ff421dea34f",
+      "size": 110
+    },
+    {
+      "executable": false,
+      "path": "frontend/app/providers.tsx",
+      "sha256": "07f187ff5e2806fb1108937e1c8885244f4b23592229b811d997c43660528a0c",
+      "size": 9560
+    },
+    {
+      "executable": false,
+      "path": "frontend/app/staff/cleaner/page.tsx",
+      "sha256": "a2be29bef7b53af135a3679263f3ca8afa22814c896caca2f48c925c6985615e",
+      "size": 11294
+    },
+    {
+      "executable": false,
+      "path": "frontend/app/staff/keeper/page.tsx",
+      "sha256": "943ca02e4c4854f1717dfc0c6c90a30d5685865c719193d437ba28e8ca07690b",
+      "size": 25666
+    },
+    {
+      "executable": false,
+      "path": "frontend/app/staff/layout.tsx",
+      "sha256": "c516dd34e7c89b8992af397201df3f93479bfcf6ad4f21a7d3f9c93213ed8d3e",
+      "size": 2614
+    },
+    {
+      "executable": false,
+      "path": "frontend/app/staff/login/page.tsx",
+      "sha256": "b7a5e145af18746cb0dd567acf8862782a98631da7ca99f298625cdabcc7b258",
+      "size": 2029
+    },
+    {
+      "executable": false,
+      "path": "frontend/app/staff/me/page.tsx",
+      "sha256": "a678753c14d5878c15f4e64a66fe657182dc5441e360a9381c5640405de67d0d",
+      "size": 3353
+    },
+    {
+      "executable": false,
+      "path": "frontend/app/staff/page.tsx",
+      "sha256": "1b6a1f55bf7a9e8fd87509e4bc5d16740fb5df56d446edc3c3825b1267f72c3b",
+      "size": 608
+    },
+    {
+      "executable": false,
+      "path": "frontend/app/tuoguan/LeadForm.tsx",
+      "sha256": "9a9e0fac9a7bd5762cd313b958e016e668ea9499f47ec3b3459c840b7028bc5a",
+      "size": 5350
+    },
+    {
+      "executable": false,
+      "path": "frontend/app/tuoguan/config.ts",
+      "sha256": "09d7bb3f83ab2711da779419b0ee39184852354120c5011ceed5801d567ec0a7",
+      "size": 305
+    },
+    {
+      "executable": false,
+      "path": "frontend/app/tuoguan/page.tsx",
+      "sha256": "6f4261710aaa83a5513b9be440a4d173ceb8958dbdf010017a279964f40d7e8e",
+      "size": 11333
+    },
+    {
+      "executable": false,
+      "path": "frontend/components/GlobalSearch.tsx",
+      "sha256": "df8efc774414cfc94a9531ace253183014da1c0eccb58931342e8c6d723e8125",
+      "size": 6862
+    },
+    {
+      "executable": false,
+      "path": "frontend/components/assistant/AssistantAnswerView.tsx",
+      "sha256": "9d9d2b6dcbc1e98d4f08782c0bb17e131a81c5128033665a73d52dd8ce6f1919",
+      "size": 9364
+    },
+    {
+      "executable": false,
+      "path": "frontend/components/auth/ChangePasswordModal.tsx",
+      "sha256": "aeb4f589bb82171b429e90242a8b556f58490bf4c54c1262d1023559b86a5209",
+      "size": 3877
+    },
+    {
+      "executable": false,
+      "path": "frontend/components/auth/PhoneLoginForm.tsx",
+      "sha256": "4ddf4e2839d99453204ea8ba2cead9a26c06610cd7fc0977a072e5059431f7d2",
+      "size": 9115
+    },
+    {
+      "executable": false,
+      "path": "frontend/components/dashboard/KpiPeekDrawer.tsx",
+      "sha256": "04f663a7c007ba9c6b91e62b3af29497c2dd1803563c43a1d6d0d9c596aa075c",
+      "size": 7762
+    },
+    {
+      "executable": false,
+      "path": "frontend/components/finance/ServiceFeeConfigCard.tsx",
+      "sha256": "826292acb7bfdbdf2b80c29bb334d6181a0f8da37bf38c77c711602a7b577c96",
+      "size": 4742
+    },
+    {
+      "executable": false,
+      "path": "frontend/components/layout/BottomNav.tsx",
+      "sha256": "6792be4468a7322be8892a1b223cb79d87823d9fdb2eeac741532bbea06dcee1",
+      "size": 6358
+    },
+    {
+      "executable": false,
+      "path": "frontend/components/orders/EditOrderModal.tsx",
+      "sha256": "a09ba14083561b21e79005db000178ffcd89c66779164933ae77f927d62effef",
+      "size": 18307
+    },
+    {
+      "executable": false,
+      "path": "frontend/components/orders/ManualOverridePanel.tsx",
+      "sha256": "3cf333e20dba25b6bd6d281bf8b3e518b68414426b75644a4e9e95f0620aee3f",
+      "size": 9207
+    },
+    {
+      "executable": false,
+      "path": "frontend/components/orders/NewOrderWatcher.tsx",
+      "sha256": "4ae715fea3373a540ed2f7c0a9da73c915ecf51697b73c5a24968403dc092a82",
+      "size": 12065
+    },
+    {
+      "executable": false,
+      "path": "frontend/components/orders/OrderAuditTimeline.tsx",
+      "sha256": "c57256d0d392a6cd5cf30976ce0bed11560149d80a5dbf5aa200cc219e55a2b0",
+      "size": 12527
+    },
+    {
+      "executable": false,
+      "path": "frontend/components/orders/OrderDetailModal.tsx",
+      "sha256": "ad04c515b0328c8d9405c20c293fa42eaff627db4d55f39fd447485d1543ed5b",
+      "size": 75955
+    },
+    {
+      "executable": false,
+      "path": "frontend/components/orders/OrderFilters.tsx",
+      "sha256": "e9bfa09a5988ec5f0c3a1b2cce95434070b6cff4e2abacf43f688abbed1b77a6",
+      "size": 3739
+    },
+    {
+      "executable": false,
+      "path": "frontend/components/orders/OrderRoomsField.tsx",
+      "sha256": "ee06fd48b229e1bd62e8f55fccfaf522630484b233c8db54a32fb4f59bbdc283",
+      "size": 16009
+    },
+    {
+      "executable": false,
+      "path": "frontend/components/orders/PaymentModal.tsx",
+      "sha256": "e7d60b435d2c0eb0b7a0ce8141d79cf80d9af8cf0847d2414d054f7963152db2",
+      "size": 9690
+    },
+    {
+      "executable": false,
+      "path": "frontend/components/orders/SourcePriceOverrideDialog.tsx",
+      "sha256": "06ce8721a101bf6261acd399f8dc4ffec8666ebf5f3a9c977bf80236ab2caeaf",
+      "size": 7002
+    },
+    {
+      "executable": false,
+      "path": "frontend/components/orders/SplitStayDialog.tsx",
+      "sha256": "ad74beebdc7615d7b5b52818b7c8d2f60f2e896b11de6ac2c28ac1aa542904f8",
+      "size": 10635
+    },
+    {
+      "executable": false,
+      "path": "frontend/components/orders/StayGroupSettlementLabels.tsx",
+      "sha256": "47671ee7f6e3c0030441372dc6dd8eea66a1a3e9708a6342d694003871c213de",
+      "size": 1184
+    },
+    {
+      "executable": false,
+      "path": "frontend/components/orders/TransferRoomModal.tsx",
+      "sha256": "107b73047d9fe804956ba0317d8ec7e01e661e47edd0c3aeb6c91bdf2cfdd88d",
+      "size": 10495
+    },
+    {
+      "executable": false,
+      "path": "frontend/components/orders/detail/AssignRoomModal.tsx",
+      "sha256": "7e10348d6eb94683966f1d4daeb435a63f768bfb0e94596b10b5f911c92959d2",
+      "size": 5143
+    },
+    {
+      "executable": false,
+      "path": "frontend/components/orders/detail/CheckinDepositModal.tsx",
+      "sha256": "715a91a78730cb7e8c78bfc08ec4ccdb014967ddf1e9f13c97c0d8eee9a1ce52",
+      "size": 6511
+    },
+    {
+      "executable": false,
+      "path": "frontend/components/orders/detail/CheckoutModal.tsx",
+      "sha256": "129ecbf252dbc8f63293b6d45346120d64e312a766b71c36f3598979daf5f60b",
+      "size": 9409
+    },
+    {
+      "executable": false,
+      "path": "frontend/components/orders/detail/DailyPriceModal.tsx",
+      "sha256": "53c3cff820a995ec854090123801d0e3b1f156374d3b89a54d4e9d18445ecf97",
+      "size": 5192
+    },
+    {
+      "executable": false,
+      "path": "frontend/components/orders/detail/EditDatesModal.tsx",
+      "sha256": "f18d59583378d4b12710944f603198969cb780fb7ebb78fb70cf717409584b7c",
+      "size": 2536
+    },
+    {
+      "executable": false,
+      "path": "frontend/components/orders/detail/ExtendLockModal.tsx",
+      "sha256": "4c019283a41b0598cf7e617ec6a60ff0292cf30fe6fb657c320d8f40857f058a",
+      "size": 3442
+    },
+    {
+      "executable": false,
+      "path": "frontend/components/orders/detail/LinkStayModal.tsx",
+      "sha256": "0aefd88783374179265e1d47d55aea71be5a0d2c2b06ec8f745843099464cdf8",
+      "size": 5728
+    },
+    {
+      "executable": false,
+      "path": "frontend/components/orders/detail/RevertCheckinModal.tsx",
+      "sha256": "ada6f592890c161a82d89d61105d0811fcdc352483fb1075770051eb002110f6",
+      "size": 2441
+    },
+    {
+      "executable": false,
+      "path": "frontend/components/orders/detail/RevertCheckoutModal.tsx",
+      "sha256": "342c510d153b5ee3ad37d7e832868daf49e6325df37be664560caa5a24575cdc",
+      "size": 2530
+    },
+    {
+      "executable": false,
+      "path": "frontend/components/orders/detail/StaySegmentBreakdown.tsx",
+      "sha256": "5867cbe29f7ec603c9884939eebc333e07e6c819e15856b8bdaef07144835d69",
+      "size": 5380
+    },
+    {
+      "executable": false,
+      "path": "frontend/components/orders/index.ts",
+      "sha256": "b6f3473e930fef94058d9170504d0f809e1fbd5c0ffee5b184d519c75c755ddf",
+      "size": 244
+    },
+    {
+      "executable": false,
+      "path": "frontend/components/owner/OwnerDailyList.tsx",
+      "sha256": "20dad0f06209c7a4e03fae155496b4f2ce8e841fe778079bbd955dc5f436e390",
+      "size": 8906
+    },
+    {
+      "executable": false,
+      "path": "frontend/components/owner/OwnerGanttView.tsx",
+      "sha256": "53e36b47b5e9432d7776e756ee701e9993b1f77133bcfa404eaabd774b00e7a2",
+      "size": 26995
+    },
+    {
+      "executable": false,
+      "path": "frontend/components/owner/index.ts",
+      "sha256": "d803a02e8d6a985bc40a9de8abe1e2f6a4c316278ce39e4d62e927dada79d735",
+      "size": 102
+    },
+    {
+      "executable": false,
+      "path": "frontend/components/rooms/AssignRoomModal.tsx",
+      "sha256": "4291fff05d76dede1de6f774dc2e71152fb0d5a7cede44bdf3c136a7fe24912a",
+      "size": 8913
+    },
+    {
+      "executable": false,
+      "path": "frontend/components/rooms/BatchOrdersDrawer.tsx",
+      "sha256": "19d544315bca410c0394fdb693a61641f36ace4af7e8b7550204ae3b53752e7e",
+      "size": 1317
+    },
+    {
+      "executable": false,
+      "path": "frontend/components/rooms/CostShareEditor.tsx",
+      "sha256": "454c820dd2ef79210f8a78dcbe0a3ccd0ee24141f3807a35fd5d2cb183fda719",
+      "size": 9020
+    },
+    {
+      "executable": false,
+      "path": "frontend/components/rooms/GanttView.tsx",
+      "sha256": "d5923cd31e76d69de530375546dbb16b51407916795e494817fbc76b397320f8",
+      "size": 81998
+    },
+    {
+      "executable": false,
+      "path": "frontend/components/rooms/MobileGantt.tsx",
+      "sha256": "9ec3841c29165114a02e7d7763059b2b4db1f95b656a40596de889d3bf7b63b3",
+      "size": 38805
+    },
+    {
+      "executable": false,
+      "path": "frontend/components/rooms/OrderQuickSearch.tsx",
+      "sha256": "7cfb339b9dbdc8a854697e7f4f336449fed0db397a11b2d1ce93b8138f55558a",
+      "size": 3961
+    },
+    {
+      "executable": false,
+      "path": "frontend/components/rooms/PendingRoomStrip.tsx",
+      "sha256": "3a1de94d96ef7b44e047f5674ca6f81f09859e93b416e754386cac555e863052",
+      "size": 7189
+    },
+    {
+      "executable": false,
+      "path": "frontend/components/rooms/PricingDetailModal.tsx",
+      "sha256": "9832322cbd2c12768587c037c634b2e851ae9badcba67d3435d3e67ebe086a28",
+      "size": 2790
+    },
+    {
+      "executable": false,
+      "path": "frontend/components/rooms/QuickCreateOrderModal.tsx",
+      "sha256": "fe151fc1b864c5ce8015ef85938e97bd33967c326c08c59d2e95e2ac1b8a14d9",
+      "size": 13815
+    },
+    {
+      "executable": false,
+      "path": "frontend/components/rooms/RoomBlockModal.tsx",
+      "sha256": "6d5174423f73673dcc9923e34535189d21cb04b0935fefe5b83546c4d7888d9a",
+      "size": 4157
+    },
+    {
+      "executable": false,
+      "path": "frontend/components/rooms/RoomCard.tsx",
+      "sha256": "4956240fdabf8b4f349fdc865666e01420ff9604f079709b492c6bf52058c1f3",
+      "size": 11627
+    },
+    {
+      "executable": false,
+      "path": "frontend/components/rooms/RoomEditModal.tsx",
+      "sha256": "7ec74223ca9917ff0ffcb2a6060cbec2a4367c43d39b90b63af17635f0337231",
+      "size": 10569
+    },
+    {
+      "executable": false,
+      "path": "frontend/components/rooms/RoomImagesPanel.tsx",
+      "sha256": "ffecdb348443988ba211bd94a5f7fb1936a10d8aa8c27a8fceec813e02dc2393",
+      "size": 6683
+    },
+    {
+      "executable": false,
+      "path": "frontend/components/rooms/RoomPricingDrawer.tsx",
+      "sha256": "277d003e5448675051418fed827f2ccb2d8316d7e778b29dec6b255bf0a90b17",
+      "size": 2689
+    },
+    {
+      "executable": false,
+      "path": "frontend/components/rooms/RoomStatusModal.tsx",
+      "sha256": "a4754b5848db632534955353e6c66d1123e62ae9a9607255a1c43e0f550e54fb",
+      "size": 7621
+    },
+    {
+      "executable": false,
+      "path": "frontend/components/rooms/TodayRoomList.tsx",
+      "sha256": "715b7c61e19d2e765db1b564f483a6a9c90d402c1e4d72e96d867f58da6c20e6",
+      "size": 7814
+    },
+    {
+      "executable": false,
+      "path": "frontend/components/rooms/constants.ts",
+      "sha256": "2cc050cf14e828a033622bac4e58b9e6b2c5b79a75c9f0e85334a31e16657834",
+      "size": 1976
+    },
+    {
+      "executable": false,
+      "path": "frontend/components/rooms/index.ts",
+      "sha256": "b8f7c6c87c753c16d9a810b491b4cf3b03a4a12e224ad980696368db519db972",
+      "size": 775
+    },
+    {
+      "executable": false,
+      "path": "frontend/components/rooms/room-lock-actions.ts",
+      "sha256": "7641891e91b59bd6cae7a5d2b498235d0bde9937d683797d90d85ee2a7588ca8",
+      "size": 1213
+    },
+    {
+      "executable": false,
+      "path": "frontend/components/rooms/types.ts",
+      "sha256": "adef024c2eb53dd6ceffa4f8a70c4414ceae863e2f006773b9da930959ff351a",
+      "size": 470
+    },
+    {
+      "executable": false,
+      "path": "frontend/components/share-config/OwnersTab.tsx",
+      "sha256": "963c74227d72d20cc2a4d3c1780dfaf86de834079d250ed21db4a81c00fb0f9a",
+      "size": 24839
+    },
+    {
+      "executable": false,
+      "path": "frontend/components/share-config/RoomsTab.tsx",
+      "sha256": "eb54770743187ae164910575baa7fde65e09a55accc007495016235538748136",
+      "size": 10737
+    },
+    {
+      "executable": false,
+      "path": "frontend/components/ui/EmptyState.tsx",
+      "sha256": "a1fd3b792c59c638aa22ccf16688fd9341abda65728b4a01fceb797cf8f733c8",
+      "size": 2988
+    },
+    {
+      "executable": false,
+      "path": "frontend/components/ui/EnLabel.tsx",
+      "sha256": "a7f7479375c3834bfefc5ede15223f2de8bab2d0d282034474d2e0b00abf45f8",
+      "size": 341
+    },
+    {
+      "executable": false,
+      "path": "frontend/components/ui/FreeRoomBadge.tsx",
+      "sha256": "e8ed79afffda75530cf0d5b5eff618d9eb8ea506eec86d54cbd20b4ee67c56ed",
+      "size": 1036
+    },
+    {
+      "executable": false,
+      "path": "frontend/components/ui/MobileDateTimePicker.tsx",
+      "sha256": "5fbd850f59f58fad4b98fb326fc0c5e63a7e8776bb73befe6272948456706867",
+      "size": 2822
+    },
+    {
+      "executable": false,
+      "path": "frontend/components/ui/MobileHero.tsx",
+      "sha256": "5f2b229f23cb1de6563ac317a16b63d532e119a97de6cff942521f13fe7a7eab",
+      "size": 773
+    },
+    {
+      "executable": false,
+      "path": "frontend/components/ui/MobileInput.tsx",
+      "sha256": "367f12b6196f79fc8279d18c15e2d4207a4d471c8c6146e5bb69e67d04a487c1",
+      "size": 459
+    },
+    {
+      "executable": false,
+      "path": "frontend/components/ui/MobileInputNumber.tsx",
+      "sha256": "6113df2862fdea46c97944f7c836b4a6cdead26b6bb7607fabc796b4f72aebe8",
+      "size": 939
+    },
+    {
+      "executable": false,
+      "path": "frontend/components/ui/PageHeader.tsx",
+      "sha256": "3391cb0c0d3ea94ea7fec0dea30b836a9cacce16af4ac11ed1de5cf8264f5a63",
+      "size": 2769
+    },
+    {
+      "executable": false,
+      "path": "frontend/components/ui/Serif.tsx",
+      "sha256": "df217178cd960b9092f73d7c4341d3e45a16ffb7110126df4c2bb1afd6aa128a",
+      "size": 390
+    },
+    {
+      "executable": false,
+      "path": "frontend/components/ui/StatCard.tsx",
+      "sha256": "c76bc2457ddb7f66da77d0c4a35efc605c2beb065ce5f86808b2a0157ea9fb08",
+      "size": 5429
+    },
+    {
+      "executable": false,
+      "path": "frontend/components/ui/StatusBadge.tsx",
+      "sha256": "d72b193d773b2731dab244ddaa83e3f2db88e087c4c4ca5c267c457d764d93fa",
+      "size": 5036
+    },
+    {
+      "executable": false,
+      "path": "frontend/components/ui/StaySettlementLabel.tsx",
+      "sha256": "46f1dff414ce9f97ba4129210f6b576e139bcad451f73e67e47d9ccb4571c16f",
+      "size": 1092
+    },
+    {
+      "executable": false,
+      "path": "frontend/hooks/useDashboard.ts",
+      "sha256": "b3c97fd58e3394d871e820106e9f37997db1a09a7d0d748248f8ec63f4e5652d",
+      "size": 1053
+    },
+    {
+      "executable": false,
+      "path": "frontend/hooks/useDragReschedule.ts",
+      "sha256": "cf638c96777fffd737c396cdc36da981e8aab1d516ee17878da6d00359a1b27d",
+      "size": 5466
+    },
+    {
+      "executable": false,
+      "path": "frontend/hooks/useHostingLead.ts",
+      "sha256": "74ec50488b6e4ce2f8dfd5b6f238347e9f1cffdb60ebf232e8870f38ff004ec7",
+      "size": 556
+    },
+    {
+      "executable": false,
+      "path": "frontend/hooks/useManualOverrides.ts",
+      "sha256": "b0cafb92ec557601e8a0bec85432aa61323bd8b03dddd650e26c7b058ce6a652",
+      "size": 1580
+    },
+    {
+      "executable": false,
+      "path": "frontend/hooks/useOrders.ts",
+      "sha256": "defc20b50a52d53b6da31bda5d7ddb767d6d02925b3d14b04777e407cd35b6c1",
+      "size": 2718
+    },
+    {
+      "executable": false,
+      "path": "frontend/hooks/useRoomAvailability.ts",
+      "sha256": "5f15877359c87340ce12f2303f2d4491982eada3e6f05142558929f04939f02a",
+      "size": 508
+    },
+    {
+      "executable": false,
+      "path": "frontend/hooks/useRoomBlocking.ts",
+      "sha256": "41bae8365365b0e6c77c018c07fac39c866e3d2e163f65d02f1f5804a9453734",
+      "size": 3083
+    },
+    {
+      "executable": false,
+      "path": "frontend/hooks/useRoomsFocus.ts",
+      "sha256": "223f977c3bb30309608fa2caee56fb3d0e03bfc15658a35ebc203bdb5473b4aa",
+      "size": 1905
+    },
+    {
+      "executable": false,
+      "path": "frontend/hooks/useSplitStay.ts",
+      "sha256": "f44fe9cdb6224ed9518dd8566a03f58854bfb2dd922fca6142ea1d147df20ac5",
+      "size": 4901
+    },
+    {
+      "executable": false,
+      "path": "frontend/lib/api-errors.ts",
+      "sha256": "6d0b12eb58ac6ff466db9f3f1f65d9c9d37bbde5e72f1e92df43d80dff3c4fe3",
+      "size": 2029
+    },
+    {
+      "executable": false,
+      "path": "frontend/lib/api.ts",
+      "sha256": "fc3b39fa22414c45dd23739a1abbcafb7bced6e14501f1e03989db1977ea7028",
+      "size": 37648
+    },
+    {
+      "executable": false,
+      "path": "frontend/lib/assignable-rooms.ts",
+      "sha256": "aa8efc80eab8a0f3f47e894a7829b15de3462355e47dcff54ab0e050a8a6b048",
+      "size": 2363
+    },
+    {
+      "executable": false,
+      "path": "frontend/lib/auth.ts",
+      "sha256": "d30b5ee7e838fdf82de736566481021623e0f9ddc53ca1ad304b859ad7ece86a",
+      "size": 1383
+    },
+    {
+      "executable": false,
+      "path": "frontend/lib/batch-selection.ts",
+      "sha256": "2155ad13aeb4f13737424b0ea883417552c87ebef5bc35de6361d6f6a818c1ae",
+      "size": 1153
+    },
+    {
+      "executable": false,
+      "path": "frontend/lib/billing-recon.ts",
+      "sha256": "0abcb44776d8c18980c8a873c3219a1c754ebdf94974a995adb38b231f0bf06f",
+      "size": 7446
+    },
+    {
+      "executable": false,
+      "path": "frontend/lib/block-dates.ts",
+      "sha256": "ca97ee238b1878dd29d999d11734a3d04153b632ab032bce791f44a02e2414cb",
+      "size": 946
+    },
+    {
+      "executable": false,
+      "path": "frontend/lib/caliber.ts",
+      "sha256": "5edb07384c4bf2c71e57fcc6407ce1e3eb9eb29dc60e6af3333082d3b84ba964",
+      "size": 2983
+    },
+    {
+      "executable": false,
+      "path": "frontend/lib/channel-bar-palette.ts",
+      "sha256": "637918accc08186f5f7d210dcd526d3fb5ae23cce59257e2a99e450c0bb3078f",
+      "size": 2505
+    },
+    {
+      "executable": false,
+      "path": "frontend/lib/channel-share.ts",
+      "sha256": "615028c6df149aa871ec3617bdf7e999d78e42ede72cad362f933507848326e0",
+      "size": 1033
+    },
+    {
+      "executable": false,
+      "path": "frontend/lib/channels.ts",
+      "sha256": "e9654b5f13478cb1e9208777265937868f8d9bffdb2759216d2a843a55b54bf3",
+      "size": 4302
+    },
+    {
+      "executable": false,
+      "path": "frontend/lib/checkin-risk.ts",
+      "sha256": "1867a769ff509a062381604dc1b6885b5db08c60b444db2b849ac11d3b6d2dea",
+      "size": 1927
+    },
+    {
+      "executable": false,
+      "path": "frontend/lib/cost-share-constants.ts",
+      "sha256": "fdcbc4ab1abc23ccf492b71b8d00c9cbb93834c5962f9b4f64c15f9893176321",
+      "size": 4941
+    },
+    {
+      "executable": false,
+      "path": "frontend/lib/create-orders.ts",
+      "sha256": "b03cf97bee4ca5a2549bb7ef2df2967f0f627abcaed6ceb475acb3480cd2cdb7",
+      "size": 2088
+    },
+    {
+      "executable": false,
+      "path": "frontend/lib/customer-api.ts",
+      "sha256": "0680f6dadd3eb44068cad06b9d205c31cd4136eb067b565617e04bce3e965d4e",
+      "size": 3987
+    },
+    {
+      "executable": false,
+      "path": "frontend/lib/customer-store.ts",
+      "sha256": "3fb1aa7b7149db330a9d1efb9e954cdca9059acae10a407eff9558597143811d",
+      "size": 1212
+    },
+    {
+      "executable": false,
+      "path": "frontend/lib/dashboard-peek.ts",
+      "sha256": "f6bb2765c3bb094d23130ed9598bc9e9064dea42e40c6f231682833edbeadabf",
+      "size": 5281
+    },
+    {
+      "executable": false,
+      "path": "frontend/lib/datetime-field.ts",
+      "sha256": "3a158f7762d41152be0867f9ca5ebc8941a934e787c17ea059277aa7251ec709",
+      "size": 1404
+    },
+    {
+      "executable": false,
+      "path": "frontend/lib/design-tokens.ts",
+      "sha256": "3a896c36562f83fdef50939db1bc10fad6c271048e4180028b330fdf5db12267",
+      "size": 4074
+    },
+    {
+      "executable": false,
+      "path": "frontend/lib/drag-reschedule.ts",
+      "sha256": "ca76906eed616739bc20179036e8f297692d06e9bebc4122249e2f6309ccd9fd",
+      "size": 6816
+    },
+    {
+      "executable": false,
+      "path": "frontend/lib/expense-grouping.ts",
+      "sha256": "ed9ab22ba02131681749a3da21ea1d6cc600d02b840a963210e12d1e4004fd05",
+      "size": 3390
+    },
+    {
+      "executable": false,
+      "path": "frontend/lib/focus-store.ts",
+      "sha256": "cd4017dd9891606ba9aaee56c05403d1c984b6e3a82fa6dbeb742aeaab8b6f93",
+      "size": 1804
+    },
+    {
+      "executable": false,
+      "path": "frontend/lib/gantt-autoscroll.ts",
+      "sha256": "4f2d1bf3f5d0d0a98e078f626c5bc2ac129187b6efdc67616345f9c66bc97956",
+      "size": 1871
+    },
+    {
+      "executable": false,
+      "path": "frontend/lib/gantt-bar-style.ts",
+      "sha256": "d21dccdb366bf7729016b9bb085b303d5a7cc5a5224e20caab6e06ef285b6c18",
+      "size": 6895
+    },
+    {
+      "executable": false,
+      "path": "frontend/lib/gantt-window.ts",
+      "sha256": "a13793372c49db7bed00193792c3da3ad33a42a19cbafd6cc925a26acca14b21",
+      "size": 4448
+    },
+    {
+      "executable": false,
+      "path": "frontend/lib/mobile-device.ts",
+      "sha256": "26a1b34b8f0a2b7b5489a22c71321899f132231478c98a139bcf57d8b24d8fe9",
+      "size": 1128
+    },
+    {
+      "executable": false,
+      "path": "frontend/lib/nav-config.tsx",
+      "sha256": "065c1fc4eddfd031b4281ae73c5edb52d3564cdcd42ceb5f208013e18a90a039",
+      "size": 4920
+    },
+    {
+      "executable": false,
+      "path": "frontend/lib/new-order-alert.ts",
+      "sha256": "424e34c055b07f1ae77e3a11dc4d8a59f9d391b11d500593079caf3699129350",
+      "size": 3378
+    },
+    {
+      "executable": false,
+      "path": "frontend/lib/new-order-sound.ts",
+      "sha256": "959cfb3752c435ec85b0ec2d7860943c2e02e19192eb3a32a73f61b62b8b18a8",
+      "size": 3660
+    },
+    {
+      "executable": false,
+      "path": "frontend/lib/new-order-store.ts",
+      "sha256": "fa77f984461c739c0c1578021dba01418cefba6c4b4ab9ff0cdeba77fdf75b9d",
+      "size": 3594
+    },
+    {
+      "executable": false,
+      "path": "frontend/lib/order-cache.ts",
+      "sha256": "584272772c247837c8ec3bad2ac783ec397db5c83f6d576cd7627b5f18928a8c",
+      "size": 3952
+    },
+    {
+      "executable": false,
+      "path": "frontend/lib/order-dates.ts",
+      "sha256": "663d19a690d4531e6df8cd9966ce77f90adfad5243ac4dffd605b8582b351514",
+      "size": 2866
+    },
+    {
+      "executable": false,
+      "path": "frontend/lib/order-display.ts",
+      "sha256": "be40bedcb61cd9ab5db5cd84bf514d9f5d6bba3d80a10ac0fb304799fa8dd3fc",
+      "size": 547
+    },
+    {
+      "executable": false,
+      "path": "frontend/lib/order-rooms.ts",
+      "sha256": "4a20d2303ad718980adfdf1a97d46b0984fc12d6f2cd4364f0216c937141f004",
+      "size": 9220
+    },
+    {
+      "executable": false,
+      "path": "frontend/lib/orders-url-filters.ts",
+      "sha256": "136d630facac00be25b198db3f26d0db9d595ccb36115c1bc1595ab0663f710a",
+      "size": 777
+    },
+    {
+      "executable": false,
+      "path": "frontend/lib/owner-api.ts",
+      "sha256": "142f79a5e72ce1164bfcae5873a2efac5dc8f64054d5d528bc995666ba1ab4b7",
+      "size": 8457
+    },
+    {
+      "executable": false,
+      "path": "frontend/lib/owner-expense-breakdown.ts",
+      "sha256": "849fe32791469064ead2567fa9f675b09ed8f2876388ab95f2dc332ab418daca",
+      "size": 6869
+    },
+    {
+      "executable": false,
+      "path": "frontend/lib/owner-grouping.ts",
+      "sha256": "7e652ac28af72c5f5103e3bd870b9cdcc17d7618fedba2947aecac6735a0de60",
+      "size": 1806
+    },
+    {
+      "executable": false,
+      "path": "frontend/lib/owner-occupancy.ts",
+      "sha256": "d785c166aec5d48d1ea662e39da314f09cd46ccbe738f0df6f7b7637848b9641",
+      "size": 2689
+    },
+    {
+      "executable": false,
+      "path": "frontend/lib/owner-session.ts",
+      "sha256": "f440f7c3c57595d862795233109929f4b33e6f4d265c31d3243b94f67ba95079",
+      "size": 1316
+    },
+    {
+      "executable": false,
+      "path": "frontend/lib/owner-settlement-terms.ts",
+      "sha256": "152d45c51871ac8f1e2585d717117c13b4eef81ada1c469d4abcf5bf6ea087d6",
+      "size": 1671
+    },
+    {
+      "executable": false,
+      "path": "frontend/lib/owner-store.ts",
+      "sha256": "daa1209008d941dfe4d5647ce7d14c76d5a9113e9d712cec332ecb84396706e3",
+      "size": 1072
+    },
+    {
+      "executable": false,
+      "path": "frontend/lib/owner-trend.ts",
+      "sha256": "1fdd46878a435da57f09c3f8f086bfc32f101b34bb65412693372b3f9fb929dc",
+      "size": 2081
+    },
+    {
+      "executable": false,
+      "path": "frontend/lib/responsive.ts",
+      "sha256": "b29990adb6f69f8ce670e673f079a2bf0101ea3ab2069d6848195d4d4c702647",
+      "size": 4279
+    },
+    {
+      "executable": false,
+      "path": "frontend/lib/room-status-summary.ts",
+      "sha256": "38a67ac0e980926cbe01892b3866c355848bc31807eea085983c549e977d4791",
+      "size": 963
+    },
+    {
+      "executable": false,
+      "path": "frontend/lib/room-types.ts",
+      "sha256": "97e2a642673756be47d35b7318f51a09fedb2390821015f514d853e672d760e7",
+      "size": 2100
+    },
+    {
+      "executable": false,
+      "path": "frontend/lib/staff-api.ts",
+      "sha256": "a7b550c8530fdd5185371dafe8252fb49fdf6724a349d3877cbe2aa25bc9a37d",
+      "size": 5246
+    },
+    {
+      "executable": false,
+      "path": "frontend/lib/staff-store.ts",
+      "sha256": "56fcd0f96dee9ef4747a5c2b4eeffce5f44cc1010658a2e59b6abbc159dfb46a",
+      "size": 1178
+    },
+    {
+      "executable": false,
+      "path": "frontend/lib/status-display.ts",
+      "sha256": "0e783b51ad3a919cdcefa73f0272b34fc3a38e9b5a64996aca38bb914541c3e3",
+      "size": 4915
+    },
+    {
+      "executable": false,
+      "path": "frontend/lib/stay-group-actions.ts",
+      "sha256": "2b0c538c9323ab3d2c15f4e4de24b6aabd8d5b4c840db8e62013ee55585db86f",
+      "size": 688
+    },
+    {
+      "executable": false,
+      "path": "frontend/lib/stay-group-display.ts",
+      "sha256": "e8ee28df31cb22248c02293a2adce99fbadb0a627f6ffd1097a7ac0bfd04b7a1",
+      "size": 1157
+    },
+    {
+      "executable": false,
+      "path": "frontend/lib/text.ts",
+      "sha256": "b1f4288cecd86ce64113498fad20e22644471f424d3dbdbc05e7a1c6c5ea184c",
+      "size": 1235
+    },
+    {
+      "executable": false,
+      "path": "frontend/lib/types.ts",
+      "sha256": "c67ce8bb6abf4c72a7c6fe440d907fff34feb92f30d867917faad23cf52c7c56",
+      "size": 34353
+    },
+    {
+      "executable": false,
+      "path": "frontend/lib/utils.ts",
+      "sha256": "6ae7f5d08a3fddd6557a2d2561f9a8639596151036ff5741a2742e5b3b734d78",
+      "size": 3271
+    },
+    {
+      "executable": false,
+      "path": "frontend/middleware.ts",
+      "sha256": "62a4af8c5b617c4ddaa1a86b3a105f4bffc0cffa0473e32ed1ba41cba0b86350",
+      "size": 2626
+    },
+    {
+      "executable": false,
+      "path": "frontend/next-env.d.ts",
+      "sha256": "9dd9d642cdb87d4d5b3173217e0c45429b3e47a6f5cf5fb0ead6c644ec5fed01",
+      "size": 228
+    },
+    {
+      "executable": false,
+      "path": "frontend/next.config.js",
+      "sha256": "708843299fa772ad1bfb0ac8917b293e596d4b46d16969fd3267fdcff034923d",
+      "size": 592
+    },
+    {
+      "executable": false,
+      "path": "frontend/package-lock.json",
+      "sha256": "4f6296128fd242289c53707e7b32ee909b22fbc861fa7b5260dcfc3269f8ec92",
+      "size": 341434
+    },
+    {
+      "executable": false,
+      "path": "frontend/package.json",
+      "sha256": "77342d9fdc7737e72594a3898253a5ba8cb8a5de7a39f8416188bd677bfb8b13",
+      "size": 1359
+    },
+    {
+      "executable": false,
+      "path": "frontend/playwright.config.ts",
+      "sha256": "9bfd7536ffe2ea934ddc04aa13980e3d3f94cb0a75721113b61f62ca346d78d6",
+      "size": 1249
+    },
+    {
+      "executable": false,
+      "path": "frontend/public/.gitkeep",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    {
+      "executable": false,
+      "path": "frontend/public/tuoguan/case-1.jpg",
+      "sha256": "56d3fc4ebf42f605f81556e45ac29963cf7df839df4b4ea47a858ace53e4519a",
+      "size": 135958
+    },
+    {
+      "executable": false,
+      "path": "frontend/public/tuoguan/case-2.jpg",
+      "sha256": "878b631bb2ab40ebbff7a7a7a1abf6719c22d18866aac173b225352049aebd94",
+      "size": 163006
+    },
+    {
+      "executable": false,
+      "path": "frontend/public/tuoguan/case-3.jpg",
+      "sha256": "a90a76cf3544431532e73016265679ea682b994f157fbb165bc0a0f2b90dda5e",
+      "size": 133968
+    },
+    {
+      "executable": false,
+      "path": "frontend/public/tuoguan/case-4.jpg",
+      "sha256": "7a00c53bb061be1203d337dc1641092b970ec0d741f1a7c903399cfd29c52354",
+      "size": 103176
+    },
+    {
+      "executable": false,
+      "path": "frontend/public/tuoguan/case-5.jpg",
+      "sha256": "2524af0caedb048b336b48ee4a1b9b48688eb10aa0d03c193b371d5767e5805c",
+      "size": 130786
+    },
+    {
+      "executable": false,
+      "path": "frontend/public/tuoguan/case-6.jpg",
+      "sha256": "88a3292f1e8a458c6fd1b67d1aa8dad9460472053f10b3374e229dab236a3dcf",
+      "size": 117443
+    },
+    {
+      "executable": false,
+      "path": "frontend/public/tuoguan/hero.jpg",
+      "sha256": "72d2b63a55a09c225ea5fe5c1a9233a7ce4cc9cfe9f1e31a8156fc5fb82de491",
+      "size": 163904
+    },
+    {
+      "executable": false,
+      "path": "frontend/public/tuoguan/wechat-qr-placeholder.svg",
+      "sha256": "6dcf927c7659634c190dded8c9bef50fe1e9974576721f186c6c97b6b3533eb1",
+      "size": 424
+    },
+    {
+      "executable": false,
+      "path": "frontend/public/tuoguan/wechat-qr.png",
+      "sha256": "28e4010a8d222d6910a246217b59fbd541960748e1c475631bb6ae6b67ecc5d4",
+      "size": 302671
+    },
+    {
+      "executable": false,
+      "path": "frontend/tailwind.config.ts",
+      "sha256": "25e0b7015b903925f6aa7070c6615183ce3f8179f7f658d6404dc04e51d6b37b",
+      "size": 784
+    },
+    {
+      "executable": false,
+      "path": "frontend/test/setup.ts",
+      "sha256": "b9b4fecd7859d94241990d869015c9601399e0875f9974b2716c929d9158fa33",
+      "size": 1863
+    },
+    {
+      "executable": false,
+      "path": "frontend/test/utils.tsx",
+      "sha256": "0551e4f569a4282d87f13da7e8cfd23476a9d90bdd2a7387b29af285e46d417b",
+      "size": 932
+    },
+    {
+      "executable": false,
+      "path": "frontend/tsconfig.json",
+      "sha256": "61e2c5d3c3dd57f086630c3d9ac6251dd638768e4b9a393a8040c4f34a6ea97b",
+      "size": 559
+    },
+    {
+      "executable": false,
+      "path": "frontend/vitest.config.ts",
+      "sha256": "02513814ccee009b5cbedae481b10a02b19e3e6ed1bad5a6aaaef05c369625fc",
+      "size": 650
+    }
+  ],
+  "revision": "2cbd1106b1169318e56fd8d3435b46008b101fd6",
+  "version": 1
+}

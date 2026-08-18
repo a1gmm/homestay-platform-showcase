@@ -1,0 +1,594 @@
+:root {
+  /* 岸屿 ÀN·YŬ 规范化调色板 */
+  --shell: #FBF8F1;
+  --sand: #F5F1EA;
+  --linen: #E5DDCB;
+  --driftwood: #A89680;
+  --stone: #6B665B;
+  --ink: #2B2721;
+  --ink-hover: #1A1612;
+  --sage: #7B8578;
+  --clay: #8A6E5A;
+
+  --text-primary: #2B2721;
+  --text-secondary: #5C5547;
+  --text-muted: #7A6F5F;
+  --text-disabled: #A89680;
+
+  /* 圆角 */
+  --radius-0: 0;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-pill: 999px;
+
+  /* 呼吸缓动 */
+  --ease-breath: cubic-bezier(0.2, 0.8, 0.2, 1);
+
+  /* 字体 */
+  --font-sans: var(--font-inter), 'Inter', 'PingFang SC', 'HarmonyOS Sans SC', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  --font-serif: 'Cormorant Garamond', var(--font-noto-serif-sc), 'Noto Serif SC', 'Songti SC', 'Source Han Serif SC', 'STSong', serif;
+
+  /* 旧变量 → 指向岸屿,让现有 inline style 自动适配 */
+  --brand-primary: var(--ink);
+  --brand-primary-hover: var(--ink-hover);
+  --brand-primary-soft: var(--sand);
+  --color-bg-page: var(--shell);
+  --color-bg-container: var(--shell);
+  --color-bg-subtle: var(--sand);
+  --color-bg-hover: var(--sand);
+  --color-border: var(--linen);
+  --color-border-subtle: var(--linen);
+  --color-text-primary: var(--ink);
+  --color-text-secondary: var(--text-secondary);
+  --color-text-tertiary: var(--text-muted);
+
+  /* 阴影清零(规范禁 shadow) */
+  --shadow-sm: none;
+  --shadow-md: none;
+  --shadow-lg: none;
+
+  /* 保留 safe area */
+  --safe-top: env(safe-area-inset-top);
+  --safe-bottom: env(safe-area-inset-bottom);
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+* { margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+
+html, body {
+  font-family: var(--font-sans);
+  background: var(--shell);
+  color: var(--ink);
+  font-size: 14px;
+  line-height: 1.6;
+  font-feature-settings: 'halt', 'palt'; /* CJK 标点压缩 */
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+body { min-height: 100vh; min-height: 100dvh; }
+/* 用 clip 而非 hidden：同样裁掉横向溢出，但 clip 不会把 body 变成滚动容器，
+   因此不会破坏侧边栏(Sider)的 position: sticky —— hidden 会让 overflow-y 隐式变 auto，
+   导致侧边栏跟着页面一起滚。 */
+html, body { overflow-x: clip; max-width: 100vw; }
+
+a { color: inherit; text-decoration: none; }
+
+/* 数字/表格等宽 */
+.num, .tabular {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum' 1, 'halt', 'palt';
+}
+
+/* 滚动条 — 墨色基调 */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: rgba(43, 39, 33, .14);
+  border-radius: 10px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(43, 39, 33, .28);
+  background-clip: padding-box;
+  border: 2px solid transparent;
+}
+
+/* 选中高亮 — sage 暖绿 */
+::selection { background: rgba(123, 133, 120, 0.22); }
+
+/* Focus 环 — ink */
+:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
+}
+
+/* ====== Ant Design 覆盖 ====== */
+
+.ant-layout {
+  min-height: 100vh;
+  min-height: 100dvh;
+  background: var(--shell);
+}
+
+.ant-layout-sider {
+  border-right: 0.5px solid var(--linen);
+}
+.ant-layout-header {
+  border-bottom: 0.5px solid var(--linen);
+}
+
+/* Menu 激活左侧 accent bar — 2px ink 替代 3px blue */
+.ant-menu-item-selected { position: relative; }
+.ant-menu-item-selected::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 8px;
+  bottom: 8px;
+  width: 2px;
+  border-radius: 0 2px 2px 0;
+  background: var(--ink);
+}
+
+/* 按钮 breath 曲线 */
+.ant-btn, .ant-menu-item, .ant-tabs-tab {
+  transition-timing-function: var(--ease-breath) !important;
+}
+.ant-btn:active { transform: scale(.97); }
+
+/* 表格精修 */
+.ant-table-thead > tr > th {
+  font-size: 12px !important;
+  font-weight: 500 !important;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--text-secondary) !important;
+  background: var(--sand) !important;
+}
+.ant-table-tbody > tr > td {
+  border-bottom: 0.5px solid var(--linen) !important;
+}
+.ant-table-tbody > tr.ant-table-row:hover > td {
+  background: var(--sand) !important;
+}
+
+/* 金额列 */
+td.col-amount {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum' 1;
+  text-align: right;
+}
+
+/* 模态 / 抽屉 — 米色底 */
+.ant-modal-content,
+.ant-modal-header,
+.ant-drawer-content {
+  background: var(--shell) !important;
+}
+
+/* ====== 工具类 ====== */
+
+/* 宋体/衬线类 — 用于数字、标题、品牌名 */
+.serif {
+  font-family: var(--font-serif);
+  font-feature-settings: 'halt', 'palt';
+  letter-spacing: 0;
+}
+
+/* 英文大写小标签 — SELECTED RESIDENCES 风格 */
+.en-label {
+  font-family: var(--font-sans);
+  font-size: 10px;
+  line-height: 1.4;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--driftwood);
+  font-weight: 400;
+}
+
+/* 卡片 hover 提升 — 配合组件 PR 挂载 */
+.card-hoverable {
+  transition: transform 500ms var(--ease-breath);
+  will-change: transform;
+}
+.card-hoverable:hover {
+  transform: translateY(-4px);
+}
+
+/* 进场动画 */
+@keyframes fade-up {
+  from { opacity: 0; transform: translateY(12px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.fade-up   { animation: fade-up 900ms var(--ease-breath) both; }
+.fade-up-2 { animation: fade-up 900ms var(--ease-breath) 120ms both; }
+.fade-up-3 { animation: fade-up 900ms var(--ease-breath) 240ms both; }
+
+/* 甘特「待办·未办入住」闪点：色块已用亮橙跳出，小点再脉动提醒还没办的活 */
+@keyframes gantt-todo-pulse {
+  0%, 100% { transform: scale(1);   opacity: 1;   }
+  50%      { transform: scale(1.5); opacity: 0.5; }
+}
+.gantt-todo-dot { animation: gantt-todo-pulse 1.4s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .gantt-todo-dot { animation: none; }
+}
+
+/* 旧 .fade-in 兼容 */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.fade-in { animation: fadeIn 400ms var(--ease-breath) both; }
+
+/* 状态小圆点 + 文字 */
+.status-dot {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+}
+.status-dot::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+/* 宝寓住宿控制：仅结算锚点使用边框面；差异/人工接管保持扁平分隔。 */
+.stay-settlement-anchor,
+.manual-control-panel,
+.split-stay-dialog,
+.split-stay-receipt,
+.source-price-dialog {
+  font-family: var(--font-sans);
+  letter-spacing: 0;
+}
+
+.stay-settlement-anchor {
+  background: var(--shell);
+  border: 0.5px solid var(--linen);
+  border-radius: var(--radius-md);
+  padding: 16px;
+}
+.stay-settlement-anchor h2,
+.split-stay-dialog h2,
+.split-stay-receipt h2 {
+  font-family: var(--font-sans);
+  font-size: 18px;
+  font-weight: 500;
+  letter-spacing: 0;
+}
+.stay-settlement-anchor__heading,
+.manual-control-heading-row,
+.split-stay-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+.stay-settlement-anchor__heading p,
+.split-stay-heading p,
+.manual-control-heading-row p,
+.source-price-dialog > p {
+  color: var(--text-secondary);
+  font-size: 13px;
+  margin-top: 2px;
+}
+.stay-settlement-labels {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.stay-settlement-anchor__impact,
+.source-price-comparison {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin-top: 16px;
+  border-top: 0.5px solid var(--linen);
+  border-bottom: 0.5px solid var(--linen);
+}
+.source-price-comparison { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.stay-settlement-anchor__impact > div,
+.source-price-comparison > div {
+  padding: 12px 0;
+  min-width: 0;
+}
+.stay-settlement-anchor__impact dt,
+.source-price-comparison dt,
+.manual-conflict-row dt,
+.manual-locked-fields dt,
+.split-stay-receipt dt {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+.stay-settlement-anchor__impact dd,
+.source-price-comparison dd {
+  color: var(--ink);
+  font-size: 16px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+}
+.stay-settlement-anchor__formula {
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+  margin-top: 12px;
+}
+.stay-settlement-anchor__actions,
+.split-stay-footer,
+.manual-modal-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.stay-settlement-anchor__actions { margin-top: 16px; }
+.stay-settlement-anchor__actions > span { color: var(--text-secondary); font-size: 12px; }
+
+.manual-control-section {
+  padding: 18px 0;
+  border-bottom: 0.5px solid var(--linen);
+}
+.manual-control-section h3,
+.split-preview h3 {
+  font-size: 15px;
+  font-weight: 500;
+  letter-spacing: 0;
+}
+.manual-control-heading-row > span,
+.manual-control-contact {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+.manual-control-empty { color: var(--text-muted); padding-top: 12px; }
+.manual-conflict-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 16px;
+  padding: 16px 0;
+  border-top: 0.5px solid var(--linen);
+}
+.manual-conflict-row:first-child { margin-top: 12px; }
+.manual-conflict-row h4 { font-size: 14px; font-weight: 500; }
+.manual-conflict-row dl,
+.manual-dialog-body dl {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  margin-top: 8px;
+}
+.manual-conflict-row dd,
+.manual-dialog-body dd,
+.manual-locked-fields dd,
+.split-stay-receipt dd {
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+.manual-conflict-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+}
+.manual-text-action {
+  min-height: 44px;
+  padding: 0 12px;
+  border: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.manual-locked-fields > div,
+.split-stay-receipt dl > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 10px 0;
+  border-top: 0.5px solid var(--linen);
+}
+.manual-locked-fields { margin-top: 12px; }
+.manual-reason-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 16px;
+}
+.manual-reason-field input,
+.manual-reason-field textarea,
+.split-night-row select { font-size: 16px; }
+
+.split-stay-child-view { padding: 14px; }
+.split-stay-heading > span { color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+.split-night-list { margin-top: 16px; }
+.split-night-row {
+  min-width: 0;
+  padding: 14px 0;
+  border: 0;
+  border-top: 0.5px solid var(--linen);
+}
+.split-night-row legend { font-size: 14px; font-weight: 500; }
+.split-night-row > label {
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+}
+.split-night-row select {
+  width: 100%;
+  min-height: 44px;
+  border: 0.5px solid var(--linen);
+  border-radius: var(--radius-sm);
+  background: var(--shell);
+  color: var(--ink);
+  padding: 0 10px;
+}
+
+.split-night-row select:focus-visible,
+.split-night-kind input:focus-visible,
+.source-price-mode input:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
+}
+
+.split-night-kind input,
+.source-price-mode input {
+  accent-color: var(--clay);
+}
+.split-night-kind { display: flex; flex-wrap: wrap; gap: 16px; margin-top: 12px; }
+.split-night-kind label { min-height: 44px; display: inline-flex; align-items: center; gap: 8px; }
+.split-preview { padding: 16px 0; border-top: 0.5px solid var(--linen); }
+.split-preview p { margin-top: 6px; font-variant-numeric: tabular-nums; }
+.split-stay-footer {
+  position: sticky;
+  bottom: 0;
+  margin: 16px -14px -14px;
+  padding: 12px 14px calc(12px + var(--safe-bottom));
+  border-top: 0.5px solid var(--linen);
+  background: var(--shell);
+  z-index: 2;
+}
+.split-stay-footer .ant-btn,
+.stay-settlement-anchor__actions .ant-btn,
+.manual-conflict-actions .ant-btn { min-height: 44px; }
+.split-stay-receipt > p { margin: 12px 0; font-size: 16px; font-weight: 500; }
+.split-stay-receipt > .ant-btn { margin-top: 16px; min-height: 44px; }
+
+@media (max-width: 767px) {
+  .stay-settlement-anchor__heading,
+  .manual-control-heading-row,
+  .split-stay-heading { flex-direction: column; gap: 8px; }
+  .stay-settlement-anchor__impact { grid-template-columns: 1fr; }
+  .stay-settlement-anchor__impact > div + div { border-top: 0.5px solid var(--linen); }
+  .manual-conflict-row { grid-template-columns: 1fr; }
+  .manual-conflict-row dl,
+  .manual-dialog-body dl { grid-template-columns: 1fr; }
+  .manual-conflict-actions { align-items: stretch; }
+  .split-stay-footer .ant-btn { flex: 1 1 0; }
+}
+
+/* Link 下划线扩展 */
+.link-underline {
+  position: relative;
+  padding-bottom: 3px;
+  color: var(--ink);
+}
+.link-underline::after {
+  content: '';
+  position: absolute;
+  left: 0; right: 0; bottom: 0;
+  height: 0.5px;
+  background: var(--ink);
+  transform-origin: left;
+  transition: transform 400ms var(--ease-breath);
+}
+.link-underline:hover::after { transform: scaleX(1.12); }
+
+/* ====== 移动端适配(保留 CLAUDE.md 既定规范) ====== */
+
+/* iOS 16px 防缩放 */
+@media (max-width: 1023px) {
+  input, select, textarea, .ant-input, .ant-select-selector { font-size: 16px !important; }
+  .ant-modal { max-width: calc(100vw - 24px) !important; margin: 12px auto !important; }
+  .ant-modal-body { max-height: 70vh; overflow-y: auto; }
+  .ant-modal-content { border-radius: 16px !important; }
+  .ant-drawer-content-wrapper { width: 100vw !important; max-width: 100vw !important; }
+  .ant-table-wrapper { overflow-x: auto; }
+}
+
+/* 安全区域 */
+.safe-bottom {
+  padding-bottom: max(12px, var(--safe-bottom));
+}
+
+/* 结构性移动/桌面切换按「设备类」而非窗口宽度 —— 电脑拉窄窗口不再翻转成手机版。
+   .is-mobile-device 由根布局挂载前的内联脚本按 UA 打（见 app/layout.tsx），
+   与 useIsMobile() 同源。用类而非 @media，避免桌面窄窗被误判为移动端。 */
+
+/* 桌面设备隐藏底部导航（移动端才渲染 BottomNav，这里再兜一层） */
+html:not(.is-mobile-device) .bottom-nav-container { display: none !important; }
+
+/* 移动设备隐藏全局搜索和用户信息文字 */
+html.is-mobile-device .global-search-wrapper { display: none !important; }
+html.is-mobile-device .user-info-text { display: none !important; }
+/* 侧边栏移动端隐藏：Sider 用 JS `!isMobile` 条件渲染，但 useIsMobile 首帧返回
+   false，SSR/水合首帧会把桌面侧边栏渲进 HTML 闪一下；设备类在挂载前的内联脚本
+   里就打好，CSS 兜底提前隐藏，杜绝移动端加载时的侧边栏闪烁。 */
+html.is-mobile-device .ant-layout-sider { display: none !important; }
+
+/* 移动设备 RangePicker 收敛为单月面板：antd 5 无单月开关，双月弹层 ~660px 在
+   375px 视口两侧被截基本不可用。弹层是 portal 但仍在 html 之下，这里全局收口，
+   覆盖所有入住/退房区间入口（开单弹窗/修改订单/订单筛选/财务页），组件零改动。
+   全套规则只圈 range 弹层（.ant-picker-dropdown-range），单 DatePicker 不受影响。
+   已知降级：跨月订单从「退房」输入框打开时，rc-picker 把 end 月锚在被藏的
+   第二面板（getEndDatePickerValue 对 multiplePanel 恒 -1 月），首屏显示的是
+   起始月，选中的退房日要点一次「下月」才可见。CSS 治不了（需逐组件控
+   pickerValue），比修复前整个弹层不可用仍是净改善，先接受。
+   （依赖 antd 5.29.3 / rc-picker 4.11.3 的内部 DOM，升级后跑
+   app/__tests__/mobile-rangepicker-dom.test.tsx 验结构。） */
+html.is-mobile-device .ant-picker-dropdown-range .ant-picker-panels > *:last-child {
+  display: none;
+}
+/* antd 把「下月/下年」按钮放在第二面板、第一面板的藏成 visibility:hidden；
+   砍掉第二面板后必须亮回第一面板的，否则永远翻不到下个月。 */
+html.is-mobile-device .ant-picker-dropdown-range .ant-picker-panels > *:first-child .ant-picker-header-next-btn,
+html.is-mobile-device .ant-picker-dropdown-range .ant-picker-panels > *:first-child .ant-picker-header-super-next-btn {
+  visibility: visible !important;
+}
+/* 弹层水平位置是 rc-trigger 按「箭头指向输入框」写的 inline left，单月面板在
+   窄屏可能被推出左缘（修改订单入口实测 -14px）；移动端统一水平居中
+   （!important 压过 inline style，也压过 slide-up 动画的 transform），
+   箭头随之失准索性隐藏。只圈 range 弹层（-dropdown-range）：单 DatePicker
+   （收款时间 showTime ~430px、月份选择等）居中会两边同时裁、左缘滚不到，
+   保持原生左对齐反而只溢右缘、可滚动补救。
+   注：整套规则的水平基准是视口（弹层 portal 挂 body）；将来若给 picker 传
+   getPopupContainer 挂进窄容器，50% 会变成相对容器，需重新评估。 */
+html.is-mobile-device .ant-picker-dropdown-range {
+  left: 50% !important;
+  right: auto !important;
+  transform: translateX(-50%) !important;
+}
+html.is-mobile-device .ant-picker-dropdown-range .ant-picker-range-arrow {
+  display: none;
+}
+/* rc-picker 在「面板窄于输入框」时会给 panel-container 写 inline marginLeft
+   把面板推向活动输入框（隐藏第二面板后恒成立）；竖屏手机上算出来是 0，
+   但横屏/宽屏手机 UA 会推出偏移，与居中打架，这里一并压平。 */
+html.is-mobile-device .ant-picker-dropdown-range .ant-picker-panel-container {
+  margin-left: 0 !important;
+}
+/* presets 快捷项（财务页「本月/上月」等）默认是左侧竖栏，跟单月面板并排仍会
+   挤爆 375px，改成堆在面板上方横向换行。 */
+html.is-mobile-device .ant-picker-dropdown-range .ant-picker-panel-layout {
+  flex-direction: column;
+}
+html.is-mobile-device .ant-picker-dropdown-range .ant-picker-presets {
+  max-width: none;
+  width: 100%;
+}
+html.is-mobile-device .ant-picker-dropdown-range .ant-picker-presets ul {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  /* antd 竖栏布局给 ul 的是 height:0 + flex:auto（靠旁边面板撑高），
+     堆叠后没有东西撑，会塌成一条缝把文字裁没，必须还原成内容高度。 */
+  height: auto;
+}
+html.is-mobile-device .ant-picker-dropdown-range .ant-picker-presets li {
+  margin: 0 !important; /* 竖栏的 li+li margin-top 在横向换行里会挤歪对齐，间距交给 gap */
+}
+
+/* Skeleton 渐变 — ink 基调替代原蓝灰 */
+.ant-skeleton-active .ant-skeleton-content .ant-skeleton-title,
+.ant-skeleton-active .ant-skeleton-content .ant-skeleton-paragraph > li,
+.ant-skeleton-active .ant-skeleton-paragraph > li,
+.ant-skeleton-active .ant-skeleton-title {
+  background: linear-gradient(90deg, rgba(43, 39, 33, .04) 25%, rgba(43, 39, 33, .10) 37%, rgba(43, 39, 33, .04) 63%) !important;
+  background-size: 400% 100% !important;
+}

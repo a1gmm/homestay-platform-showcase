@@ -1,0 +1,17 @@
+node_modules
+.next/
+.env
+.env*.local
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+dist/
+build/
+.DS_Store
+postgres_data/
+redis_data/
+*.tsbuildinfo
+.task8-e2e.sqlite3
+test-results/
+playwright-report/

@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200" viewBox="0 0 200 200">
+  <rect width="200" height="200" fill="#F5F5F5" stroke="#CCCCCC" stroke-width="2"/>
+  <text x="100" y="92" text-anchor="middle" font-size="14" fill="#999999" font-family="sans-serif">微信二维码</text>
+  <text x="100" y="116" text-anchor="middle" font-size="12" fill="#BBBBBB" font-family="sans-serif">（待替换）</text>
+</svg>
