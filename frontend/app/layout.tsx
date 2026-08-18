@@ -1,3 +1,4 @@
+import "@ant-design/v5-patch-for-react-19";
 import type { Metadata, Viewport } from "next";
 import { Inter, Cormorant_Garamond, Noto_Serif_SC } from "next/font/google";
 import "./globals.css";

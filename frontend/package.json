@@ -6,13 +6,14 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint",
+    "lint": "eslint .",
     "test": "vitest run",
     "test:e2e": "playwright test"
   },
   "dependencies": {
     "@ant-design/icons": "^5.5.1",
     "@ant-design/nextjs-registry": "^1.0.1",
+    "@ant-design/v5-patch-for-react-19": "^1.0.3",
     "@hookform/resolvers": "^3.9.0",
     "@tanstack/react-query": "^5.56.2",
     "antd": "^5.25.0",
@@ -21,9 +22,9 @@
     "date-fns": "^4.1.0",
     "dayjs": "^1.11.13",
     "lucide-react": "^0.469.0",
-    "next": "14.2.18",
-    "react": "^18",
-    "react-dom": "^18",
+    "next": "16.3.1",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
     "react-hook-form": "^7.53.0",
     "recharts": "^2.12.7",
     "tailwind-merge": "^2.5.4",
@@ -37,16 +38,30 @@
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^14.6.1",
     "@types/node": "^20",
-    "@types/react": "^18",
-    "@types/react-dom": "^18",
+    "@types/react": "19.2.18",
+    "@types/react-dom": "19.2.4",
     "@vitejs/plugin-react": "^6.0.3",
     "autoprefixer": "^10.0.1",
-    "eslint": "^8",
-    "eslint-config-next": "14.2.18",
+    "eslint": "^9.39.5",
+    "eslint-config-next": "16.3.1",
     "jsdom": "^29.1.1",
     "postcss": "^8",
     "tailwindcss": "^3.4.1",
     "typescript": "^5",
     "vitest": "^4.1.8"
+  },
+  "overrides": {
+    "@types/react": "19.2.18",
+    "@types/react-dom": "19.2.4"
+  },
+  "pnpm": {
+    "overrides": {
+      "brace-expansion@<2": "1.1.18",
+      "brace-expansion@>=4 <5.0.9": "5.0.9",
+      "js-yaml@<4.3.1": "4.3.1",
+      "nanoid@<3.3.18": "3.3.18",
+      "postcss@<=8.5.22": "8.5.23",
+      "undici@<7.29.0": "7.29.0"
+    }
   }
 }

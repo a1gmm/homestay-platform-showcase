@@ -3,7 +3,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render as rtlRender } from "@testing-library/react";
 
 // 组件测试统一入口：带 QueryClientProvider，关闭重试让失败立即可断言
-export function renderWithQuery(ui: ReactElement) {
+export function renderWithQuery(ui: ReactElement<any>) {
   const qc = new QueryClient({
     defaultOptions: {
       queries: { retry: false },

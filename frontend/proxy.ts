@@ -4,7 +4,7 @@ const ROOT_BRAND = "example.invalid";
 const ADMIN_HOST = `admin.${ROOT_BRAND}`;
 const TUOGUAN_HOST = `tuoguan.${ROOT_BRAND}`;
 
-export function middleware(req: NextRequest) {
+export function proxy(req: NextRequest) {
   const host = (req.headers.get("host") || "").toLowerCase().split(":")[0];
   const { pathname, search } = req.nextUrl;
 

@@ -1401,8 +1401,8 @@
     {
       "executable": false,
       "path": "frontend/app/(dashboard)/help/page.tsx",
-      "sha256": "578faeb846adf35ab989425699db017c2b9e75aa2dd94f647319f7579f86c3b1",
-      "size": 23381
+      "sha256": "0ef54d32e35e56125ce1a6ab365dd7b40d1deb997cd7a75b535a90b9c9a8576e",
+      "size": 23391
     },
     {
       "executable": false,
@@ -1557,8 +1557,8 @@
     {
       "executable": false,
       "path": "frontend/app/layout.tsx",
-      "sha256": "69c0e81901a8b844986c5f9e03b7ef24d55e13a658acbc327040a80a13f4f87b",
-      "size": 2007
+      "sha256": "19a8a8f84bf543a3e2e27c68bcff70e028baa0d1e7c6e1ad42d500e77d9a31b9",
+      "size": 2051
     },
     {
       "executable": false,
@@ -2090,6 +2090,12 @@
     },
     {
       "executable": false,
+      "path": "frontend/eslint.config.mjs",
+      "sha256": "fead551523f7fedda3dfd1ac513124306e871b9779eb871daf17fea80af58bf1",
+      "size": 553
+    },
+    {
+      "executable": false,
       "path": "frontend/hooks/useDashboard.ts",
       "sha256": "b3c97fd58e3394d871e820106e9f37997db1a09a7d0d748248f8ec63f4e5652d",
       "size": 1053
@@ -2468,39 +2474,39 @@
     },
     {
       "executable": false,
-      "path": "frontend/middleware.ts",
-      "sha256": "62a4af8c5b617c4ddaa1a86b3a105f4bffc0cffa0473e32ed1ba41cba0b86350",
-      "size": 2626
-    },
-    {
-      "executable": false,
       "path": "frontend/next-env.d.ts",
-      "sha256": "9dd9d642cdb87d4d5b3173217e0c45429b3e47a6f5cf5fb0ead6c644ec5fed01",
-      "size": 228
+      "sha256": "1862ac4bbbc5192d4bf562161df66ea547ed3e67173100656ab606ae9797db2b",
+      "size": 288
     },
     {
       "executable": false,
       "path": "frontend/next.config.js",
-      "sha256": "708843299fa772ad1bfb0ac8917b293e596d4b46d16969fd3267fdcff034923d",
-      "size": 592
+      "sha256": "a1a11ee1d372e1622f7937c89687493357f3c4dd376448a300eda4690ae93660",
+      "size": 477
     },
     {
       "executable": false,
       "path": "frontend/package-lock.json",
-      "sha256": "4f6296128fd242289c53707e7b32ee909b22fbc861fa7b5260dcfc3269f8ec92",
-      "size": 341434
+      "sha256": "20c647c9580db0e4f3572653db471a27d3784d38646996c3e4bfd94b94fa81fb",
+      "size": 362338
     },
     {
       "executable": false,
       "path": "frontend/package.json",
-      "sha256": "77342d9fdc7737e72594a3898253a5ba8cb8a5de7a39f8416188bd677bfb8b13",
-      "size": 1359
+      "sha256": "2a3d8f9a22d3c710777c4d450220db4e5cf4e2ecd39e021ba9d9627f350c7f6c",
+      "size": 1772
     },
     {
       "executable": false,
       "path": "frontend/playwright.config.ts",
       "sha256": "9bfd7536ffe2ea934ddc04aa13980e3d3f94cb0a75721113b61f62ca346d78d6",
       "size": 1249
+    },
+    {
+      "executable": false,
+      "path": "frontend/proxy.ts",
+      "sha256": "a6103321765f8a8f96fca07fcaa28a7010be33a731fca167cb60d57e2f260f57",
+      "size": 2621
     },
     {
       "executable": false,
@@ -2571,20 +2577,20 @@
     {
       "executable": false,
       "path": "frontend/test/setup.ts",
-      "sha256": "b9b4fecd7859d94241990d869015c9601399e0875f9974b2716c929d9158fa33",
-      "size": 1863
+      "sha256": "be0779143622bd21bc9ce202e9dd19fb54d9a00e84e09a95ca089e5f3d87b80d",
+      "size": 1907
     },
     {
       "executable": false,
       "path": "frontend/test/utils.tsx",
-      "sha256": "0551e4f569a4282d87f13da7e8cfd23476a9d90bdd2a7387b29af285e46d417b",
-      "size": 932
+      "sha256": "af440022f4fabbf180b9d2f53d43a72370b54641543e68ff2ad80043392f90f0",
+      "size": 937
     },
     {
       "executable": false,
       "path": "frontend/tsconfig.json",
-      "sha256": "61e2c5d3c3dd57f086630c3d9ac6251dd638768e4b9a393a8040c4f34a6ea97b",
-      "size": 559
+      "sha256": "7ceee51a21224e41fd3a237393cf1db38d203a3d29c47758459baf9b49f98b18",
+      "size": 695
     },
     {
       "executable": false,
@@ -2593,6 +2599,6 @@
       "size": 650
     }
   ],
-  "revision": "5fb5f4f84dc340b5780fada31a2e25481917f253",
+  "revision": "cfae36840ddb5d123b74c6e8d1bacb77662d1c3e",
   "version": 1
 }

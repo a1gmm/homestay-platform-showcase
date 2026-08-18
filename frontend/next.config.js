@@ -1,12 +1,8 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  output: "standalone",
-  // next build 不跑 ESLint: 历史代码有 react/no-unescaped-entities 等大量未清理的
-  // 违规, 跑 lint 会挡构建。CI 里 `next lint` 仍会跑 (非阻塞), 清完 backlog 后再
-  // 把这里去掉恢复 build 时检查。
-  eslint: {
-    ignoreDuringBuilds: true,
-  },
+  // Docker copies the standalone bundle, while Vercel builds its own function
+  // output and expects the regular Next.js tracing artifacts.
+  ...(process.env.VERCEL ? {} : { output: "standalone" }),
   async rewrites() {
     return [
       {
@@ -18,4 +14,3 @@ const nextConfig = {
 };
 
 module.exports = nextConfig;
-
