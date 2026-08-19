@@ -14,7 +14,7 @@ from sqlalchemy import exists, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.cleaning_pricing import INSTAY_CLEANING_FEE
+from app.core.cleaning_pricing import INSTAY_CLEANING_FEE, OWNER_SELF_INSTAY_CLEANING_FEE
 from app.core.config import settings
 from app.core.datetime_helpers import today_cn
 from app.core.trial_tags import trial_tag_for_notes
@@ -24,7 +24,7 @@ from app.models.cleaning_request import (
     CleaningRequestStatus,
 )
 from app.models.expense import Expense, ExpenseCategory, ExpensePayer
-from app.models.order import Order, OrderStatus
+from app.models.order import Order, OrderStatus, is_owner_self_order
 from app.models.order_room import OrderRoom
 from app.models.managed_stay_group import ManagedStayGroup, ManagedStayGroupKind
 from app.models.room import Room
@@ -585,15 +585,16 @@ async def approve_cleaning_request(
         )
     ).scalar_one_or_none()
     if exp is None:
+        owner_self = is_owner_self_order(order)
         exp = Expense(
             expense_id="EXP-" + uuid4().hex[:12].upper(),
             category=ExpenseCategory.cleaning,
-            amount=INSTAY_CLEANING_FEE,
+            amount=OWNER_SELF_INSTAY_CLEANING_FEE if owner_self else INSTAY_CLEANING_FEE,
             description=f"续住打扫 {room.room_name}",
             expense_date=ref,
             room_id=room.room_id,
             order_id=order.order_id,
-            payer=ExpensePayer.owner,
+            payer=ExpensePayer.company if owner_self else ExpensePayer.owner,
             owner_id=room.owner_id,
             notes=req.notes,
         )

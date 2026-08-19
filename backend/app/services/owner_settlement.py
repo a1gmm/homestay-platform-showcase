@@ -22,7 +22,7 @@ from datetime import date
 from decimal import Decimal
 from typing import Optional
 
-from sqlalchemy import select, extract, func
+from sqlalchemy import select, extract, func, or_, not_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import raiseload
 
@@ -33,7 +33,7 @@ from app.models.company_sponsored_stay import (
     PaymentResponsibility,
 )
 from app.models.company_sponsorship_adjustment import CompanySponsorshipAdjustment
-from app.models.order import BookingType, Order, OrderStatus, StaySettlementKind
+from app.models.order import BookingType, Channel, Order, OrderStatus, StaySettlementKind
 from app.models.order_room import OrderRoom
 from app.models.room import Room
 from app.models.room_cost_share import RoomCostShareRule
@@ -167,6 +167,10 @@ async def load_room_sponsorship_income(
         .where(OrderRoom.room_id.in_(room_ids))
         .where(Order.is_deleted == False)
         .where(Order.order_status != OrderStatus.cancelled)
+        .where(not_(or_(
+            Order.booking_type == BookingType.owner_self,
+            Order.channel == Channel.self_used,
+        )))
         .where(CompanySponsoredStay.status != CompanySponsorshipStatus.voided)
         .where(extract("year", OrderRoom.check_out_date) == year)
         .where(extract("month", OrderRoom.check_out_date) == month)
@@ -294,6 +298,10 @@ async def compute_room_month_owner_stat(
         .where(OrderRoom.room_id == room.room_id)
         .where(Order.is_deleted == False)
         .where(Order.order_status != OrderStatus.cancelled)
+        .where(not_(or_(
+            Order.booking_type == BookingType.owner_self,
+            Order.channel == Channel.self_used,
+        )))
         # 月度归属按「离店日期」算（王总 2026-07-14 拍板）：跨月单整笔归离店月，
         # 例 6/30 入住 7/1 离店 → 7 月。支出侧仍按 expense_date（发生日）归月。
         .where(extract("year", OrderRoom.check_out_date) == year)
@@ -373,6 +381,13 @@ async def compute_room_month_owner_stat(
             .outerjoin(Order, Order.order_id == Expense.order_id)
             .where(Expense.room_id == room.room_id)
             .where(Expense.is_deleted == False)
+            .where(or_(
+                Expense.order_id.is_(None),
+                not_(or_(
+                    Order.booking_type == BookingType.owner_self,
+                    Order.channel == Channel.self_used,
+                )),
+            ))
             .where(extract("year", Expense.expense_date) == year)
             .where(extract("month", Expense.expense_date) == month)
         )

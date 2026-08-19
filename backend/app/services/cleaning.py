@@ -14,13 +14,14 @@ from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+from app.core.cleaning_pricing import OWNER_SELF_CHECKOUT_CLEANING_FEE
 from app.core.datetime_helpers import now_cn
 from app.core.trial_tags import trial_tag_for_notes
 from app.services import service_fee_ledger
 from app.services.audit import log_action_tx
 from app.services.service_fees import ServiceFees, get_service_fees
 from app.models.expense import Expense, ExpenseCategory, ExpensePayer
-from app.models.order import Order, OrderStatus, CleaningStatus
+from app.models.order import Order, OrderStatus, CleaningStatus, is_owner_self_order
 from app.models.order_room import OrderRoom
 from app.models.room import Room, RoomStatus
 from app.models.task import Task, TaskType, TaskStatus, ReviewStatus
@@ -34,11 +35,12 @@ _RESTORABLE = (
 )
 
 
-def _add_owner_service_expense(
+def _add_service_expense(
     db: AsyncSession, *, room: Room, order_id: str,
     category: ExpenseCategory, amount, description: str, expense_date,
+    payer: ExpensePayer,
 ) -> None:
-    """记一条房东全担的自动服务费（is_service_fee=True）。"""
+    """记一条自动服务费（is_service_fee=True）。"""
     db.add(
         Expense(
             expense_id="EXP-" + uuid4().hex[:12].upper(),
@@ -48,7 +50,7 @@ def _add_owner_service_expense(
             expense_date=expense_date,
             room_id=room.room_id,
             order_id=order_id,
-            payer=ExpensePayer.owner,
+            payer=payer,
             owner_id=room.owner_id,
             is_service_fee=True,
         )
@@ -153,6 +155,12 @@ async def add_checkout_cleaning_charge(
         return False
 
     fees: ServiceFees = await get_service_fees(db)
+    order = await db.scalar(select(Order).where(Order.order_id == order_id))
+    owner_self = order is not None and is_owner_self_order(order)
+    payer = ExpensePayer.company if owner_self else ExpensePayer.owner
+    checkout_cleaning_fee = (
+        OWNER_SELF_CHECKOUT_CLEANING_FEE if owner_self else fees.checkout_cleaning_fee
+    )
     beds = room.beds
     nights = await _room_nights(db, order_id, room.room_id)
     expense_date = await _final_checkout_date(db, order_id, room.room_id)
@@ -167,7 +175,7 @@ async def add_checkout_cleaning_charge(
     candidates = (
         (
             ExpenseCategory.cleaning,
-            fees.checkout_cleaning_fee,
+            checkout_cleaning_fee,
             f"退房打扫 {room.room_name}",
         ),
         (
@@ -212,7 +220,7 @@ async def add_checkout_cleaning_charge(
     for category, amount, description in candidates:
         if amount <= 0 or category in existing_categories:
             continue
-        _add_owner_service_expense(
+        _add_service_expense(
             db,
             room=room,
             order_id=order_id,
@@ -220,6 +228,7 @@ async def add_checkout_cleaning_charge(
             amount=amount,
             description=description,
             expense_date=expense_date,
+            payer=payer,
         )
     return True
 

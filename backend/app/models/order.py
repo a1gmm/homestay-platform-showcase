@@ -114,6 +114,18 @@ class BookingType(str, enum.Enum):
     owner_self = "owner_self"
 
 
+def is_owner_self_order(order) -> bool:
+    """兼容渠道与订单类型两个入口，任一标为自住即按自住单处理。"""
+    booking_type = getattr(order, "booking_type", None)
+    channel = getattr(order, "channel", None)
+    return (
+        booking_type == BookingType.owner_self
+        or getattr(booking_type, "value", booking_type) == BookingType.owner_self.value
+        or channel == Channel.self_used
+        or getattr(channel, "value", channel) == Channel.self_used.value
+    )
+
+
 class StaySettlementKind(StrEnum):
     """Typed settlement classification for managed split-flow child segments.
 

@@ -30,7 +30,7 @@ from app.core.security import create_owner_token, hash_password, verify_password
 from app.core.datetime_helpers import today_cn
 from app.models.owner import Owner
 from app.models.room import Room
-from app.models.order import Order, OrderStatus
+from app.models.order import BookingType, Channel, Order, OrderStatus
 from app.models.room_block import RoomBlock
 from app.models.settlement import OwnerSettlement
 from app.services import otp_service, sms_service
@@ -533,6 +533,8 @@ async def owner_monthly_summary(
         .where(Room.owner_id.in_(scope))
         .where(Order.is_deleted == False)
         .where(Order.order_status != OrderStatus.cancelled)
+        .where(Order.booking_type != BookingType.owner_self)
+        .where(Order.channel != Channel.self_used)
         # 月度归属按离店日期（2026-07-14 拍板），与业主分账口径一致
         .where(extract("year", OrderRoom.check_out_date) == y)
         .where(extract("month", OrderRoom.check_out_date) == m)
@@ -622,6 +624,8 @@ async def owner_room_detail(
         .where(OrderRoom.room_id == room_id)
         .where(Order.is_deleted == False)
         .where(Order.order_status != OrderStatus.cancelled)
+        .where(Order.booking_type != BookingType.owner_self)
+        .where(Order.channel != Channel.self_used)
         # 月度归属按离店日期（2026-07-14 拍板），与业主分账口径一致
         .where(extract("year", OrderRoom.check_out_date) == y)
         .where(extract("month", OrderRoom.check_out_date) == m)
@@ -703,6 +707,8 @@ async def owner_calendar(
             OrderRoom.room_id.in_(owned_room_ids),
             Order.is_deleted == False,
             Order.order_status != OrderStatus.cancelled,
+            Order.booking_type != BookingType.owner_self,
+            Order.channel != Channel.self_used,
             OrderRoom.check_in_date <= month_end,
             OrderRoom.check_out_date >= month_start,
         )

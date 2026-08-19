@@ -14,7 +14,7 @@ from app.core.rate_limit import enforce_rate_limit
 from app.models.payment import Payment
 from app.models.refund import Refund, RefundReason
 from app.models.expense import Expense, ExpenseCategory, ExpensePayer, EXPENSE_CATEGORY_LABELS
-from app.models.order import Order, OrderStatus, PaymentStatus
+from app.models.order import Order, OrderStatus, PaymentStatus, is_owner_self_order
 from app.models.order_room import OrderRoom
 from app.models.room import Room
 from app.models.owner import Owner
@@ -509,6 +509,14 @@ async def create_expense(body: ExpenseCreate, db: DBSession, current_user: Curre
     data.pop("floor", None)  # floor 仅入参用于解析范围，不是 Expense 列
     await _resolve_expense_scope(db, data, floor=body.floor)
 
+    # 自住单关联的任何费用都由公司承担，不能靠前端 payer 输入绕过。
+    if data.get("order_id"):
+        linked_order = await db.scalar(
+            select(Order).where(Order.order_id == data["order_id"])
+        )
+        if linked_order is not None and is_owner_self_order(linked_order):
+            data["payer"] = ExpensePayer.company
+
     expense = Expense(
         expense_id="EXP-" + uuid.uuid4().hex[:12].upper(),
         created_by=current_user["user_id"],
@@ -586,15 +594,17 @@ async def create_renewal_cleaning_charge(
         )
 
     fees = await get_service_fees(db)
+    from app.core.cleaning_pricing import OWNER_SELF_INSTAY_CLEANING_FEE
+    owner_self = is_owner_self_order(order)
     expense = Expense(
         expense_id="EXP-" + uuid.uuid4().hex[:12].upper(),
         category=ExpenseCategory.cleaning,
-        amount=fees.instay_cleaning_fee,
+        amount=OWNER_SELF_INSTAY_CLEANING_FEE if owner_self else fees.instay_cleaning_fee,
         description=f"续住打扫 {room.room_name}",
         expense_date=today_cn(),
         room_id=room.room_id,
         order_id=order.order_id,
-        payer=ExpensePayer.owner,
+        payer=ExpensePayer.company if owner_self else ExpensePayer.owner,
         owner_id=room.owner_id,
         is_service_fee=True,
         notes=body.notes,

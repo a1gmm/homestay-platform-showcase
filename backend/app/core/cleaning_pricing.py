@@ -17,3 +17,7 @@ CHECKOUT_CLEANING_FEE = Decimal("65")            # 退房打扫
 INSTAY_CLEANING_FEE = Decimal("30")              # 续住 / 同订单 / 日常打扫
 LAUNDRY_FEE_PER_ROOM = Decimal("15")             # 洗涤（每间每单一次）
 CONSUMABLE_FEE_PER_ROOM_NIGHT = Decimal("22")    # 日耗品（每间每夜）
+
+# 自住单专用保洁标准。洗涤和日耗继续使用上面的统一费率。
+OWNER_SELF_CHECKOUT_CLEANING_FEE = Decimal("30")
+OWNER_SELF_INSTAY_CLEANING_FEE = Decimal("15")
