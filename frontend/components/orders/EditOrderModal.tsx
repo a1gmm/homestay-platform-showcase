@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect } from "react";
+import React, { useEffect, useState } from "react";
 import { extractErrorMessage } from "@/lib/api-errors";
 import {
   Modal,
@@ -50,6 +50,10 @@ interface Props {
 export default function EditOrderModal({ open, order, onClose }: Props) {
   const isMobile = useIsMobile();
   const [form] = Form.useForm();
+  const [saveConfirmation, setSaveConfirmation] = useState<{
+    warning: string;
+    payload: any;
+  } | null>(null);
   // 平台渠道才显示净房费输入 (#44)
   const watchedChannel = Form.useWatch("channel", form);
   const isPlatform = PLATFORM_CHANNELS.has(watchedChannel ?? "");
@@ -195,14 +199,10 @@ export default function EditOrderModal({ open, order, onClose }: Props) {
       roomFeeTotal: totalActual,
     });
     if (reversedWarn) {
-      Modal.confirm({
-        title: "金额可能填反了",
-        content: reversedWarn,
-        okText: "确定这样保存",
-        cancelText: "返回修改",
-        okButtonProps: { danger: true },
-        onOk: () => updateMutation.mutate(payload),
-      });
+      // 不用静态 Modal.confirm：本弹窗本身是从订单详情 Drawer 里打开的，静态确认框
+      // 在这层嵌套 portal 中可能没有可靠挂载，表现为点击保存后无任何反应。
+      // 改为组件内受控 Modal，并显式置于编辑弹窗之上。
+      setSaveConfirmation({ warning: reversedWarn, payload });
       return;
     }
     updateMutation.mutate(payload);
@@ -211,21 +211,22 @@ export default function EditOrderModal({ open, order, onClose }: Props) {
   if (!order) return null;
 
   return (
-    <Modal
-      open={open}
-      onCancel={onClose}
-      title={
-        <span>
-          <EditOutlined style={{ marginRight: 8 }} />
-          修改订单 #{order.order_id}
-        </span>
-      }
-      footer={null}
-      // 移动端用全宽 + 顶部小留白，避免默认 520px 横向溢出
-      width={isMobile ? "calc(100vw - 16px)" : 760}
-      style={isMobile ? { top: 12, paddingBottom: 0, maxWidth: "100vw" } : undefined}
-      destroyOnHidden
-    >
+    <>
+      <Modal
+        open={open}
+        onCancel={onClose}
+        title={
+          <span>
+            <EditOutlined style={{ marginRight: 8 }} />
+            修改订单 #{order.order_id}
+          </span>
+        }
+        footer={null}
+        // 移动端用全宽 + 顶部小留白，避免默认 520px 横向溢出
+        width={isMobile ? "calc(100vw - 16px)" : 760}
+        style={isMobile ? { top: 12, paddingBottom: 0, maxWidth: "100vw" } : undefined}
+        destroyOnHidden
+      >
       <Form form={form} layout="vertical" onFinish={handleSubmit}>
         <Row gutter={16}>
           <Col xs={24} sm={12}>
@@ -433,6 +434,24 @@ export default function EditOrderModal({ open, order, onClose }: Props) {
           </Button>
         </div>
       </Form>
-    </Modal>
+      </Modal>
+      <Modal
+        open={saveConfirmation !== null}
+        title="金额可能填反了"
+        okText="确定这样保存"
+        cancelText="返回修改"
+        okButtonProps={{ danger: true }}
+        zIndex={1100}
+        onCancel={() => setSaveConfirmation(null)}
+        onOk={() => {
+          if (!saveConfirmation) return;
+          const { payload } = saveConfirmation;
+          setSaveConfirmation(null);
+          updateMutation.mutate(payload);
+        }}
+      >
+        {saveConfirmation?.warning}
+      </Modal>
+    </>
   );
 }

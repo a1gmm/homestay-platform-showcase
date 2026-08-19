@@ -1731,8 +1731,8 @@
     {
       "executable": false,
       "path": "frontend/components/orders/EditOrderModal.tsx",
-      "sha256": "a09ba14083561b21e79005db000178ffcd89c66779164933ae77f927d62effef",
-      "size": 18307
+      "sha256": "568d7ce71d771bfd6a355c411a283e9039e1a62324b9d5103a27aa99a0868ab3",
+      "size": 19103
     },
     {
       "executable": false,
@@ -2599,6 +2599,6 @@
       "size": 650
     }
   ],
-  "revision": "535cf23cf85cf7b5afe54860688f90f698f67462",
+  "revision": "09fac10c68a7252481e7b208b96720ba08547d63",
   "version": 1
 }
