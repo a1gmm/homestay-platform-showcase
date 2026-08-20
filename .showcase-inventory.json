@@ -1437,8 +1437,8 @@
     {
       "executable": false,
       "path": "frontend/app/(dashboard)/rooms/page.tsx",
-      "sha256": "f3db1ddedf716df868733d6eaa05c28eb99316675801b4540bdadc6ec28e958e",
-      "size": 57432
+      "sha256": "a81e6abd58e71d29115cc8dce8a8cf31d51419c5c28a3659ca83bf1781081751",
+      "size": 56744
     },
     {
       "executable": false,
@@ -2103,8 +2103,8 @@
     {
       "executable": false,
       "path": "frontend/hooks/useDragReschedule.ts",
-      "sha256": "cf638c96777fffd737c396cdc36da981e8aab1d516ee17878da6d00359a1b27d",
-      "size": 5466
+      "sha256": "baf70e23d19d71615501a68a4d84b3353911225ab2b03b24ecbc58f99d31b54e",
+      "size": 6245
     },
     {
       "executable": false,
@@ -2599,6 +2599,6 @@
       "size": 650
     }
   ],
-  "revision": "bf123a5507f862c95f83c861cd6dd9060fe2bc30",
+  "revision": "fd16fcfd7f781ae098d3709e23a41ddec5183301",
   "version": 1
 }

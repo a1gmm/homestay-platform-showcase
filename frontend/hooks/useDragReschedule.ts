@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useRef, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Button, message, notification } from "antd";
 import { ordersApi } from "@/lib/api";
@@ -36,7 +36,27 @@ export function useDragReschedule() {
   // dragging order id 用于 GanttView cell 视觉反馈
   const [draggingOrderId, setDraggingOrderId] = useState<string | null>(null);
   const [dragSource, setDragSource] = useState<DragSource | null>(null);
+  // 原生 dragover 可能紧跟 dragstart 触发，早于 React state 重渲染。
+  // 用 ref 同步记录会话，避免首个 dragover 未 preventDefault、浏览器直接吞掉 drop。
+  const dragSessionRef = useRef<{ orderId: string; source: DragSource } | null>(null);
   const [lastDragSnapshot, setLastDragSnapshot] = useState<DragSnapshot | null>(null);
+
+  const startDrag = (orderId: string, source: DragSource) => {
+    dragSessionRef.current = { orderId, source };
+    setDraggingOrderId(orderId);
+    setDragSource(source);
+  };
+
+  const clearDrag = () => {
+    dragSessionRef.current = null;
+    setDraggingOrderId(null);
+    setDragSource(null);
+  };
+
+  const canDropOnCell = (occupied: boolean) => {
+    const session = dragSessionRef.current;
+    return Boolean(session && !(session.source === "pending" && occupied));
+  };
 
   const assignRoomMutation = useMutation({
     mutationFn: ({ orderId, roomId }: { orderId: string; roomId: string }) =>
@@ -135,8 +155,11 @@ export function useDragReschedule() {
 
   return {
     contextHolder,
-    draggingOrderId, setDraggingOrderId,
-    dragSource, setDragSource,
+    draggingOrderId,
+    dragSource,
+    startDrag,
+    clearDrag,
+    canDropOnCell,
     lastDragSnapshot, setLastDragSnapshot,
     assignRoomMutation,
     dragRescheduleMutation,

@@ -107,8 +107,8 @@ export default function RoomsPage() {
   // Phase 2 拖拽排房/换房/改期：state + 撤销快照 + 三个 mutation 收敛到 useDragReschedule
   const {
     contextHolder,
-    draggingOrderId, setDraggingOrderId,
-    dragSource, setDragSource,
+    draggingOrderId,
+    startDrag, clearDrag, canDropOnCell,
     lastDragSnapshot, setLastDragSnapshot,
     assignRoomMutation,
     dragRescheduleMutation,
@@ -589,14 +589,10 @@ export default function RoomsPage() {
         draggable={!isMobile && view === "gantt"}
         collapsible={focusActive}
         onDragStart={(o, e) => {
-          setDraggingOrderId(o.order_id);
-          setDragSource("pending");
+          startDrag(o.order_id, "pending");
           e.dataTransfer.setData("text/source-type", "pending");
         }}
-        onDragEnd={() => {
-          setDraggingOrderId(null);
-          setDragSource(null);
-        }}
+        onDragEnd={clearDrag}
       />
       )}
 
@@ -752,10 +748,9 @@ export default function RoomsPage() {
             openCreateAt({ room_id: roomId, check_in_date: date, check_out_date: `${y}-${m}-${d}` });
           }}
           onCellDragOver={(_roomId, _date, day, e) => {
-            // 拖拽中需 preventDefault 才能允许 drop
-            if (!draggingOrderId) return;
-            // pending 源只允许放空格；gantt 源允许放空格（占用格 onDrop 内拦截）
-            if (dragSource === "pending" && day) return;
+            // 原生 dragover 可能早于 React state 重渲染，必须读同步拖拽会话；
+            // 否则首个 dragover 不 preventDefault，浏览器会直接吞掉后续 drop。
+            if (!canDropOnCell(Boolean(day))) return;
             e.preventDefault();
             e.dataTransfer.dropEffect = "move";
           }}
@@ -764,8 +759,7 @@ export default function RoomsPage() {
             const orderId = e.dataTransfer.getData("text/order-id");
             const sourceType = e.dataTransfer.getData("text/source-type");
             if (!orderId) {
-              setDraggingOrderId(null);
-              setDragSource(null);
+              clearDrag();
               return;
             }
             // 分支 1：待排房卡片 → 空格（现有逻辑）
@@ -775,8 +769,7 @@ export default function RoomsPage() {
               } else {
                 assignRoomMutation.mutate({ orderId, roomId });
               }
-              setDraggingOrderId(null);
-              setDragSource(null);
+              clearDrag();
               return;
             }
             // 分支 2 / 3：gantt 已排房订单
@@ -786,17 +779,12 @@ export default function RoomsPage() {
               const sourceOrderRoomId = e.dataTransfer.getData("text/source-order-room-id");
               // 同位置不动
               if (sourceRoomId === roomId && sourceDate === date) {
-                setDraggingOrderId(null);
-                setDragSource(null);
+                clearDrag();
                 return;
               }
               // 目标占用 → 尝试对调两个订单的房间
               if (day) {
                 const targetOrderId = day.order_id;
-                const clearDrag = () => {
-                  setDraggingOrderId(null);
-                  setDragSource(null);
-                };
                 // 拖到自己（多房订单的另一行/同单）不处理
                 if (!targetOrderId || targetOrderId === orderId) {
                   clearDrag();
@@ -937,8 +925,7 @@ export default function RoomsPage() {
                   const roomChanged = roomId !== draggedRow.room_id;
                   const datesChanged = offsetDays !== 0;
                   if (!roomChanged && !datesChanged) {
-                    setDraggingOrderId(null);
-                    setDragSource(null);
+                    clearDrag();
                     return;
                   }
 
@@ -1111,17 +1098,14 @@ export default function RoomsPage() {
                 .catch((e: any) => {
                   message.error(extractErrorMessage(e, "拉取订单失败"));
                 });
-              setDraggingOrderId(null);
-              setDragSource(null);
+              clearDrag();
               return;
             }
             // 兜底
-            setDraggingOrderId(null);
-            setDragSource(null);
+            clearDrag();
           }}
           onCellDragStart={(orderId, source, e) => {
-            setDraggingOrderId(orderId);
-            setDragSource("gantt");
+            startDrag(orderId, "gantt");
             e.dataTransfer.setData("text/order-id", orderId);
             e.dataTransfer.setData("text/source-type", "gantt");
             e.dataTransfer.setData("text/source-room-id", source.roomId);
@@ -1132,10 +1116,7 @@ export default function RoomsPage() {
             }
             e.dataTransfer.effectAllowed = "move";
           }}
-          onCellDragEnd={() => {
-            setDraggingOrderId(null);
-            setDragSource(null);
-          }}
+          onCellDragEnd={clearDrag}
           draggingOrderId={draggingOrderId}
           barColorMode="completion"
         />
