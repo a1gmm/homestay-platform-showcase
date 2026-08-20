@@ -682,12 +682,16 @@ export const auditApi = {
 export const exportApi = {
   orders: (params?: { status?: string; check_in_from?: string; check_in_to?: string }) =>
     api.get("/export/orders", { params, responseType: "blob" }),
-  finance: (params: { year?: number; month?: number; start_date?: string; end_date?: string }) =>
+  finance: (params: { year?: number; month?: number; start_date?: string; end_date?: string; floor?: number; owner_id?: string; room_id?: string }) =>
     api.get("/export/finance", { params, responseType: "blob" }),
   settlements: (billing_month?: string) =>
     api.get("/export/settlements", { params: { billing_month }, responseType: "blob" }),
   settlementStatement: (settlement_id: string) =>
     api.get(`/export/settlements/${settlement_id}/statement`, { responseType: "blob" }),
+  settlementIncomeDetail: (settlement_id: string) =>
+    api.get(`/export/settlements/${settlement_id}/income-detail`, { responseType: "blob" }),
+  settlementPackage: (settlement_id: string) =>
+    api.get(`/export/settlements/${settlement_id}/package`, { responseType: "blob" }),
 };
 
 // ─── Search (Feature C) ─────────────────────────────────────────────────────

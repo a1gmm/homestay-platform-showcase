@@ -830,10 +830,10 @@ async def summary_by_room(
     聚合字段:
       revenue        = SUM(orders.actual_price) WHERE check_out_date IN range
       commission     = SUM(revenue * platform_commission_rate)
-      net_revenue    = revenue - commission
+      net_revenue    = revenue - commission + OTA平台补贴
       expense_company= SUM(expenses.amount) WHERE payer=company
       expense_owner  = SUM(expenses.amount) WHERE payer=owner
-      owner_net_share= (net_revenue - expense_owner) * owner_share_ratio
+      owner_net_share= net_revenue * owner_share_ratio - 按规则加权后的业主支出
     """
     if current_user["role"] not in ("admin", "operator", "finance", "owner"):
         raise HTTPException(status_code=403, detail="无权查看分账")
@@ -848,50 +848,6 @@ async def summary_by_room(
         end_date = date(year, month, days)
     if end_date < start_date:
         raise HTTPException(status_code=400, detail="end_date 必须 >= start_date")
-
-    # Multi-room: 月报按 order_rooms 粒度聚合。多房订单的每行有独立 actual_price /
-    # check_in_date，每条 OrderRoom 单独计入对应房间的月报。佣金逐行 Python 算
-    # （order_room_commission 共享口径）：手填每房净房费的行按房费−净值，否则按房费×整单
-    # 佣金率。与结算/业主门户口径一致（评审 2026-07-05 修复口径分叉）。
-    from app.models.order_room import OrderRoom
-    from app.services.order_pricing import (
-        effective_owner_revenue_for_room, order_room_commission,
-    )
-    or_rows = (await db.execute(
-        select(OrderRoom, Order.platform_commission_rate, Order.metadata_)
-        .join(Order, Order.order_id == OrderRoom.order_id)
-        .where(Order.is_deleted == False)
-        .where(Order.order_status != OrderStatus.cancelled)
-        .where(OrderRoom.room_id.isnot(None))
-        # 收入按离店日期归属（2026-07-14 拍板），与结算/业主门户口径一致
-        .where(OrderRoom.check_out_date >= start_date)
-        .where(OrderRoom.check_out_date <= end_date)
-    )).all()
-    # 每单总房间数：单房单可直接用订单级原始到手结算（与结算/门户同口径，2026-07-14）
-    order_ids_all = {r[0].order_id for r in or_rows}
-    room_counts: dict = {}
-    if order_ids_all:
-        room_counts = dict((await db.execute(
-            select(OrderRoom.order_id, func.count())
-            .where(OrderRoom.order_id.in_(order_ids_all))
-            .group_by(OrderRoom.order_id)
-        )).all())
-
-    class _RoomAgg:
-        __slots__ = ("revenue", "commission", "order_ids")
-        def __init__(self):
-            self.revenue = Decimal("0"); self.commission = Decimal("0"); self.order_ids = set()
-
-    rev_rows: dict[str, _RoomAgg] = {}
-    for or_row, comm_rate, order_meta in or_rows:
-        agg = rev_rows.setdefault(or_row.room_id, _RoomAgg())
-        agg.revenue += Decimal(or_row.actual_price or 0)
-        per_room_net = effective_owner_revenue_for_room(
-            or_row.ota_owner_revenue, or_row.actual_price, order_meta,
-            room_counts.get(or_row.order_id))
-        agg.commission += order_room_commission(
-            or_row.actual_price, per_room_net, comm_rate)
-        agg.order_ids.add(or_row.order_id)  # 按订单去重(#98): 换房分段一单算一次
 
     # Expenses per room, split by payer
     exp_q = (
@@ -918,22 +874,22 @@ async def summary_by_room(
     rooms_result = await db.execute(select(Room).order_by(Room.room_id))
     rooms = rooms_result.scalars().all()
 
+    # 唯一正式口径：补贴、单房 OTA 原始到手、RoomCostShareRule 和 v2 分成公式
+    # 全部复用结算服务。按房号页不再维护第二套近似公式。
+    from app.services.owner_settlement import compute_room_period_owner_stat
+
     out: list[ByRoomSummaryItem] = []
     for room in rooms:
-        rev = rev_rows.get(room.room_id)
+        stat = await compute_room_period_owner_stat(db, room, start_date, end_date)
         exp = exp_rows.get(room.room_id)
-        revenue = rev.revenue if rev else Decimal("0")
-        commission = rev.commission if rev else Decimal("0")
-        order_count = len(rev.order_ids) if rev else 0
+        revenue = stat.revenue
+        commission = stat.commission
+        order_count = stat.order_count
         expense_company = Decimal(exp.expense_company) if exp else Decimal("0")
-        expense_owner = Decimal(exp.expense_owner) if exp else Decimal("0")
-        net_revenue = revenue - commission
-        share_ratio = Decimal(str(room.owner_share_ratio or 0))
-        # ⚠️ 粗口径（v1）：不认 RoomCostShareRule 加权、不计 ota_subsidy，与结算单/
-        # 业主门户的 v2 口径（services/owner_settlement）会有出入。本页仅供财务速览，
-        # **不得**用于房东分账（分账以结算单为准；见 #183 评审记录）。
-        # TODO(#183 后续)：把 compute_room_month_owner_stat 扩展到任意日期段后替换。
-        owner_net_share = ((net_revenue - expense_owner) * share_ratio).quantize(Decimal("0.01"))
+        expense_owner = stat.owner_expenses
+        net_revenue = stat.net_revenue
+        share_ratio = stat.share_ratio
+        owner_net_share = stat.owner_net
 
         out.append(
             ByRoomSummaryItem(

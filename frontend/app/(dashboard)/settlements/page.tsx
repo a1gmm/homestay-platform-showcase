@@ -3,13 +3,14 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { settlementsApi, exportApi } from "@/lib/api";
+import { extractErrorMessage } from "@/lib/api-errors";
 import { downloadBlob, fmtMille, MILLE_NOTE } from "@/lib/utils";
 import type { OwnerSettlementOut } from "@/lib/types";
 import {
   Table, Typography, Card, Tag, Button, Space, DatePicker, Checkbox, Popconfirm,
-  Modal, message, Input, Descriptions, List, Drawer, Row, Col, Statistic,
+  Modal, message, Input, Descriptions, List, Drawer, Row, Col, Statistic, Dropdown,
 } from "antd";
-import { CalculatorOutlined, CheckCircleOutlined, ExclamationCircleOutlined, DownloadOutlined } from "@ant-design/icons";
+import { CalculatorOutlined, CheckCircleOutlined, ExclamationCircleOutlined, DownloadOutlined, DownOutlined } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 import dayjs from "dayjs";
 import { useAuthStore } from "@/lib/auth";
@@ -72,6 +73,32 @@ export default function SettlementsPage() {
     }
   };
 
+  const handleExportIncome = async (r: OwnerSettlementOut) => {
+    setStatementExportingId(r.settlement_id);
+    try {
+      const res = await exportApi.settlementIncomeDetail(r.settlement_id);
+      downloadBlob(res.data, `到账收入明细_${r.owner_id}_${r.billing_month}.xlsx`);
+      message.success("收入明细已导出，合计与结算快照一致");
+    } catch (e) {
+      message.error(extractErrorMessage(e, "导出失败"));
+    } finally {
+      setStatementExportingId(null);
+    }
+  };
+
+  const handleExportPackage = async (r: OwnerSettlementOut) => {
+    setStatementExportingId(r.settlement_id);
+    try {
+      const res = await exportApi.settlementPackage(r.settlement_id);
+      downloadBlob(res.data, `完整结算包_${r.owner_id}_${r.billing_month}.xlsx`);
+      message.success("完整结算包已导出");
+    } catch (e) {
+      message.error(extractErrorMessage(e, "导出失败"));
+    } finally {
+      setStatementExportingId(null);
+    }
+  };
+
   const { data: settlements, isLoading } = useQuery({
     queryKey: ["settlements", selectedMonth],
     queryFn: () => settlementsApi.list({ billing_month: selectedMonth }).then((r) => r.data),
@@ -113,6 +140,7 @@ export default function SettlementsPage() {
       message.success("结算已确认");
       qc.invalidateQueries({ queryKey: ["settlements"] });
     },
+    onError: (e) => message.error(extractErrorMessage(e, "确认失败")),
   });
 
   const disputeMutation = useMutation({
@@ -152,16 +180,22 @@ export default function SettlementsPage() {
       },
     },
     {
-      title: "操作", key: "action", width: 210,
+      title: "操作", key: "action", width: 230,
       render: (_, r) => (
         <Space>
           <a onClick={() => { setSelectedSettlement(r); setDetailOpen(true); }}>详情</a>
-          <a
-            style={statementExportingId === r.settlement_id ? { color: "#999", pointerEvents: "none" } : undefined}
-            onClick={() => handleExportStatement(r)}
+          <Dropdown
+            disabled={statementExportingId === r.settlement_id}
+            menu={{ items: [
+              { key: "package", label: "完整结算包", onClick: () => handleExportPackage(r) },
+              { key: "income", label: "到账收入明细", onClick: () => handleExportIncome(r) },
+              { key: "statement", label: "业主分成表", onClick: () => handleExportStatement(r) },
+            ] }}
           >
-            {statementExportingId === r.settlement_id ? "导出中…" : "导出明细"}
-          </a>
+            <a onClick={(e) => e.preventDefault()}>
+              {statementExportingId === r.settlement_id ? "导出中…" : <>导出 <DownOutlined /></>}
+            </a>
+          </Dropdown>
           {r.status === "pending" && (
             <>
               <a onClick={() => confirmMutation.mutate(r.settlement_id)}>确认</a>

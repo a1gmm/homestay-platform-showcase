@@ -363,8 +363,8 @@
     {
       "executable": false,
       "path": "backend/app/api/v1/export.py",
-      "sha256": "29361f2ca1194a37d8ea6ce3cd7f7157da66d34b0ec6d7e9741d9a0d9118cf25",
-      "size": 25194
+      "sha256": "32649849985420fc524742bc9395b23f03f9f176338a5f0793d582b08253c410",
+      "size": 38288
     },
     {
       "executable": false,
@@ -375,8 +375,8 @@
     {
       "executable": false,
       "path": "backend/app/api/v1/finance.py",
-      "sha256": "07ff88aa8a7f5ca4401f5dd46dafac1853b31e7377c2a2261930a09f2da84cbb",
-      "size": 58066
+      "sha256": "fa8f0d3307cb3891eb4a79d3af730d0d127f9820113cb38db14593c71978f0c5",
+      "size": 55464
     },
     {
       "executable": false,
@@ -1185,8 +1185,8 @@
     {
       "executable": false,
       "path": "backend/app/services/owner_settlement.py",
-      "sha256": "85df5230c77380f9cfa12cc092918bc376e0a39ce0fda640e8d8ea2b5d8da3ac",
-      "size": 24344
+      "sha256": "4d36eb10337c01c62de2d29e17fe061558b585f454db274dd92ae9581c68e3ef",
+      "size": 25201
     },
     {
       "executable": false,
@@ -1377,8 +1377,8 @@
     {
       "executable": false,
       "path": "frontend/app/(dashboard)/finance/page.tsx",
-      "sha256": "ede0a093472e416b3eba8a9ef4eb78cca64bb26f42bc2ad95995b5e3ce880e5c",
-      "size": 46030
+      "sha256": "ee8c9f37edf58dd059c0e755156e1d37ec086b0e25533fc135f92f4920c3265e",
+      "size": 46043
     },
     {
       "executable": false,
@@ -1443,8 +1443,8 @@
     {
       "executable": false,
       "path": "frontend/app/(dashboard)/settlements/page.tsx",
-      "sha256": "88e7b4b2469b16986652f156e5222de2548227ef8d0b0cba3348bdb8c9691146",
-      "size": 21843
+      "sha256": "0ddc8177c968291a0f4592003ebba9adb82a7406a1dc29221e0905e813d852c9",
+      "size": 23320
     },
     {
       "executable": false,
@@ -2157,8 +2157,8 @@
     {
       "executable": false,
       "path": "frontend/lib/api.ts",
-      "sha256": "fc3b39fa22414c45dd23739a1abbcafb7bced6e14501f1e03989db1977ea7028",
-      "size": 37648
+      "sha256": "6cc2364a251a3a1eb2853c3d4ce861ec557570778c1b8a54cdc2e7e6a7134f71",
+      "size": 37982
     },
     {
       "executable": false,
@@ -2487,8 +2487,8 @@
     {
       "executable": false,
       "path": "frontend/package-lock.json",
-      "sha256": "20c647c9580db0e4f3572653db471a27d3784d38646996c3e4bfd94b94fa81fb",
-      "size": 362338
+      "sha256": "1592b0ff42779039c28960ebd0533f12fbe9c528102b100eb1a22b6ef27a2d9a",
+      "size": 364163
     },
     {
       "executable": false,
@@ -2599,6 +2599,6 @@
       "size": 650
     }
   ],
-  "revision": "fd16fcfd7f781ae098d3709e23a41ddec5183301",
+  "revision": "f5d93575dcf8c1a75948a9f77f476c622d45bf68",
   "version": 1
 }

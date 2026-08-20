@@ -2,7 +2,7 @@
 
 from fastapi import APIRouter, Query
 from fastapi.responses import StreamingResponse
-from sqlalchemy import select, extract
+from sqlalchemy import select, extract, func, or_
 from sqlalchemy.orm import selectinload
 from datetime import date
 
@@ -20,6 +20,12 @@ from app.models.settlement import OwnerSettlement
 from app.models.expense import Expense
 from app.models.owner import Owner
 from app.models.room import Room
+from app.models.order_room import OrderRoom
+from app.services.order_pricing import (
+    effective_owner_revenue_for_room,
+    order_room_commission,
+    safe_decimal,
+)
 
 router = APIRouter(prefix="/export", tags=["export"])
 
@@ -159,6 +165,9 @@ async def export_finance(
     month: int = Query(default_factory=lambda: today_cn().month),
     start_date: Optional[date] = Query(default=None, description="起始日期 YYYY-MM-DD"),
     end_date: Optional[date] = Query(default=None, description="结束日期 YYYY-MM-DD"),
+    floor: Optional[int] = Query(default=None, description="楼层"),
+    owner_id: Optional[str] = Query(default=None, description="业主ID"),
+    room_id: Optional[str] = Query(default=None, description="房间ID"),
 ):
     """导出财务报表 Excel。日期范围二选一（start_date+end_date 优先，向后兼容 year+month）。
     收入按订单离店日、支出按发生日落区间，与月度汇总/结算口径一致。"""
@@ -171,21 +180,51 @@ async def export_finance(
         from fastapi import HTTPException
         raise HTTPException(status_code=400, detail="end_date 必须 >= start_date")
 
-    # 订单：区间按离店日 between，否则按 year/month（离店月归属，2026-07-14 拍板）
+    # 收入：必须按 OrderRoom（房段）离店日和金额导出。顶层 Order 对多房、换房单
+    # 只有整单汇总值，直接导出会跨楼层串账并漏掉平台补贴。
     order_date_filter = (
-        [Order.check_out_date >= start_date, Order.check_out_date <= end_date]
+        [OrderRoom.check_out_date >= start_date, OrderRoom.check_out_date <= end_date]
         if use_range
-        else [extract("year", Order.check_out_date) == year,
-              extract("month", Order.check_out_date) == month]
+        else [extract("year", OrderRoom.check_out_date) == year,
+              extract("month", OrderRoom.check_out_date) == month]
     )
-    orders_result = await db.execute(
-        select(Order).options(selectinload(Order.rooms)).where(
+    income_q = (
+        select(OrderRoom, Order, Room)
+        .join(Order, Order.order_id == OrderRoom.order_id)
+        .join(Room, Room.room_id == OrderRoom.room_id)
+        .where(
             Order.is_deleted == False,
             Order.order_status.not_in([OrderStatus.cancelled]),
             *order_date_filter,
-        ).order_by(Order.check_out_date)
+        )
     )
-    orders = orders_result.scalars().all()
+    if floor is not None:
+        income_q = income_q.where(Room.floor == floor)
+    if owner_id:
+        income_q = income_q.where(Room.owner_id == owner_id)
+    if room_id:
+        income_q = income_q.where(Room.room_id == room_id)
+    income_rows = (await db.execute(
+        income_q.order_by(OrderRoom.check_out_date, Room.room_name, Order.order_id)
+    )).all()
+
+    order_ids = {orow.order_id for orow, _, _ in income_rows}
+    room_counts: dict[str, int] = {}
+    order_room_names: dict[str, list[str]] = {}
+    if order_ids:
+        room_counts = dict((await db.execute(
+            select(OrderRoom.order_id, func.count())
+            .where(OrderRoom.order_id.in_(order_ids))
+            .group_by(OrderRoom.order_id)
+        )).all())
+        all_room_names = (await db.execute(
+            select(OrderRoom.order_id, Room.room_name)
+            .join(Room, Room.room_id == OrderRoom.room_id)
+            .where(OrderRoom.order_id.in_(order_ids))
+            .order_by(OrderRoom.order_id, OrderRoom.position)
+        )).all()
+        for oid, room_name in all_room_names:
+            order_room_names.setdefault(oid, []).append(room_name)
 
     # 支出：区间按发生日 between，否则按 year/month
     expense_date_filter = (
@@ -194,12 +233,18 @@ async def export_finance(
         else [extract("year", Expense.expense_date) == year,
               extract("month", Expense.expense_date) == month]
     )
-    expenses_result = await db.execute(
-        select(Expense).where(
+    expense_q = select(Expense).outerjoin(Room, Room.room_id == Expense.room_id).where(
             *expense_date_filter,
             Expense.is_deleted == False,
-        ).order_by(Expense.expense_date)
-    )
+        )
+    if floor is not None:
+        # 整层导出无法可靠分摊 room_id 为空的业主级支出，留给正式结算包展示。
+        expense_q = expense_q.where(Room.floor == floor)
+    if owner_id:
+        expense_q = expense_q.where(or_(Expense.owner_id == owner_id, Room.owner_id == owner_id))
+    if room_id:
+        expense_q = expense_q.where(Expense.room_id == room_id)
+    expenses_result = await db.execute(expense_q.order_by(Expense.expense_date))
     expenses = expenses_result.scalars().all()
 
     wb = openpyxl.Workbook()
@@ -207,34 +252,79 @@ async def export_finance(
     # Sheet 1: Revenue summary
     ws1 = wb.active
     ws1.title = "收入明细"
-    h1 = ["订单号", "渠道", "客人", "房间", "入住", "退房", "晚数", "实收", "佣金", "净收入", "预计收入(业主到手)"]
+    h1 = ["订单号", "房段ID", "渠道", "客人", "楼层", "房间", "整单房间", "入住", "退房", "晚数",
+          "房费", "平台佣金", "平台补贴", "分尾调整", "结算净收入"]
     ws1.append(h1)
     _style_header(ws1, len(h1))
 
+    # 结算表头采用账务惯例「每个房号先舍到分，再相加」。逐订单行各自舍入时，
+    # 同一房号可能产生 1~N 分尾差；把尾差明确落在该房最后一行，保证导出行合计
+    # 与按房号页/正式结算严格一致，而不是留下看不见的 0.01~0.03 差额。
+    pricing: dict[str, tuple[Decimal, Decimal, Decimal, Decimal]] = {}
+    indexes_by_room: dict[str, list[str]] = {}
+    raw_net_by_room: dict[str, Decimal] = {}
+    for orow, o, _room in income_rows:
+        actual = Decimal(orow.actual_price or 0)
+        per_room_net = effective_owner_revenue_for_room(
+            orow.ota_owner_revenue, orow.actual_price, o.metadata_,
+            room_counts.get(o.order_id),
+        )
+        commission = order_room_commission(
+            orow.actual_price, per_room_net, o.platform_commission_rate)
+        subsidy = (
+            safe_decimal((o.metadata_ or {}).get("ota_subsidy"))
+            if per_room_net is None else Decimal("0")
+        )
+        raw_net = actual - commission + subsidy
+        pricing[orow.order_room_id] = (actual, commission, subsidy, raw_net)
+        indexes_by_room.setdefault(orow.room_id, []).append(orow.order_room_id)
+        raw_net_by_room[orow.room_id] = raw_net_by_room.get(orow.room_id, Decimal("0")) + raw_net
+
+    tail_adjustment: dict[str, Decimal] = {}
+    cent = Decimal("0.01")
+    for rid, row_ids in indexes_by_room.items():
+        desired = raw_net_by_room[rid].quantize(cent)
+        displayed = sum((pricing[row_id][3].quantize(cent) for row_id in row_ids), Decimal("0"))
+        tail_adjustment[row_ids[-1]] = desired - displayed
+
     total_actual = Decimal("0")
     total_commission = Decimal("0")
+    total_subsidy = Decimal("0")
+    total_adjustment = Decimal("0")
     total_net = Decimal("0")
-    for o in orders:
+    for orow, o, room in income_rows:
+        actual, commission_raw, subsidy_raw, net_raw = pricing[orow.order_room_id]
+        commission = commission_raw.quantize(cent)
+        subsidy = subsidy_raw.quantize(cent)
+        adjustment = tail_adjustment.get(orow.order_room_id, Decimal("0"))
+        net = net_raw.quantize(cent) + adjustment
         ws1.append([
             o.order_id,
+            orow.order_room_id,
             CHANNEL_LABELS.get(o.channel.value, o.channel.value),
-            o.guest_name,
-            "、".join(o.room_ids) or "",
-            str(o.check_in_date),
-            str(o.check_out_date),
-            o.nights,
-            float(o.actual_price or 0),
-            float(o.platform_commission),
-            float(o.net_revenue),
-            float(o.expected_revenue) if o.expected_revenue is not None else "",
+            (o.guest_name[:1] + "**") if o.guest_name else "",
+            room.floor if room.floor is not None else "",
+            room.room_name,
+            "、".join(order_room_names.get(o.order_id, [])),
+            str(orow.check_in_date),
+            str(orow.check_out_date),
+            max((orow.check_out_date - orow.check_in_date).days, 0),
+            float(actual),
+            float(commission),
+            float(subsidy),
+            float(adjustment),
+            float(net),
         ])
-        total_actual += o.actual_price or Decimal("0")
-        total_commission += o.platform_commission
-        total_net += o.net_revenue
+        total_actual += actual
+        total_commission += commission
+        total_subsidy += subsidy
+        total_adjustment += adjustment
+        total_net += net
 
     # Summary row
     ws1.append([])
-    ws1.append(["合计", "", "", "", "", "", "", float(total_actual), float(total_commission), float(total_net), ""])
+    ws1.append(["合计", "", "", "", "", "", "", "", "", "", float(total_actual),
+                float(total_commission), float(total_subsidy), float(total_adjustment), float(total_net)])
 
     for col in ws1.columns:
         max_len = max((len(str(cell.value or "")) for cell in col), default=10)
@@ -550,31 +640,20 @@ def _build_statement_wb(settlement, owner, rooms_map: dict, desc_map: dict):
     return wb
 
 
-@router.get("/settlements/{settlement_id}/statement")
-async def export_settlement_statement(
-    settlement_id: str,
-    db: DBSession,
-    current_user: CurrentUser,
-):
-    """单个业主结算 → 『业主分成明细 + 垫付费用明细』Excel（可直接发给业主）。"""
+async def _settlement_export_context(db, settlement_id: str):
+    """加载结算快照及展示元数据；所有单结算导出共用。"""
     from fastapi import HTTPException
 
-    if current_user["role"] not in ("admin", "finance"):
-        raise HTTPException(status_code=403, detail="无权导出结算明细")
-
-    result = await db.execute(
+    settlement = (await db.execute(
         select(OwnerSettlement)
         .options(selectinload(OwnerSettlement.items))
         .where(OwnerSettlement.settlement_id == settlement_id)
-    )
-    settlement = result.scalar_one_or_none()
+    )).scalar_one_or_none()
     if not settlement:
         raise HTTPException(status_code=404, detail="结算记录不存在")
-
     owner = (await db.execute(
         select(Owner).where(Owner.owner_id == settlement.owner_id)
     )).scalar_one_or_none()
-
     room_ids = [i.room_id for i in settlement.items if i.room_id]
     rooms_map: dict = {}
     if room_ids:
@@ -583,7 +662,6 @@ async def export_settlement_statement(
             .where(Room.room_id.in_(room_ids))
         )
         rooms_map = {row[0]: row for row in rr.all()}
-
     expense_ids = {
         e.get("expense_id")
         for i in settlement.items
@@ -597,7 +675,202 @@ async def export_settlement_statement(
             .where(Expense.expense_id.in_(expense_ids))
         )
         desc_map = {row[0]: row[1] for row in er.all()}
+    return settlement, owner, rooms_map, desc_map
+
+
+async def _settlement_income_rows(db, settlement):
+    """按当前源数据重建收入行，并逐房核对结算快照。
+
+    结算单是不可变账务快照；源订单若在生成后被修改，拒绝导出看似精确但实际
+    对不上的明细，要求先重新生成待确认结算单。
+    """
+    from calendar import monthrange
+    from fastapi import HTTPException
+
+    year, month = (int(x) for x in settlement.billing_month.split("-"))
+    start = date(year, month, 1)
+    end = date(year, month, monthrange(year, month)[1])
+    snapshot = {
+        i.room_id: Decimal(i.net_revenue).quantize(Decimal("0.01"))
+        for i in settlement.items if i.room_id
+    }
+    room_ids = list(snapshot)
+    q = (
+        select(OrderRoom, Order, Room)
+        .join(Order, Order.order_id == OrderRoom.order_id)
+        .join(Room, Room.room_id == OrderRoom.room_id)
+        .where(
+            OrderRoom.room_id.in_(room_ids),
+            OrderRoom.check_out_date >= start,
+            OrderRoom.check_out_date <= end,
+            Order.is_deleted == False,
+            Order.order_status != OrderStatus.cancelled,
+        )
+        .order_by(Room.room_name, OrderRoom.check_out_date, Order.order_id)
+    )
+    source_rows = (await db.execute(q)).all() if room_ids else []
+    order_ids = {o.order_id for _, o, _ in source_rows}
+    room_counts: dict[str, int] = {}
+    if order_ids:
+        room_counts = dict((await db.execute(
+            select(OrderRoom.order_id, func.count())
+            .where(OrderRoom.order_id.in_(order_ids))
+            .group_by(OrderRoom.order_id)
+        )).all())
+
+    rows: list[dict] = []
+    raw_by_room = {rid: Decimal("0") for rid in room_ids}
+    row_indexes_by_room: dict[str, list[int]] = {rid: [] for rid in room_ids}
+    order_ids_by_room: dict[str, set[str]] = {rid: set() for rid in room_ids}
+    for orow, order, room in source_rows:
+        actual = Decimal(orow.actual_price or 0)
+        per_room_net = effective_owner_revenue_for_room(
+            orow.ota_owner_revenue, orow.actual_price, order.metadata_,
+            room_counts.get(order.order_id),
+        )
+        commission = order_room_commission(
+            orow.actual_price, per_room_net, order.platform_commission_rate)
+        subsidy = (
+            safe_decimal((order.metadata_ or {}).get("ota_subsidy"))
+            if per_room_net is None else Decimal("0")
+        )
+        raw_net = actual - commission + subsidy
+        raw_by_room[orow.room_id] += raw_net
+        order_ids_by_room[orow.room_id].add(order.order_id)
+        row_indexes_by_room[orow.room_id].append(len(rows))
+        rows.append({
+            "order_id": order.order_id,
+            "order_room_id": orow.order_room_id,
+            "channel": CHANNEL_LABELS.get(order.channel.value, order.channel.value),
+            "guest": (order.guest_name[:1] + "**") if order.guest_name else "",
+            "room_id": room.room_id,
+            "room_name": room.room_name,
+            "check_in": orow.check_in_date,
+            "check_out": orow.check_out_date,
+            "nights": max((orow.check_out_date - orow.check_in_date).days, 0),
+            "actual": actual.quantize(Decimal("0.01")),
+            "commission": commission.quantize(Decimal("0.01")),
+            "subsidy": subsidy.quantize(Decimal("0.01")),
+            "net": raw_net.quantize(Decimal("0.01")),
+        })
+
+    check_rows = []
+    for rid, snap in snapshot.items():
+        current = raw_by_room[rid].quantize(Decimal("0.01"))
+        if current != snap:
+            raise HTTPException(
+                status_code=409,
+                detail=(f"结算数据已变化（房间 {rid}：快照 {snap}，当前 {current}），"
+                        "请先重新生成待确认结算单再导出。"),
+            )
+        # 单行先舍入可能产生分尾差，将尾差落在该房最后一行，使明细逐行相加严格等于快照。
+        indexes = row_indexes_by_room[rid]
+        if indexes:
+            line_sum = sum((rows[i]["net"] for i in indexes), Decimal("0"))
+            rows[indexes[-1]]["net"] += snap - line_sum
+        check_rows.append({
+            "room_id": rid,
+            "room_name": "",
+            "order_count": len(order_ids_by_room[rid]),
+            "snapshot": snap,
+            "current": current,
+            "diff": current - snap,
+        })
+    return rows, check_rows
+
+
+def _append_income_detail_sheets(wb, income_rows: list[dict], check_rows: list[dict], rooms_map: dict):
+    ws = wb.create_sheet("收入明细")
+    headers = ["订单号", "房段ID", "渠道", "客人", "房间ID", "房号", "入住", "退房", "晚数",
+               "房费", "平台佣金", "平台补贴", "结算净收入"]
+    ws.append(headers)
+    _style_header(ws, len(headers))
+    for r in income_rows:
+        ws.append([
+            r["order_id"], r["order_room_id"], r["channel"], r["guest"], r["room_id"],
+            r["room_name"], str(r["check_in"]), str(r["check_out"]), r["nights"],
+            float(r["actual"]), float(r["commission"]), float(r["subsidy"]), float(r["net"]),
+        ])
+    ws.append([])
+    ws.append(["合计", "", "", "", "", "", "", "", "",
+               float(sum((r["actual"] for r in income_rows), Decimal("0"))),
+               float(sum((r["commission"] for r in income_rows), Decimal("0"))),
+               float(sum((r["subsidy"] for r in income_rows), Decimal("0"))),
+               float(sum((r["net"] for r in income_rows), Decimal("0")))])
+
+    ck = wb.create_sheet("房号核对")
+    check_headers = ["房间ID", "房号", "订单数", "结算快照净收入", "当前明细净收入", "差额"]
+    ck.append(check_headers)
+    _style_header(ck, len(check_headers))
+    for r in check_rows:
+        room = rooms_map.get(r["room_id"])
+        ck.append([r["room_id"], room[1] if room else r["room_id"], r["order_count"],
+                   float(r["snapshot"]), float(r["current"]), float(r["diff"])])
+    ck.append(["合计", "", sum(r["order_count"] for r in check_rows),
+               float(sum((r["snapshot"] for r in check_rows), Decimal("0"))),
+               float(sum((r["current"] for r in check_rows), Decimal("0"))),
+               float(sum((r["diff"] for r in check_rows), Decimal("0")))])
+
+    for sheet in (ws, ck):
+        for col in sheet.columns:
+            max_len = max((len(str(cell.value or "")) for cell in col), default=10)
+            sheet.column_dimensions[col[0].column_letter].width = min(max_len + 4, 30)
+
+
+@router.get("/settlements/{settlement_id}/statement")
+async def export_settlement_statement(
+    settlement_id: str,
+    db: DBSession,
+    current_user: CurrentUser,
+):
+    """单个业主结算 → 『业主分成明细 + 垫付费用明细』Excel（可直接发给业主）。"""
+    from fastapi import HTTPException
+
+    if current_user["role"] not in ("admin", "finance"):
+        raise HTTPException(status_code=403, detail="无权导出结算明细")
+
+    settlement, owner, rooms_map, desc_map = await _settlement_export_context(
+        db, settlement_id)
 
     wb = _build_statement_wb(settlement, owner, rooms_map, desc_map)
     owner_name = (owner.name if owner else None) or settlement.owner_id
     return _to_streaming(wb, f"业主分成明细_{owner_name}_{settlement.billing_month}.xlsx")
+
+
+@router.get("/settlements/{settlement_id}/income-detail")
+async def export_settlement_income_detail(
+    settlement_id: str,
+    db: DBSession,
+    current_user: CurrentUser,
+):
+    """导出逐订单房段收入，并保证合计与结算快照逐房一致。"""
+    from fastapi import HTTPException
+
+    if current_user["role"] not in ("admin", "finance"):
+        raise HTTPException(status_code=403, detail="无权导出结算明细")
+    settlement, owner, rooms_map, _ = await _settlement_export_context(db, settlement_id)
+    income_rows, check_rows = await _settlement_income_rows(db, settlement)
+    wb = openpyxl.Workbook()
+    wb.remove(wb.active)
+    _append_income_detail_sheets(wb, income_rows, check_rows, rooms_map)
+    owner_name = (owner.name if owner else None) or settlement.owner_id
+    return _to_streaming(wb, f"到账收入明细_{owner_name}_{settlement.billing_month}.xlsx")
+
+
+@router.get("/settlements/{settlement_id}/package")
+async def export_settlement_package(
+    settlement_id: str,
+    db: DBSession,
+    current_user: CurrentUser,
+):
+    """一键导出分成表、逐单收入和房号核对三张表。"""
+    from fastapi import HTTPException
+
+    if current_user["role"] not in ("admin", "finance"):
+        raise HTTPException(status_code=403, detail="无权导出结算明细")
+    settlement, owner, rooms_map, desc_map = await _settlement_export_context(db, settlement_id)
+    income_rows, check_rows = await _settlement_income_rows(db, settlement)
+    wb = _build_statement_wb(settlement, owner, rooms_map, desc_map)
+    _append_income_detail_sheets(wb, income_rows, check_rows, rooms_map)
+    owner_name = (owner.name if owner else None) or settlement.owner_id
+    return _to_streaming(wb, f"完整结算包_{owner_name}_{settlement.billing_month}.xlsx")

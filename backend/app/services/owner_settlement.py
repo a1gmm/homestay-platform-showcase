@@ -127,6 +127,8 @@ async def load_room_sponsorship_income(
     month: int,
     cutoff: date | None = None,
     for_update: bool = False,
+    start_date: date | None = None,
+    end_date: date | None = None,
 ) -> dict[str, list[CompanySponsoredIncome]]:
     """Batch-load effective sponsorship income for a room set in one query.
 
@@ -172,14 +174,22 @@ async def load_room_sponsorship_income(
             Order.channel == Channel.self_used,
         )))
         .where(CompanySponsoredStay.status != CompanySponsorshipStatus.voided)
-        .where(extract("year", OrderRoom.check_out_date) == year)
-        .where(extract("month", OrderRoom.check_out_date) == month)
         .order_by(
             OrderRoom.room_id,
             CompanySponsoredStay.segment_check_out_date,
             CompanySponsoredStay.sponsored_stay_id,
         )
     )
+    if start_date is not None and end_date is not None:
+        statement = statement.where(
+            OrderRoom.check_out_date >= start_date,
+            OrderRoom.check_out_date <= end_date,
+        )
+    else:
+        statement = statement.where(
+            extract("year", OrderRoom.check_out_date) == year,
+            extract("month", OrderRoom.check_out_date) == month,
+        )
     if cutoff is not None:
         statement = statement.where(OrderRoom.check_out_date <= cutoff)
     if for_update:
@@ -270,12 +280,12 @@ def settlement_precise_amounts(items) -> tuple[Optional[Decimal], Optional[Decim
     return owner_amount, owner_amount - total_expenses
 
 
-async def compute_room_month_owner_stat(
-    db: AsyncSession, room: Room, year: int, month: int,
+async def compute_room_period_owner_stat(
+    db: AsyncSession, room: Room, start_date: date, end_date: date,
     cutoff: date | None = None,
     sponsorship_income_by_room: dict[str, list[CompanySponsoredIncome]] | None = None,
 ) -> RoomMonthOwnerStat:
-    """算一间房某月的业主分成明细。room 需已加载 owner_share_ratio /
+    """算一间房某日期区间的业主分成明细。room 需已加载 owner_share_ratio /
     owner_deduction_rules / owner_ignored_categories。
 
     cutoff：可选「结算截止日」。传入时只统计**离店日 ≤ cutoff** 的订单
@@ -302,10 +312,8 @@ async def compute_room_month_owner_stat(
             Order.booking_type == BookingType.owner_self,
             Order.channel == Channel.self_used,
         )))
-        # 月度归属按「离店日期」算（王总 2026-07-14 拍板）：跨月单整笔归离店月，
-        # 例 6/30 入住 7/1 离店 → 7 月。支出侧仍按 expense_date（发生日）归月。
-        .where(extract("year", OrderRoom.check_out_date) == year)
-        .where(extract("month", OrderRoom.check_out_date) == month)
+        .where(OrderRoom.check_out_date >= start_date)
+        .where(OrderRoom.check_out_date <= end_date)
     )
     if cutoff is not None:
         # 「结算到昨天」：业主门户只算已退房走人的单（离店日 ≤ cutoff）；
@@ -352,7 +360,13 @@ async def compute_room_month_owner_stat(
     stat.order_count = len(order_ids)
     if sponsorship_income_by_room is None:
         sponsorship_income_by_room = await load_room_sponsorship_income(
-            db, [room.room_id], year, month, cutoff=cutoff
+            db,
+            [room.room_id],
+            start_date.year,
+            start_date.month,
+            cutoff=cutoff,
+            start_date=start_date,
+            end_date=end_date,
         )
     sponsorship_income = sponsorship_income_by_room.get(room.room_id, [])
     sponsored_total = sum(
@@ -388,8 +402,8 @@ async def compute_room_month_owner_stat(
                     Order.channel == Channel.self_used,
                 )),
             ))
-            .where(extract("year", Expense.expense_date) == year)
-            .where(extract("month", Expense.expense_date) == month)
+            .where(Expense.expense_date >= start_date)
+            .where(Expense.expense_date <= end_date)
         )
     ).all()
 
@@ -490,6 +504,24 @@ async def compute_room_month_owner_stat(
     ).quantize(Decimal("0.01"))
     stat.owner_net = (payable_owner_share - stat.owner_expenses).quantize(Decimal("0.01"))
     return stat
+
+
+async def compute_room_month_owner_stat(
+    db: AsyncSession, room: Room, year: int, month: int,
+    cutoff: date | None = None,
+    sponsorship_income_by_room: dict[str, list[CompanySponsoredIncome]] | None = None,
+) -> RoomMonthOwnerStat:
+    """月度包装器；结算、业主门户与任意区间财务核对共用同一计算实现。"""
+    from calendar import monthrange
+
+    return await compute_room_period_owner_stat(
+        db,
+        room,
+        date(year, month, 1),
+        date(year, month, monthrange(year, month)[1]),
+        cutoff=cutoff,
+        sponsorship_income_by_room=sponsorship_income_by_room,
+    )
 
 
 @dataclass

@@ -144,7 +144,7 @@ export default function FinancePage() {
     if (user && !canAccessFinance) router.replace("/dashboard");
   }, [user, canAccessFinance, router]);
   const qc = useQueryClient();
-  // 全局日期区间：驱动月度汇总卡片 / 支出明细 / 导出 / 按房号分账。默认本月整月。
+  // 全局日期区间：驱动月度汇总卡片 / 支出明细 / 导出 / 按房号核对。默认本月整月。
   const [range, setRange] = useState<[Dayjs, Dayjs]>([
     dayjs().startOf("month"),
     dayjs().endOf("month"),
@@ -608,7 +608,7 @@ export default function FinancePage() {
     },
     {
       key: "by-room",
-      label: "按房号分账",
+      label: "按房号核对",
       children: (
         <div
           style={{
@@ -642,8 +642,8 @@ export default function FinancePage() {
             type="info"
             showIcon
             banner
-            message="仅供速览，分账以「业主结算单」为准"
-            description="本页「业主应得」用简化口径估算，不认每类费用的业主分摊规则、不计携程补贴，可能与正式结算单有出入。正式分账请以结算单为准。"
+            message="净收入已与正式结算统一口径"
+            description="本页已计入平台补贴，并按正式费用分摊规则计算。逐房『房间业主应得』不含无法归到单间的整层/业主级支出；最终打款仍以业主结算单为准。"
             style={{ fontSize: 12 }}
           />
           <Table
@@ -761,7 +761,7 @@ export default function FinancePage() {
                 ),
               },
               {
-                title: "业主应得",
+                title: "房间业主应得",
                 dataIndex: "owner_net_share",
                 key: "owner_net_share",
                 width: 110,
@@ -781,7 +781,7 @@ export default function FinancePage() {
                 ),
               },
               {
-                title: "公司净利",
+                title: "公司净利（估）",
                 dataIndex: "company_net",
                 key: "company_net",
                 width: 110,
