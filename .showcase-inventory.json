@@ -1185,8 +1185,8 @@
     {
       "executable": false,
       "path": "backend/app/services/owner_settlement.py",
-      "sha256": "5b83abb2ee7fc10c8f0a6e24fdc62b2779dbfb1ed215123d3305c594f6a4954f",
-      "size": 23858
+      "sha256": "85df5230c77380f9cfa12cc092918bc376e0a39ce0fda640e8d8ea2b5d8da3ac",
+      "size": 24344
     },
     {
       "executable": false,
@@ -2599,6 +2599,6 @@
       "size": 650
     }
   ],
-  "revision": "09fac10c68a7252481e7b208b96720ba08547d63",
+  "revision": "bf123a5507f862c95f83c861cd6dd9060fe2bc30",
   "version": 1
 }

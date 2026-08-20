@@ -401,6 +401,15 @@ async def compute_room_month_owner_stat(
     rule_lookup: dict = {(r.booking_type, r.expense_category): r for r in rule_rows}
 
     for expense, booking_type in exp_rows:
+        # 手工保洁明确标记为公司承担时，公司就是最终承担方；不得再被保洁 100%
+        # 的硬规则或 RoomCostShareRule 重新分配给业主。系统自动服务费
+        # (is_service_fee=True) 仍按既有规则由业主承担。
+        if (
+            expense.category == ExpenseCategory.cleaning
+            and expense.payer == ExpensePayer.company
+            and not getattr(expense, "is_service_fee", False)
+        ):
+            continue
         # 房东全担的硬规则服务费：历史 cleaning（无标记）按类目认定；洗涤/日耗等
         # 系统自动生成的服务费按 is_service_fee 标记认定。二者都强制 100%、不受占比/
         # 忽略类目影响。手工录的洗涤/日耗（is_service_fee=False）仍走占比规则。
