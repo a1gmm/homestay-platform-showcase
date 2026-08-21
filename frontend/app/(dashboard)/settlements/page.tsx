@@ -15,6 +15,7 @@ import type { ColumnsType } from "antd/es/table";
 import dayjs from "dayjs";
 import { useAuthStore } from "@/lib/auth";
 import { useIsMobile } from "@/lib/responsive";
+import SettlementPreflightAlert from "@/components/settlements/SettlementPreflightAlert";
 
 const { Title, Text } = Typography;
 
@@ -45,6 +46,8 @@ export default function SettlementsPage() {
   const [overwrite, setOverwrite] = useState(false);
   // 生成/重算的目标月，独立于上方列表的「筛选结算月」。默认上月。
   const [genMonth, setGenMonth] = useState(() => dayjs().subtract(1, "month"));
+  const genYear = genMonth.year();
+  const genMonthNumber = genMonth.month() + 1;
 
   const handleExportSettlements = async () => {
     setExportLoading(true);
@@ -104,6 +107,15 @@ export default function SettlementsPage() {
     queryFn: () => settlementsApi.list({ billing_month: selectedMonth }).then((r) => r.data),
   });
 
+  const {
+    data: preflight,
+    isLoading: preflightLoading,
+  } = useQuery({
+    queryKey: ["settlement-preflight", genYear, genMonthNumber],
+    queryFn: () => settlementsApi.preflight(genYear, genMonthNumber).then((r) => r.data),
+    enabled: isAdmin,
+  });
+
   const { data: detail, isLoading: detailLoading } = useQuery({
     queryKey: ["settlement-detail", selectedSettlement?.settlement_id],
     queryFn: () =>
@@ -131,7 +143,15 @@ export default function SettlementsPage() {
       }
       qc.invalidateQueries({ queryKey: ["settlements"] });
     },
-    onError: () => message.error("生成失败"),
+    onError: (error: any) => {
+      qc.invalidateQueries({ queryKey: ["settlement-preflight"] });
+      const detail = error?.response?.data?.detail;
+      message.error(
+        detail?.code === "settlement_preflight_failed"
+          ? "生成已被月结体检阻止，请先处理下方异常清单"
+          : extractErrorMessage(error, "生成失败"),
+      );
+    },
   });
 
   const confirmMutation = useMutation({
@@ -235,6 +255,7 @@ export default function SettlementsPage() {
                 icon={<CalculatorOutlined />}
                 onClick={overwrite ? undefined : doGenerate}
                 loading={generateMutation.isPending}
+                disabled={preflightLoading || preflight?.blocking}
               >
                 {overwrite ? `重算 ${monthLabel} 结算` : `生成 ${monthLabel} 结算`}
               </Button>
@@ -269,6 +290,10 @@ export default function SettlementsPage() {
           })()}
         </Space>
       </div>
+
+      {isAdmin ? (
+        <SettlementPreflightAlert report={preflight} loading={preflightLoading} />
+      ) : null}
 
       <Card bordered={false} style={{ borderRadius: 12 }} styles={{ body: { padding: isMobile ? 12 : 0 } }}>
         <div style={{ padding: isMobile ? "0 0 12px" : "16px 20px 0" }}>

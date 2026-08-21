@@ -405,8 +405,8 @@
     {
       "executable": false,
       "path": "backend/app/api/v1/orders.py",
-      "sha256": "49ee44d62a9b86af074bd2a4600029087dbc4be1660e328757f168998858d72a",
-      "size": 148821
+      "sha256": "d0dfadfaa6a1d7d265f079d47064e734b9f311ba06a98ddd97bb473dc5388ef8",
+      "size": 149945
     },
     {
       "executable": false,
@@ -447,8 +447,8 @@
     {
       "executable": false,
       "path": "backend/app/api/v1/settlements.py",
-      "sha256": "883bca7aabba2998d8de52fa1e9acd5888f3878bc3dbe57d96ab4d6abf522d64",
-      "size": 30720
+      "sha256": "9901a2adac7ee823fc6bed5f04529ba77924b4ef2fa9e90a74d6191308f8aca2",
+      "size": 32652
     },
     {
       "executable": false,
@@ -1136,6 +1136,12 @@
     },
     {
       "executable": false,
+      "path": "backend/app/services/order_expense_lifecycle.py",
+      "sha256": "956033f928f4fc8e1500b943fc7ab393aaf48acb9439baf59b145b92fbf15fe5",
+      "size": 1564
+    },
+    {
+      "executable": false,
       "path": "backend/app/services/order_price_selfheal.py",
       "sha256": "c74492ba42bf87d9e9216b35c1616f5eb1137939505597a091b7b870bbf0667d",
       "size": 2471
@@ -1229,6 +1235,12 @@
       "path": "backend/app/services/service_fees.py",
       "sha256": "52626c82362d5264f976d73d3214219e71bba33f85f9cac5a308e435d23722ac",
       "size": 2922
+    },
+    {
+      "executable": false,
+      "path": "backend/app/services/settlement_preflight.py",
+      "sha256": "8e007f37db6128d430ffc9ce106dcab52109cdbcea82a0f459abcfc1a5714973",
+      "size": 9139
     },
     {
       "executable": false,
@@ -1443,8 +1455,8 @@
     {
       "executable": false,
       "path": "frontend/app/(dashboard)/settlements/page.tsx",
-      "sha256": "0ddc8177c968291a0f4592003ebba9adb82a7406a1dc29221e0905e813d852c9",
-      "size": 23320
+      "sha256": "9574c628d17967dd4ba3a1250bf366faa445abd363a44d700cbb47b80a38711e",
+      "size": 24270
     },
     {
       "executable": false,
@@ -2006,6 +2018,12 @@
     },
     {
       "executable": false,
+      "path": "frontend/components/settlements/SettlementPreflightAlert.tsx",
+      "sha256": "e9aa1339863a4af55b3b4630c074d6727291081c2b6d5387da9c0e70e01ad646",
+      "size": 2180
+    },
+    {
+      "executable": false,
       "path": "frontend/components/share-config/OwnersTab.tsx",
       "sha256": "963c74227d72d20cc2a4d3c1780dfaf86de834079d250ed21db4a81c00fb0f9a",
       "size": 24839
@@ -2157,8 +2175,8 @@
     {
       "executable": false,
       "path": "frontend/lib/api.ts",
-      "sha256": "6cc2364a251a3a1eb2853c3d4ce861ec557570778c1b8a54cdc2e7e6a7134f71",
-      "size": 37982
+      "sha256": "2731ff5fbb7f67038c93104ade6ad02fdf2a587eebf6af6a218ac5f0050d726f",
+      "size": 38152
     },
     {
       "executable": false,
@@ -2463,8 +2481,8 @@
     {
       "executable": false,
       "path": "frontend/lib/types.ts",
-      "sha256": "c67ce8bb6abf4c72a7c6fe440d907fff34feb92f30d867917faad23cf52c7c56",
-      "size": 34353
+      "sha256": "579b6fe0aa9be384a6be98f1c71e33344910779cb77c7c74517ed45eb390f02c",
+      "size": 34776
     },
     {
       "executable": false,
@@ -2599,6 +2617,6 @@
       "size": 650
     }
   ],
-  "revision": "f5d93575dcf8c1a75948a9f77f476c622d45bf68",
+  "revision": "c9dae85161033b2d240fdbb632e7019c3d327bc4",
   "version": 1
 }

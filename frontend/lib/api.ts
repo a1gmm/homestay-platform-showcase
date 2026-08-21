@@ -40,6 +40,7 @@ import type {
   RoomBlockOut,
   RoomBlockCreate,
   OwnerSettlementOut,
+  SettlementPreflightReport,
   NotificationOut,
   NotificationTemplateOut,
   CheckinGuideRequest,
@@ -656,6 +657,8 @@ export const settlementsApi = {
   generate: (year: number, month: number, overwrite = false) =>
     api.post<{ generated: number; regenerated: number; skipped_locked: number; billing_month: string }>(
       "/settlements/generate", null, { params: { year, month, overwrite } }),
+  preflight: (year: number, month: number) =>
+    api.get<SettlementPreflightReport>("/settlements/preflight", { params: { year, month } }),
   confirm: (id: string) => api.post(`/settlements/${id}/confirm`),
   dispute: (id: string, notes: string) => api.post(`/settlements/${id}/dispute`, { notes }),
 };

@@ -33,6 +33,7 @@ from app.services.service_fee_reconciliation import (
     apply_service_fee_reconciliation,
     plan_service_fee_reconciliation,
 )
+from app.services.settlement_preflight import run_settlement_preflight
 
 router = APIRouter(prefix="/settlements", tags=["settlements"])
 
@@ -396,6 +397,19 @@ async def _generate_settlements_core(
 
     billing_month = f"{year}-{str(month).zfill(2)}"
 
+    # 生成前先做全月只读体检。必须放在删除旧 pending 结算之前，确保失败时不产生
+    # “旧单已删、新单没生成”的半成品状态。
+    preflight = await run_settlement_preflight(db, year, month)
+    if preflight.blocking:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "settlement_preflight_failed",
+                "message": "月结体检发现未处理异常，请处理完成后再生成结算。",
+                "report": preflight.to_dict(),
+            },
+        )
+
     owners_result = await db.execute(select(Owner).order_by(Owner.owner_id))
     owners = owners_result.scalars().all()
 
@@ -604,6 +618,20 @@ async def generate_settlements(
     return result
 
 
+@router.get("/preflight")
+async def settlement_preflight(
+    db: DBSession,
+    current_user: CurrentUser,
+    year: int = Query(...),
+    month: int = Query(..., ge=1, le=12),
+):
+    """月结前只读体检；供结算页展示异常清单。"""
+    if current_user["role"] not in ("admin", "finance"):
+        raise HTTPException(status_code=403, detail="无权查看月结体检")
+    report = await run_settlement_preflight(db, year, month)
+    return report.to_dict()
+
+
 @router.get("/{settlement_id}", response_model=SettlementDetailOut)
 async def get_settlement_detail(
     settlement_id: str, db: DBSession, current_user: CurrentUser,
@@ -725,6 +753,22 @@ async def confirm_settlement(settlement_id: str, db: DBSession, current_user: Cu
                 }
             ],
             action="正式结算仅可确认已结束的自然月；请在月末后重新生成再确认。",
+        )
+
+    # 确认时重新体检，覆盖“生成后又导入账单/新增费用/改订单”的漂移窗口。
+    preflight = await run_settlement_preflight(db, year, month)
+    if preflight.blocking:
+        detail = {
+            "code": "settlement_preflight_failed",
+            "message": "月结体检发现未处理异常，请联系管理员处理并重新生成后再确认。",
+        }
+        # 全月报告可能包含其他业主的订单、房间和金额，只向后台角色披露。
+        if current_user["role"] != "owner":
+            detail["message"] = "月结体检发现未处理异常，请处理完成并重新生成后再确认。"
+            detail["report"] = preflight.to_dict()
+        raise HTTPException(
+            status_code=409,
+            detail=detail,
         )
 
     # Confirmation is deliberately read-only: generation is the only path that

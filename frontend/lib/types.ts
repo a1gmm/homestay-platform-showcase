@@ -965,6 +965,24 @@ export interface RoomBlockCreate {
 
 export type SettlementStatus = "pending" | "confirmed" | "paid" | "disputed";
 
+export interface SettlementPreflightIssue {
+  code: string;
+  message: string;
+  order_id: string | null;
+  room_id: string | null;
+  expense_id: string | null;
+  recon_diff_id: string | null;
+  platform_order_id: string | null;
+  amount: string | null;
+}
+
+export interface SettlementPreflightReport {
+  billing_month: string;
+  blocking: boolean;
+  counts: Record<string, number>;
+  issues: SettlementPreflightIssue[];
+}
+
 export interface OwnerSettlementOut {
   settlement_id: string;
   owner_id: string;

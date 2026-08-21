@@ -44,6 +44,7 @@ from app.services.order_pricing import (
 )
 from app.services.order_transfer import apply_room_transfer
 from app.services.payment_service import sum_house_fee_paid
+from app.services.order_expense_lifecycle import void_owner_expenses_for_order
 from app.services.manual_override import apply_snapshot_manual_locks, lock_fields, locked_fields, unlock_fields
 from app.services.order_segmentation import (
     FinancialOverrideForbiddenError,
@@ -1948,11 +1949,21 @@ async def cancel_order(order_id: str, db: DBSession, current_user: CurrentUser):
         order, before_snapshot, order_snapshot(order), source="human"
     )
 
+    # 取消单不能继续把费用扣进业主月结；公司确已发生的成本保留在公司账。
+    voided_owner_expenses = await void_owner_expenses_for_order(
+        db, order_id, current_user["user_id"]
+    )
+
     # order 已 selectinload rooms 且状态改动都在 session 内，commit 前直接快照并同事务写审计。
+    after_snapshot = order_snapshot(order)
+    after_snapshot["voided_owner_expenses"] = {
+        **voided_owner_expenses.response_summary(),
+        "expense_ids": list(voided_owner_expenses.expense_ids),
+    }
     await log_action_tx(
         db, current_user["user_id"], "order.cancel", "order", order_id,
         before_data=before_snapshot,
-        after_data=order_snapshot(order),
+        after_data=after_snapshot,
     )
     await db.commit()
 
@@ -1960,7 +1971,10 @@ async def cancel_order(order_id: str, db: DBSession, current_user: CurrentUser):
     from app.services.lock.hooks import revoke_codes_on_cancel
     await revoke_codes_on_cancel(db, order, group_member_ids=_prior_group_member_ids or None)
 
-    return {"message": "订单已取消"}
+    return {
+        "message": "订单已取消",
+        "voided_owner_expenses": voided_owner_expenses.response_summary(),
+    }
 
 
 @router.delete("/{order_id}")
@@ -2021,9 +2035,19 @@ async def delete_order(order_id: str, db: DBSession, current_user: CurrentUser):
         order, before_snapshot, order_snapshot(order), source="human"
     )
 
+    # 与 cancel 同口径：软删业主承担费用，保留公司真实成本。
+    voided_owner_expenses = await void_owner_expenses_for_order(
+        db, order_id, current_user["user_id"]
+    )
+
     # 审计与软删同事务提交：写失败则整单回滚，杜绝无痕删单
     #（「单据消失先查 order.delete」的排查惯例依赖此行必然存在）。
     # order 已 selectinload rooms 且改动都在 session 内，commit 前直接快照即可。
+    after_snapshot = order_snapshot(order)
+    after_snapshot["voided_owner_expenses"] = {
+        **voided_owner_expenses.response_summary(),
+        "expense_ids": list(voided_owner_expenses.expense_ids),
+    }
     await log_action_tx(
         db,
         current_user["user_id"],
@@ -2031,8 +2055,8 @@ async def delete_order(order_id: str, db: DBSession, current_user: CurrentUser):
         "order",
         order_id,
         before_data=before_snapshot,
-        after_data=order_snapshot(order),
-        notes="软删除订单 + 状态置 cancelled + 释放 reserved 房 + 清理关联任务",
+        after_data=after_snapshot,
+        notes="软删除订单 + 状态置 cancelled + 释放 reserved 房 + 清理关联任务 + 作废业主承担费用",
     )
     await db.commit()
 
@@ -2042,7 +2066,10 @@ async def delete_order(order_id: str, db: DBSession, current_user: CurrentUser):
     from app.services.lock.hooks import revoke_codes_on_cancel
     await revoke_codes_on_cancel(db, order, group_member_ids=_prior_group_member_ids or None)
 
-    return {"message": "订单已删除"}
+    return {
+        "message": "订单已删除",
+        "voided_owner_expenses": voided_owner_expenses.response_summary(),
+    }
 
 
 # ─── Status transition ────────────────────────────────────────────────────────
