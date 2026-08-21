@@ -63,6 +63,7 @@ import type {
   ReconBatchOut,
   ReconDiffOut,
 } from "./billing-recon";
+import type { UtilityBatch, UtilityBatchDetail, UtilityPreflight } from "./utility-recon";
 
 export const api = axios.create({
   baseURL: process.env.NEXT_PUBLIC_API_URL || "/api/v1",
@@ -747,6 +748,23 @@ export const billingReconApi = {
   claim: (diffId: string, orderId: string) =>
     api.post<import("./billing-recon").ClaimResult>(
       `/billing-recon/diffs/${diffId}/claim`, { order_id: orderId }),
+};
+
+export const utilityReconApi = {
+  preflight: (files: File[]) => {
+    const form = new FormData(); files.forEach((file) => form.append("files", file));
+    return api.post<UtilityPreflight>("/utility-recon/preflight", form, { timeout: BILLING_RECON_UPLOAD_TIMEOUT_MS });
+  },
+  run: (files: File[]) => {
+    const form = new FormData(); files.forEach((file) => form.append("files", file));
+    return api.post<{ batches: UtilityBatch[] }>("/utility-recon/run", form, { timeout: BILLING_RECON_UPLOAD_TIMEOUT_MS });
+  },
+  batches: () => api.get<UtilityBatch[]>("/utility-recon/batches"),
+  detail: (batchId: string) => api.get<UtilityBatchDetail>(`/utility-recon/batches/${batchId}`),
+  adopt: (suggestionId: string) => api.post(`/utility-recon/suggestions/${suggestionId}/adopt`),
+  revert: (suggestionId: string) => api.post(`/utility-recon/suggestions/${suggestionId}/revert`),
+  close: (batchId: string) => api.post(`/utility-recon/batches/${batchId}/close`),
+  export: (batchId: string) => api.get(`/utility-recon/batches/${batchId}/export`, { responseType: "blob" }),
 };
 
 // ─── 经营助手（admin-only）──────────────────────────────────────────────

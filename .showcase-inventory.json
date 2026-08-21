@@ -290,6 +290,12 @@
     },
     {
       "executable": false,
+      "path": "backend/app/alembic/versions/utility_recon_0822.py",
+      "sha256": "4ce12f7c4dc6dd310cec9e70347fa0a1c9bedf80ea9804101e45db7f610ae6d0",
+      "size": 5734
+    },
+    {
+      "executable": false,
       "path": "backend/app/alembic/versions/v2_7_seed_water_proc.py",
       "sha256": "acc8032559ed8efa7ff75bf4a9217b16bcaba186edbd784fb27e580ae1794164",
       "size": 2214
@@ -476,6 +482,12 @@
     },
     {
       "executable": false,
+      "path": "backend/app/api/v1/utility_recon.py",
+      "sha256": "641cafbf72714ddc8d10c8b5db5528b1d7875d1926070d9f73493eab1f60b65d",
+      "size": 10643
+    },
+    {
+      "executable": false,
       "path": "backend/app/core/__init__.py",
       "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
       "size": 0
@@ -567,14 +579,14 @@
     {
       "executable": false,
       "path": "backend/app/main.py",
-      "sha256": "52b82bb1793840020327bc80724f3ff6f535f82c463e074338bcd8c67bb0159a",
-      "size": 24821
+      "sha256": "bfc030ac57bbfa3393f93ba40801db49af0d8d62a9349841bcfb3fde0d6d78f5",
+      "size": 24905
     },
     {
       "executable": false,
       "path": "backend/app/models/__init__.py",
-      "sha256": "27dd733928a6d1ec9726bbdda514e447243043e1e6754d3f74fe1f4a59678fc6",
-      "size": 2673
+      "sha256": "27501851bbedfb8d85b2e963b26676680f929b61e15e64109e1b57442992c5f4",
+      "size": 2910
     },
     {
       "executable": false,
@@ -767,6 +779,12 @@
       "path": "backend/app/models/user.py",
       "sha256": "07dde55e126fa4dff6d4489c2b94b8fe917b612e4b30ac240f6c891207537950",
       "size": 1401
+    },
+    {
+      "executable": false,
+      "path": "backend/app/models/utility_recon.py",
+      "sha256": "c616be6e017d53f6b82c699bbbf7f4d1855651ec48cb66f7a918bc2176ab52c8",
+      "size": 5512
     },
     {
       "executable": false,
@@ -1262,6 +1280,60 @@
     },
     {
       "executable": false,
+      "path": "backend/app/services/utility_recon/__init__.py",
+      "sha256": "4cb5190ae9ac38f9669ea8bcc5deacfbdec2e8ff1affa17384c962f973489aa1",
+      "size": 47
+    },
+    {
+      "executable": false,
+      "path": "backend/app/services/utility_recon/ai_mapping.py",
+      "sha256": "14ce76633b30a22b2f00fa549b39369e961408d005908a966d2f8ad8842ddfe5",
+      "size": 3475
+    },
+    {
+      "executable": false,
+      "path": "backend/app/services/utility_recon/contracts.py",
+      "sha256": "d9f53864f47c369aa0c9247f216a64f9d7ac65ca1c800c497f0d4394fdb64d31",
+      "size": 1546
+    },
+    {
+      "executable": false,
+      "path": "backend/app/services/utility_recon/export.py",
+      "sha256": "4492738f727312140240db6b8267f0a3f563b9e829ea1b45d94250e28f0c70c1",
+      "size": 3083
+    },
+    {
+      "executable": false,
+      "path": "backend/app/services/utility_recon/matcher.py",
+      "sha256": "0ab3e83be3db634718b2e8215ad288282eb09a42ef86fe27c45e273f3e4c8e28",
+      "size": 7950
+    },
+    {
+      "executable": false,
+      "path": "backend/app/services/utility_recon/normalize.py",
+      "sha256": "6cf0c0bebec2d5ee2b37dfb70a7877a83f2ea9fffc0375c46737b9b32f533808",
+      "size": 6268
+    },
+    {
+      "executable": false,
+      "path": "backend/app/services/utility_recon/run.py",
+      "sha256": "1b779126ad40714aec206bc4def32b919b44870bc12a0d7e55aed98dc56da62e",
+      "size": 5401
+    },
+    {
+      "executable": false,
+      "path": "backend/app/services/utility_recon/summary.py",
+      "sha256": "fc5b88242a9d169c2cd23b9c55381fd7b5e38d3842a8beb84c2231f7fab8221c",
+      "size": 2072
+    },
+    {
+      "executable": false,
+      "path": "backend/app/services/utility_recon/workbook.py",
+      "sha256": "2b46131a9c18d0edfb13eb27484fdfd1171f5e39d2e64424cff72e550301d288",
+      "size": 8220
+    },
+    {
+      "executable": false,
       "path": "backend/app/workers/__init__.py",
       "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
       "size": 0
@@ -1389,8 +1461,8 @@
     {
       "executable": false,
       "path": "frontend/app/(dashboard)/finance/page.tsx",
-      "sha256": "ee8c9f37edf58dd059c0e755156e1d37ec086b0e25533fc135f92f4920c3265e",
-      "size": 46043
+      "sha256": "abdf4746babba916e57f933efb0efb34d0fc3305ffcb63c32461e1974091483a",
+      "size": 46199
     },
     {
       "executable": false,
@@ -1403,6 +1475,12 @@
       "path": "frontend/app/(dashboard)/finance/rooms/[room_id]/page.tsx",
       "sha256": "bd2c1d1183fd6415922d481951224103395c7ddbdaaead39efa7a052c5ffbb2e",
       "size": 10041
+    },
+    {
+      "executable": false,
+      "path": "frontend/app/(dashboard)/finance/utility-recon/page.tsx",
+      "sha256": "1348e5e846d75fb33934195e4cf93941a2ab7b4b694d1018e5eb8e9900170375",
+      "size": 10212
     },
     {
       "executable": false,
@@ -2175,8 +2253,8 @@
     {
       "executable": false,
       "path": "frontend/lib/api.ts",
-      "sha256": "2731ff5fbb7f67038c93104ade6ad02fdf2a587eebf6af6a218ac5f0050d726f",
-      "size": 38152
+      "sha256": "cc63a2cf475eb6c59fe4c53fd048664eb6153c2846f961e36c041415250f4b8d",
+      "size": 39321
     },
     {
       "executable": false,
@@ -2325,8 +2403,8 @@
     {
       "executable": false,
       "path": "frontend/lib/nav-config.tsx",
-      "sha256": "065c1fc4eddfd031b4281ae73c5edb52d3564cdcd42ceb5f208013e18a90a039",
-      "size": 4920
+      "sha256": "62830c130cc0d30a50eea05bf3abdae524952cebaa3e206d5938dc3149a52529",
+      "size": 5096
     },
     {
       "executable": false,
@@ -2486,6 +2564,12 @@
     },
     {
       "executable": false,
+      "path": "frontend/lib/utility-recon.ts",
+      "sha256": "d98d5304405a66694b5f04e199912c9b0ed9680f1efa84bd6a89d9838c24d9ba",
+      "size": 2269
+    },
+    {
+      "executable": false,
       "path": "frontend/lib/utils.ts",
       "sha256": "6ae7f5d08a3fddd6557a2d2561f9a8639596151036ff5741a2742e5b3b734d78",
       "size": 3271
@@ -2617,6 +2701,6 @@
       "size": 650
     }
   ],
-  "revision": "c9dae85161033b2d240fdbb632e7019c3d327bc4",
+  "revision": "922e49650e5973ee1ad5201d1ef85aed156b73fc",
   "version": 1
 }

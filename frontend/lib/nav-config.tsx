@@ -23,6 +23,7 @@ export type NavKey =
   | "orders"
   | "guests"
   | "finance"
+  | "utilityRecon"
   | "tasks"
   | "settlements"
   | "assistant"
@@ -42,6 +43,7 @@ export const NAV_ENTRIES: Record<NavKey, NavEntry> = {
   orders: { key: "/orders", label: "订单", full: "订单管理", icon: <FileTextOutlined /> },
   guests: { key: "/guests", label: "客人", full: "客人档案", icon: <TeamOutlined /> },
   finance: { key: "/finance", label: "财务", full: "财务管理", icon: <DollarOutlined /> },
+  utilityRecon: { key: "/finance/utility-recon", label: "水电对账", full: "水电费对账", icon: <DollarOutlined /> },
   tasks: { key: "/tasks", label: "任务", full: "运营任务", icon: <CheckSquareOutlined /> },
   settlements: { key: "/settlements", label: "结算", full: "业主结算", icon: <FileDoneOutlined /> },
   assistant: { key: "/assistant", label: "问一下", full: "经营助手", icon: <RobotOutlined /> },
@@ -61,7 +63,7 @@ export const ROLE_LABEL: Record<string, string> = {
 /** 角色 → 可达导航项（桌面侧边栏顺序）。移动端集合必须与此一致（见 ROLE_NAV + 测试）。 */
 const NAV_BY_ROLE: Record<string, NavKey[]> = {
   admin: ["dashboard", "rooms", "orders", "guests", "finance", "tasks", "settlements", "assistant", "system"],
-  operator: ["dashboard", "rooms", "orders", "tasks"],
+  operator: ["dashboard", "rooms", "orders", "tasks", "utilityRecon"],
   finance: ["dashboard", "finance", "settlements"],
   owner: ["dashboard", "finance", "settlements"],
   // 保洁/管家有独立 staff 端口(layout 会重定向走)，此处仅纵深防御兜底。
@@ -99,7 +101,7 @@ export const ROLE_NAV: Record<string, RoleNav> = {
     fab: true,
     left: ["dashboard", "rooms"],
     right: ["tasks"],
-    more: ["orders"],
+    more: ["orders", "utilityRecon"],
   },
   finance: { fab: false, left: ["dashboard", "finance", "settlements"], right: [], more: [] },
   owner: { fab: false, left: ["dashboard", "finance", "settlements"], right: [], more: [] },

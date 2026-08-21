@@ -24,7 +24,7 @@ if not logging.getLogger().handlers:
 logging.getLogger("app").setLevel(logging.INFO)
 
 logger = logging.getLogger(__name__)
-from app.api.v1 import auth, orders, rooms, finance, tasks, dashboard, audit, guests, settlements, room_blocks, notifications, export as export_api, search as search_api, owners, booking, customer_auth, owner_portal, staff_auth, staff_portal, unified_auth, admin_demo, hosting_leads, feishu_callback, reconciliation, lock_events, deposit_receipt, billing_recon, assistant
+from app.api.v1 import auth, orders, rooms, finance, tasks, dashboard, audit, guests, settlements, room_blocks, notifications, export as export_api, search as search_api, owners, booking, customer_auth, owner_portal, staff_auth, staff_portal, unified_auth, admin_demo, hosting_leads, feishu_callback, reconciliation, lock_events, deposit_receipt, billing_recon, assistant, utility_recon
 
 if settings.SENTRY_DSN:
     sentry_sdk.init(
@@ -532,6 +532,7 @@ app.include_router(reconciliation.router, prefix=settings.API_PREFIX)
 app.include_router(lock_events.router, prefix=settings.API_PREFIX)
 app.include_router(deposit_receipt.router, prefix=settings.API_PREFIX)
 app.include_router(billing_recon.router, prefix=settings.API_PREFIX)
+app.include_router(utility_recon.router, prefix=settings.API_PREFIX)
 app.include_router(assistant.router, prefix=settings.API_PREFIX)
 
 # admin_demo 路由含演示账号种子（硬编码密码），生产环境不注册，避免凭证泄露面。

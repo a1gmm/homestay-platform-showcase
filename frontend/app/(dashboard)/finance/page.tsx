@@ -940,6 +940,9 @@ export default function FinancePage() {
             <Button icon={<FileExcelOutlined />} onClick={() => router.push("/finance/reconciliation")}>
               对账
             </Button>
+            <Button icon={<FileExcelOutlined />} onClick={() => router.push("/finance/utility-recon")}>
+              水电费对账
+            </Button>
             {user?.role === "admin" && (
               <Button onClick={() => router.push("/finance/billing-recon")}>
                 账单对账

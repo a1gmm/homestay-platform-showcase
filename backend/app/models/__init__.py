@@ -40,6 +40,12 @@ from app.models.company_sponsored_stay import (
     PaymentResponsibility,
 )
 from app.models.company_sponsorship_adjustment import CompanySponsorshipAdjustment
+from app.models.utility_recon import (  # noqa
+    UtilityReconBatch,
+    UtilityReconRow,
+    UtilityReconSuggestion,
+    UtilityReconUpload,
+)
 
 __all__ = [
     "User", "Owner", "Room", "Order", "OrderRoom", "Payment", "Refund",
@@ -58,4 +64,5 @@ __all__ = [
     "OrderSourcePriceSnapshot", "SourcePriceSnapshotOrigin",
     "CompanySponsoredStay", "CompanySponsorshipStatus", "PaymentResponsibility",
     "CompanySponsorshipAdjustment",
+    "UtilityReconUpload", "UtilityReconBatch", "UtilityReconRow", "UtilityReconSuggestion",
 ]
