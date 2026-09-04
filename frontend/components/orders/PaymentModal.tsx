@@ -136,13 +136,13 @@ export default function PaymentModal({
           <div style={{ display: "flex", gap: 18, fontSize: 13, flexWrap: "wrap" }}>
             <span>
               应收&nbsp;
-              <span className="tabular" style={{ fontWeight: 600 }}>
+              <span className="tabular" style={{ fontWeight: 500 }}>
                 ¥{actualPrice.toLocaleString()}
               </span>
             </span>
             <span>
               已收房费&nbsp;
-              <span className="tabular" style={{ fontWeight: 600, color: "#52c41a" }}>
+              <span className="tabular" style={{ fontWeight: 500, color: "#52c41a" }}>
                 ¥{houseFeePaid.toLocaleString()}
               </span>
             </span>
@@ -151,7 +151,7 @@ export default function PaymentModal({
               <span
                 className="tabular"
                 style={{
-                  fontWeight: 700,
+                  fontWeight: 500,
                   color: houseFeeRemaining > 0 ? "#ff4d4f" : "#52c41a",
                 }}
               >

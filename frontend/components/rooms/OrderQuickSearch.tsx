@@ -25,7 +25,7 @@ function ResultRow({ o }: { o: OrderListItem }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 2, padding: "2px 0" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-        <span style={{ fontWeight: 600, color: tokens.color.text.primary }}>{o.guest_name}</span>
+        <span style={{ fontWeight: 500, color: tokens.color.text.primary }}>{o.guest_name}</span>
         <StatusBadge status={o.order_status} size="sm" />
         <span style={{ fontSize: tokens.font.size.xs, color: tokens.color.text.tertiary }}>
           {CHANNEL_LABELS[o.channel] ?? o.channel}

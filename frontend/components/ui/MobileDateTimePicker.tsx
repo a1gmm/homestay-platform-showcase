@@ -65,7 +65,11 @@ export function MobileDateTimePicker({ value, onChange, disabled, size, style, i
       <TimePicker
         format="HH:mm"
         value={value}
-        onChange={(t) => onChange?.(mergePickedTime(value, t, dayjs()))}
+        onCalendarChange={(t) =>
+          onChange?.(
+            mergePickedTime(value, Array.isArray(t) ? (t[0] ?? null) : t, dayjs())
+          )
+        }
         disabled={disabled}
         size={size}
         inputReadOnly

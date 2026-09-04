@@ -11,13 +11,21 @@ from uuid import uuid4
 from sqlalchemy import and_, extract, or_, select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.cleaning_pricing import OWNER_SELF_CHECKOUT_CLEANING_FEE
 from app.models.expense import Expense, ExpenseCategory, ExpensePayer
-from app.models.order import Order, OrderStatus
+from app.models.order import Order, OrderStatus, is_owner_self_order
 from app.models.order_room import OrderRoom
 from app.models.room import Room
 from app.services import service_fee_ledger
 from app.services.audit import log_action_tx
 from app.services.service_fees import get_service_fees
+
+
+_INCURRED_ORDER_STATUSES = (
+    OrderStatus.pending_checkout,
+    OrderStatus.pending_payment,
+    OrderStatus.completed,
+)
 
 
 @dataclass(frozen=True)
@@ -29,6 +37,7 @@ class PlannedServiceFee:
     room_id: str
     category: ExpenseCategory
     amount: Decimal
+    payer: ExpensePayer
     expense_date: date
     nights: int
     stay_group_id: str | None
@@ -53,6 +62,7 @@ class PlannedServiceFeeCorrection:
     expense_id: str
     current_amount: Decimal
     current_expense_date: date
+    current_payer: ExpensePayer
     expected: PlannedServiceFee
 
 
@@ -100,12 +110,17 @@ async def plan_service_fee_reconciliation(
     year: int,
     month: int,
     cutoff: date | None = None,
+    detect_corrections: bool = False,
 ) -> ServiceFeeReconciliationPlan:
     """Plan deterministic checkout fees without mutating the ledger.
 
     Active continuation segments are charged once on their unique final node.
     Rows that cannot be assigned to an owner, amount, or unique charge key are
     returned as unresolved and never converted into guessed fee rows.
+
+    Existing active rows are historical facts. Automated callers therefore do
+    not compare their amount/payer against today's fee configuration. Explicit
+    administrative repair may opt into append-only correction detection.
     """
     checkout_in_month = and_(
         extract("year", OrderRoom.check_out_date) == year,
@@ -132,6 +147,12 @@ async def plan_service_fee_reconciliation(
         .outerjoin(Room, Room.room_id == OrderRoom.room_id)
         .where(Order.is_deleted.is_(False))
         .where(Order.order_status != OrderStatus.cancelled)
+        .where(
+            or_(
+                OrderRoom.checked_out_at.is_not(None),
+                Order.order_status.in_(_INCURRED_ORDER_STATUSES),
+            )
+        )
         .where(candidate_scope)
         .order_by(OrderRoom.check_out_date, OrderRoom.order_room_id)
     )
@@ -168,6 +189,12 @@ async def plan_service_fee_reconciliation(
             and value.year == year
             and value.month == month
             and (cutoff is None or value <= cutoff)
+        )
+
+    def row_is_incurred(order_room: OrderRoom, order: Order) -> bool:
+        return (
+            order_room.checked_out_at is not None
+            or order.order_status in _INCURRED_ORDER_STATUSES
         )
 
     def add_unresolved(
@@ -336,6 +363,8 @@ async def plan_service_fee_reconciliation(
                     return
 
         final_order_room, final_order, final_room = final_rows[0]
+        if not row_is_incurred(final_order_room, final_order):
+            return
         if final_room.owner_id != owner_id:
             return
 
@@ -343,8 +372,15 @@ async def plan_service_fee_reconciliation(
             (order_room.check_out_date - order_room.check_in_date).days
             for order_room, _, _ in rows
         )
+        owner_self = is_owner_self_order(final_order)
+        payer = ExpensePayer.company if owner_self else ExpensePayer.owner
         candidates = (
-            (ExpenseCategory.cleaning, fees.checkout_cleaning_fee),
+            (
+                ExpenseCategory.cleaning,
+                OWNER_SELF_CHECKOUT_CLEANING_FEE
+                if owner_self
+                else fees.checkout_cleaning_fee,
+            ),
             (ExpenseCategory.laundry, fees.laundry_fee_per_room * final_room.beds),
             (ExpenseCategory.daily_supplies, fees.consumable_fee_per_room_night * nights),
         )
@@ -357,6 +393,7 @@ async def plan_service_fee_reconciliation(
                 room_id=final_room.room_id,
                 category=category,
                 amount=amount,
+                payer=payer,
                 expense_date=final_checkout,
                 nights=nights,
                 stay_group_id=stay_group_id,
@@ -367,23 +404,10 @@ async def plan_service_fee_reconciliation(
         plan_rows([row], None)
     for group_id, rows in grouped_rows.items():
         room_ids = {order_room.room_id for order_room, _, _ in rows}
-        group_orders = {order.order_id: order for _, order, _ in rows}.values()
-        cross_room_confirmed = all(
-            bool(
-                (order.metadata_ or {}).get(
-                    "service_fee_cross_room_confirmed"
-                )
-            )
-            for order in group_orders
-        )
-        if (
-            None not in room_ids
-            and len(room_ids) > 1
-            and cross_room_confirmed
-        ):
-            # A confirmed room move or multi-room booking still has one
-            # continuation group, but each physical room creates its own
-            # cleaning/laundry boundary and nightly consumables total.
+        if None not in room_ids and len(room_ids) > 1:
+            # A room move or multi-room booking may share one continuation
+            # group, but every occupied physical room independently incurs its
+            # own cleaning/laundry boundary and nightly consumables total.
             for room_id in sorted(room_ids):
                 plan_rows(
                     [row for row in rows if row[0].room_id == room_id],
@@ -395,7 +419,7 @@ async def plan_service_fee_reconciliation(
     keys = {(fee.order_id, fee.room_id) for fee in expected}
     existing_by_key: dict[
         tuple[str, str, ExpenseCategory],
-        list[tuple[str, Decimal, date]],
+        list[tuple[str, Decimal, date, ExpensePayer]],
     ] = {}
     if keys:
         existing_rows = (
@@ -407,6 +431,7 @@ async def plan_service_fee_reconciliation(
                     Expense.category,
                     Expense.amount,
                     Expense.expense_date,
+                    Expense.payer,
                 ).where(
                     or_(
                         Expense.is_service_fee.is_(True),
@@ -433,6 +458,7 @@ async def plan_service_fee_reconciliation(
             category,
             amount,
             expense_date,
+            payer,
         ) in existing_rows:
             key = (existing_order_id, existing_room_id, category)
             scope = (existing_order_id, existing_room_id)
@@ -457,7 +483,7 @@ async def plan_service_fee_reconciliation(
                 and (expense_date.year, expense_date.month) == (year, month)
             ):
                 values = existing_by_key.setdefault(key, [])
-                values.append((expense_id, amount, expense_date))
+                values.append((expense_id, amount, expense_date, payer))
                 if len(values) > 1 and key not in duplicate_keys:
                     duplicate_keys.add(key)
                     unresolved.append(
@@ -480,13 +506,18 @@ async def plan_service_fee_reconciliation(
         if len(existing) > 1:
             continue
         if len(existing) == 1:
-            expense_id, current_amount, current_expense_date = existing[0]
-            if current_amount != amount or current_expense_date != planned.expense_date:
+            expense_id, current_amount, current_expense_date, current_payer = existing[0]
+            if detect_corrections and (
+                current_amount != amount
+                or current_expense_date != planned.expense_date
+                or current_payer != planned.payer
+            ):
                 corrections.append(
                     PlannedServiceFeeCorrection(
                         expense_id=expense_id,
                         current_amount=current_amount,
                         current_expense_date=current_expense_date,
+                        current_payer=current_payer,
                         expected=planned,
                     )
                 )
@@ -617,6 +648,7 @@ async def apply_service_fee_reconciliation(
             and len(active_rows) == 1
             and active_rows[0].amount == correction.expected.amount
             and active_rows[0].expense_date == correction.expected.expense_date
+            and active_rows[0].payer == correction.expected.payer
         ):
             # A retry of the same stale plan sees the replacement row and is a no-op.
             continue
@@ -625,6 +657,7 @@ async def apply_service_fee_reconciliation(
             or len(active_rows) != 1
             or row.amount != correction.current_amount
             or row.expense_date != correction.current_expense_date
+            or row.payer != correction.current_payer
         ):
             drift.append(
                 UnresolvedServiceFee(
@@ -653,7 +686,10 @@ async def apply_service_fee_reconciliation(
         row.deleted_by = operator_id
         row.notes = (
             (row.notes + "；") if row.notes else ""
-        ) + "结算前服务费对账：金额或日期与最终订单不一致，已自动更正"
+        ) + (
+            "结算前服务费对账：金额、日期或承担方与最终订单不一致，"
+            "已自动更正"
+        )
 
     existing_keys = {
         key
@@ -680,7 +716,7 @@ async def apply_service_fee_reconciliation(
                 expense_date=fee.expense_date,
                 room_id=fee.room_id,
                 order_id=fee.order_id,
-                payer=ExpensePayer.owner,
+                payer=fee.payer,
                 owner_id=fee.owner_id,
                 notes=(
                     "结算前服务费对账自动补录；"

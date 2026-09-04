@@ -1,10 +1,26 @@
 import axios, { AxiosError } from "axios";
+import type {
+  ReleaseAnnouncementClient,
+  ReleaseAnnouncementList,
+} from "./release-announcements";
 
 export const STAFF_TOKEN_KEY = "staff_access_token";
 
 export const staffApi = axios.create({
   baseURL: process.env.NEXT_PUBLIC_API_URL || "/api/v1",
 });
+
+export const staffReleaseAnnouncementClient: ReleaseAnnouncementClient = {
+  unread: async () =>
+    (await staffApi.get<ReleaseAnnouncementList>("/release-announcements/unread")).data.items,
+  acknowledge: async (announcementIds) =>
+    (
+      await staffApi.post<{ acknowledged_ids: string[] }>(
+        "/release-announcements/acknowledge",
+        { announcement_ids: announcementIds },
+      )
+    ).data.acknowledged_ids,
+};
 
 staffApi.interceptors.request.use((config) => {
   if (typeof window !== "undefined") {
@@ -21,7 +37,7 @@ staffApi.interceptors.response.use(
       localStorage.removeItem(STAFF_TOKEN_KEY);
       const next = encodeURIComponent(window.location.pathname + window.location.search);
       if (!window.location.pathname.startsWith("/staff/login")) {
-        window.location.href = `/staff/login?next=${next}`;
+        window.location.replace(`/staff/login?next=${next}`);
       }
     }
     return Promise.reject(error);

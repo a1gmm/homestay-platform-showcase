@@ -71,7 +71,11 @@ export default function RoomFinanceDetailPage() {
   const { data: byRoom, isLoading: summaryLoading } = useQuery({
     queryKey: ["finance", "by-room", startDate, endDate],
     queryFn: () =>
-      financeApi.summaryByRoom({ start_date: startDate, end_date: endDate }).then((r) => r.data),
+      financeApi.summaryByRoom({
+        start_date: startDate,
+        end_date: endDate,
+        actual_only: true,
+      }).then((r) => r.data),
   });
   const summary = byRoom?.find((r) => r.room_id === roomId);
 
@@ -94,6 +98,7 @@ export default function RoomFinanceDetailPage() {
           room_id: roomId,
           start_date: startDate,
           end_date: endDate,
+          actual_only: true,
         })
         .then((r) => r.data),
     enabled: !!roomId,
@@ -184,7 +189,7 @@ export default function RoomFinanceDetailPage() {
       </Skeleton>
 
       <Card
-        bordered={false}
+        variant="borderless"
         style={{ borderRadius: 12, boxShadow: tokens.shadow.sm }}
         title={<Text strong>区间订单（收入来源）</Text>}
       >
@@ -227,7 +232,7 @@ export default function RoomFinanceDetailPage() {
       </Card>
 
       <Card
-        bordered={false}
+        variant="borderless"
         style={{ borderRadius: 12, boxShadow: tokens.shadow.sm }}
         title={<Text strong>区间支出明细</Text>}
       >

@@ -15,3 +15,5 @@ redis_data/
 .task8-e2e.sqlite3
 test-results/
 playwright-report/
+.worktrees/
+.gstack/

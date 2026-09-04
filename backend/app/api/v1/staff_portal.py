@@ -25,8 +25,10 @@ from app.models.order_room import OrderRoom
 from app.models.room import Room, RoomStatus
 from app.models.task import Task, TaskType, TaskStatus, TaskPriority
 from app.services.audit import log_action_tx
+from app.services.cleaning import ensure_checkout_service_expenses
 from app.services.manual_override import apply_snapshot_manual_locks
 from app.services.room_availability import check_room_conflict
+from app.services import service_fee_ledger
 
 logger = logging.getLogger(__name__)
 
@@ -285,6 +287,22 @@ async def handle_checkout(
     remaining_after = [r for r in active_rooms if r not in checkout_rooms]
     is_final = len(remaining_after) == 0
     checkout_now = now_cn()
+
+    # 退房即确认本次住宿已经发生的保洁/洗涤/日耗支出。先做完整性验证，任何
+    # 房间缺业主/退房日都在状态、押金、任务改变前失败，避免退了房却没记账。
+    checkout_room_ids = [r.room_id for r in checkout_rooms if r.room_id]
+    try:
+        await ensure_checkout_service_expenses(
+            db,
+            order=order,
+            room_ids=checkout_room_ids,
+        )
+    except (
+        service_fee_ledger.CheckoutExpenseRecognitionError,
+        service_fee_ledger.CheckoutServiceFeeWrongMonthError,
+    ) as exc:
+        await db.rollback()
+        raise HTTPException(status_code=409, detail=exc.to_detail()) from exc
 
     # 押金结算:已收押金且 > 0 时，按实退金额退/扣（不传 = 全退）。
     # 单间退房（非整单收尾）不结算押金——押金按整单，留到最后一间退房时结。

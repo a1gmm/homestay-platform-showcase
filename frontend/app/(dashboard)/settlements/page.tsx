@@ -16,6 +16,8 @@ import dayjs from "dayjs";
 import { useAuthStore } from "@/lib/auth";
 import { useIsMobile } from "@/lib/responsive";
 import SettlementPreflightAlert from "@/components/settlements/SettlementPreflightAlert";
+import { useRouter } from "next/navigation";
+import { safeMonthlyCloseReturnTarget } from "@/lib/monthly-close";
 
 const { Title, Text } = Typography;
 
@@ -31,11 +33,17 @@ const fmtYuan = (v: number | string) =>
   Number(v).toLocaleString("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 export default function SettlementsPage() {
+  const router = useRouter();
   const isMobile = useIsMobile();
   const qc = useQueryClient();
   const { user } = useAuthStore();
   const isAdmin = user?.role === "admin";
-  const [selectedMonth, setSelectedMonth] = useState<string | undefined>();
+  const [requestedMonth] = useState(() => {
+    if (typeof window === "undefined") return undefined;
+    const value = new URLSearchParams(window.location.search).get("month");
+    return value && /^\d{4}-(0[1-9]|1[0-2])$/.test(value) ? value : undefined;
+  });
+  const [selectedMonth, setSelectedMonth] = useState<string | undefined>(requestedMonth);
   const [disputeOpen, setDisputeOpen] = useState(false);
   const [disputeId, setDisputeId] = useState<string>("");
   const [disputeNotes, setDisputeNotes] = useState("");
@@ -44,8 +52,12 @@ export default function SettlementsPage() {
   const [exportLoading, setExportLoading] = useState(false);
   const [statementExportingId, setStatementExportingId] = useState<string | null>(null);
   const [overwrite, setOverwrite] = useState(false);
+  const [returnTo] = useState(() => {
+    if (typeof window === "undefined") return null;
+    return safeMonthlyCloseReturnTarget(window.location.search, window.location.origin);
+  });
   // 生成/重算的目标月，独立于上方列表的「筛选结算月」。默认上月。
-  const [genMonth, setGenMonth] = useState(() => dayjs().subtract(1, "month"));
+  const [genMonth, setGenMonth] = useState(() => requestedMonth ? dayjs(`${requestedMonth}-01`) : dayjs().subtract(1, "month"));
   const genYear = genMonth.year();
   const genMonthNumber = genMonth.month() + 1;
 
@@ -236,10 +248,11 @@ export default function SettlementsPage() {
       <div style={{ display: "flex", flexDirection: isMobile ? "column" : "row", alignItems: isMobile ? "flex-start" : "center", justifyContent: "space-between", gap: isMobile ? 12 : 0 }}>
         <div>
           <Title level={4} style={{ margin: 0 }}>业主结算</Title>
-          <Text type="secondary">按月生成业主收益结算报表</Text>
+          <Text type="secondary">结算月按订单退房日归属，与财务收入口径一致</Text>
           <div><Text type="secondary" style={{ fontSize: 12 }}>{MILLE_NOTE}</Text></div>
         </div>
         <Space wrap>
+          {returnTo && <Button onClick={() => router.push(returnTo)}>返回月结中心</Button>}
           <Button icon={<DownloadOutlined />} loading={exportLoading} onClick={handleExportSettlements}>
             导出Excel
           </Button>
@@ -267,7 +280,7 @@ export default function SettlementsPage() {
                   value={genMonth}
                   allowClear={false}
                   format="YYYY-MM"
-                  placeholder="选择结算月"
+                  placeholder="结算月（按退房月）"
                   onChange={(d) => d && setGenMonth(d)}
                   style={{ width: isMobile ? 130 : undefined }}
                 />
@@ -295,12 +308,13 @@ export default function SettlementsPage() {
         <SettlementPreflightAlert report={preflight} loading={preflightLoading} />
       ) : null}
 
-      <Card bordered={false} style={{ borderRadius: 12 }} styles={{ body: { padding: isMobile ? 12 : 0 } }}>
+      <Card variant="borderless" style={{ borderRadius: 12 }} styles={{ body: { padding: isMobile ? 12 : 0 } }}>
         <div style={{ padding: isMobile ? "0 0 12px" : "16px 20px 0" }}>
           <DatePicker
             picker="month"
-            placeholder="筛选结算月"
+            placeholder="筛选结算月（按退房月）"
             allowClear
+            value={selectedMonth ? dayjs(`${selectedMonth}-01`) : null}
             style={{ width: isMobile ? "100%" : undefined }}
             onChange={(d) => setSelectedMonth(d ? d.format("YYYY-MM") : undefined)}
           />

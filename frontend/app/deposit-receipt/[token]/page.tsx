@@ -180,6 +180,9 @@ export default function DepositReceiptPage() {
 
                 {preview ? (
                   <div style={{ marginTop: 8 }}>
+                    {/* 本地 blob 相机预览没有稳定尺寸或远程 URL，next/image 在这里
+                        不会带来优化，反而会破坏拍照后的即时预览。 */}
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img
                       src={preview}
                       alt="小票预览"

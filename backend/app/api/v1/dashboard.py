@@ -501,7 +501,13 @@ async def period_summary(
     _ensure_finance_role(current_user)
     if end_date < start_date:
         raise HTTPException(status_code=400, detail="end_date 必须 >= start_date")
-    return await _period_stats(db, start_date, end_date)
+    metrics = await compute_period_metrics(
+        db,
+        start_date,
+        end_date,
+        recognized_only=True,
+    )
+    return await _period_stats(db, start_date, end_date, metrics=metrics)
 
 
 @router.get("/revenue-trend")

@@ -91,7 +91,7 @@ export function PendingRoomStrip({
               display: "inline-block",
             }}
           />
-          <span style={{ fontSize: 14, fontWeight: 600, color: tokens.color.text.primary }}>
+          <span style={{ fontSize: 14, fontWeight: 500, color: tokens.color.text.primary }}>
             待排房订单
           </span>
           <span
@@ -102,7 +102,7 @@ export function PendingRoomStrip({
               background: "#6366F11A",
               padding: "1px 8px",
               borderRadius: 999,
-              fontWeight: 600,
+              fontWeight: 500,
             }}
           >
             {count}
@@ -166,7 +166,7 @@ export function PendingRoomStrip({
                   <span
                     style={{
                       fontSize: 14,
-                      fontWeight: 600,
+                      fontWeight: 500,
                       color: tokens.color.text.primary,
                       overflow: "hidden",
                       textOverflow: "ellipsis",
@@ -185,7 +185,7 @@ export function PendingRoomStrip({
                 >
                   {o.check_in_date?.slice(5)} → {o.check_out_date?.slice(5)} · {o.nights} 晚
                   {o.actual_price != null && (
-                    <span style={{ marginLeft: 6, fontWeight: 600, color: tokens.color.brand.primary }}>
+                    <span style={{ marginLeft: 6, fontWeight: 500, color: tokens.color.brand.primary }}>
                       ¥{Number(o.actual_price).toLocaleString()}
                     </span>
                   )}

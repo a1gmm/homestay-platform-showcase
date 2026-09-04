@@ -284,6 +284,7 @@ async def compute_room_period_owner_stat(
     db: AsyncSession, room: Room, start_date: date, end_date: date,
     cutoff: date | None = None,
     sponsorship_income_by_room: dict[str, list[CompanySponsoredIncome]] | None = None,
+    recognized_only: bool = False,
 ) -> RoomMonthOwnerStat:
     """算一间房某日期区间的业主分成明细。room 需已加载 owner_share_ratio /
     owner_deduction_rules / owner_ignored_categories。
@@ -319,6 +320,12 @@ async def compute_room_period_owner_stat(
         # 「结算到昨天」：业主门户只算已退房走人的单（离店日 ≤ cutoff）；
         # 不传 cutoff 的结算单生成路径整月全算，月底真实分账口径不受影响。
         or_stmt = or_stmt.where(OrderRoom.check_out_date <= cutoff)
+    if recognized_only:
+        or_stmt = or_stmt.where(Order.order_status.in_((
+            OrderStatus.pending_checkout,
+            OrderStatus.pending_payment,
+            OrderStatus.completed,
+        )))
     or_rows = (await db.execute(or_stmt)).all()
     order_ids: set = {order_id_ for _, _, _, order_id_, _ in or_rows}
     # 每单总房间数：判定「单房单」——单房单可直接用订单级冻结的平台原始到手结算

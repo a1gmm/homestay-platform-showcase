@@ -28,8 +28,18 @@ def _channel_key(channel) -> str:
     return channel.value if hasattr(channel, "value") else str(channel)
 
 
-async def compute_period_metrics(db, start_date: date, end_date: date) -> dict:
-    """算 [start_date, end_date]（含端点，按 check_out 离店日落月）的看板指标。返回 dict。"""
+async def compute_period_metrics(
+    db,
+    start_date: date,
+    end_date: date,
+    *,
+    recognized_only: bool = False,
+) -> dict:
+    """算 [start_date, end_date]（含端点，按 check_out 离店日落月）的看板指标。
+
+    ``recognized_only`` 供财务实际数使用：只纳入已经发生退房的订单状态；默认
+    保持经营看板原有的预订视图，避免改变其它接口的既有语义。
+    """
     def _blank():
         # room_nights: 按房×晚(含待排房)——占房口径，给在住率/ADR 用。
         # order_nights: 按订单住晚(退房−入住)——住店时长口径，给渠道「平均住晚」用，
@@ -44,14 +54,21 @@ async def compute_period_metrics(db, start_date: date, end_date: date) -> dict:
         return by_channel.setdefault(ch, _blank())
 
     # ── 营业额/佣金/订单数：按订单 check_out 离店日落月，排占位单 ──
-    order_rows = (await db.execute(
-        select(Order).where(
-            Order.is_deleted == False,
-            Order.order_status != OrderStatus.cancelled,
-            Order.check_out_date >= start_date,
-            Order.check_out_date <= end_date,
-        )
-    )).scalars().all()
+    order_filters = [
+        Order.is_deleted == False,
+        Order.order_status != OrderStatus.cancelled,
+        Order.check_out_date >= start_date,
+        Order.check_out_date <= end_date,
+    ]
+    if recognized_only:
+        order_filters.append(Order.order_status.in_((
+            OrderStatus.pending_checkout,
+            OrderStatus.pending_payment,
+            OrderStatus.completed,
+        )))
+    order_rows = (
+        await db.execute(select(Order).where(*order_filters))
+    ).scalars().all()
     for o in order_rows:
         if o.price_pending:   # 携程 ¥0 占位单不计
             continue
@@ -76,16 +93,25 @@ async def compute_period_metrics(db, start_date: date, end_date: date) -> dict:
             tgt["order_nights"] += stay
 
     # ── 间夜：按每行 OrderRoom check_out 离店日落月，含待排房，排占位单/取消/删 ──
-    room_rows = (await db.execute(
-        select(OrderRoom, Order.channel, Order.metadata_)
-        .join(Order, Order.order_id == OrderRoom.order_id)
-        .where(
-            Order.is_deleted == False,
-            Order.order_status != OrderStatus.cancelled,
-            OrderRoom.check_out_date >= start_date,
-            OrderRoom.check_out_date <= end_date,
+    room_filters = [
+        Order.is_deleted == False,
+        Order.order_status != OrderStatus.cancelled,
+        OrderRoom.check_out_date >= start_date,
+        OrderRoom.check_out_date <= end_date,
+    ]
+    if recognized_only:
+        room_filters.append(Order.order_status.in_((
+            OrderStatus.pending_checkout,
+            OrderStatus.pending_payment,
+            OrderStatus.completed,
+        )))
+    room_rows = (
+        await db.execute(
+            select(OrderRoom, Order.channel, Order.metadata_)
+            .join(Order, Order.order_id == OrderRoom.order_id)
+            .where(*room_filters)
         )
-    )).all()
+    ).all()
     for orr, channel, meta in room_rows:
         raw = (meta or {}).get("price_pending")
         if raw is True or str(raw).lower() == "true":   # 占位单不计

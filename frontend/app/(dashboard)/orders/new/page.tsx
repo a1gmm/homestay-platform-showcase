@@ -195,7 +195,7 @@ export default function NewOrderPage() {
         }}
       >
         {/* 来源信息 */}
-        <Card bordered={false}
+        <Card variant="borderless"
           style={{ borderRadius: 12, boxShadow: "0 2px 8px rgba(0,0,0,0.06)", marginBottom: 16 }}
           title={<Space><HomeOutlined style={{ color: "#1677ff" }} /><Text strong>来源信息</Text></Space>}>
           <Row gutter={16}>
@@ -224,7 +224,7 @@ export default function NewOrderPage() {
         </Card>
 
         {/* 客人信息 */}
-        <Card bordered={false}
+        <Card variant="borderless"
           style={{ borderRadius: 12, boxShadow: "0 2px 8px rgba(0,0,0,0.06)", marginBottom: 16 }}
           title={<Space><UserOutlined style={{ color: "#52c41a" }} /><Text strong>客人信息</Text></Space>}>
           <Row gutter={16}>
@@ -260,7 +260,7 @@ export default function NewOrderPage() {
         </Card>
 
         {/* 房间信息（多房）*/}
-        <Card bordered={false}
+        <Card variant="borderless"
           style={{ borderRadius: 12, boxShadow: "0 2px 8px rgba(0,0,0,0.06)", marginBottom: 16 }}
           title={
             <Space>
@@ -278,7 +278,7 @@ export default function NewOrderPage() {
         </Card>
 
         {/* 押金 / 佣金 / 总览 */}
-        <Card bordered={false}
+        <Card variant="borderless"
           style={{ borderRadius: 12, boxShadow: "0 2px 8px rgba(0,0,0,0.06)", marginBottom: 16 }}
           title={<Space><DollarOutlined style={{ color: "#fa8c16" }} /><Text strong>金额信息</Text></Space>}>
           {/* 押金已下线（王总 2026-07-22）：改走线下 POS + 飞书小票，建单不再录押金 */}
@@ -318,7 +318,7 @@ export default function NewOrderPage() {
         </Card>
 
         {/* 备注 */}
-        <Card bordered={false}
+        <Card variant="borderless"
           style={{ borderRadius: 12, boxShadow: "0 2px 8px rgba(0,0,0,0.06)", marginBottom: 24 }}>
           <Form.Item name="notes" label="备注" style={{ marginBottom: 0 }}>
             <TextArea rows={3} placeholder="特殊要求、注意事项..." showCount maxLength={500} />

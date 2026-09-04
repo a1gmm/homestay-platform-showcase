@@ -10,6 +10,7 @@ from fastapi import BackgroundTasks
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+from app.models.cleaning_request import CleaningRequestStatus
 from app.services import service_fee_ledger
 from app.services.audit import log_action
 from app.services.cleaning import complete_cleaning_for_task, start_cleaning_for_task
@@ -201,7 +202,7 @@ async def _handle_cleaning_request_action(
 
     - cr_apply：保洁点【申请打扫】→ 建申请（幂等）+ 应答后下码+发密码卡（新会话、best-effort）。
     - cr_done：保洁点【打扫完了】→ 标 cleaned + 应答后撤码（守 3s 红线）。
-    - cr_approve：前台/管家点【通过】→ 白名单校验 → 建保洁费用(30，房东全担)。
+    - cr_approve：前台/管家点【通过】→ 白名单校验；完成前不建预计费用。
     红线：全程绝不改房态（房里还住着人）。
     """
     from app.services.cleaning_request import (
@@ -235,7 +236,11 @@ async def _handle_cleaning_request_action(
         request_id = value.get("request_id") or ""
         if not request_id:
             return build_toast_response("⚠️ 找不到该打扫申请，请重新申请")
-        await mark_cleaning_done(db, request_id=request_id)
+        await mark_cleaning_done(
+            db,
+            request_id=request_id,
+            completed_by_open_id=open_id,
+        )
         # 撤保洁码 + 把私聊密码卡改灰，挂后台（守 3s 红线）。message_id=被点的密码卡。
         background_tasks.add_task(_cr_done_bg, room_id, order_id or None, message_id)
         return build_toast_response("✅ 已记录打扫完成，门锁密码已失效")
@@ -256,6 +261,8 @@ async def _handle_cleaning_request_action(
     background_tasks.add_task(_cr_grey_review_bg, message_id, room_id)
     if exp is not None:
         return build_toast_response("✅ 已通过")
+    if _req.status != CleaningRequestStatus.cleaned:
+        return build_toast_response("✅ 已通过，打扫完成后自动记账")
     return build_toast_response("✅ 已通过（该房未配置业主，未计费，请核对）")
 
 
@@ -307,7 +314,7 @@ async def _cr_apply_fanout_bg(
                 cleaning_code=code, request_id=request_id, room_id=room_id, order_id=order_id,
                 trial_tag=trial_tag,
             )
-            # 发审核卡到审核保洁群（管家点通过=计费）。
+            # 发审核卡到审核保洁群（管家授权；打扫完成即记实际支出）。
             await send_cleaning_review_card(
                 room_name=room_name, guest_name=guest_name,
                 request_id=request_id, room_id=room_id, order_id=order_id,

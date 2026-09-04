@@ -1,6 +1,7 @@
 "use client";
 
 import { Button, Result } from "antd";
+import { useRouter } from "next/navigation";
 
 export default function DashboardError({
   error,
@@ -9,6 +10,8 @@ export default function DashboardError({
   error: Error & { digest?: string };
   reset: () => void;
 }) {
+  const router = useRouter();
+
   return (
     <div style={{ padding: 40, display: "flex", justifyContent: "center" }}>
       <Result
@@ -19,7 +22,7 @@ export default function DashboardError({
           <Button key="retry" type="primary" onClick={reset}>
             重试
           </Button>,
-          <Button key="home" onClick={() => (window.location.href = "/dashboard")}>
+          <Button key="home" onClick={() => router.push("/dashboard")}>
             返回首页
           </Button>,
         ]}

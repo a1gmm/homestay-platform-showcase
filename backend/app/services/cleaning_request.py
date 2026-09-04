@@ -1,7 +1,7 @@
 """飞书「打扫申请群」自助保洁 —— 服务层。
 
-保洁在飞书群自助申请打扫、拿门锁码、点「打扫完了」撤码；前台/管家点「通过」计费。
-计费复用续住打扫（30，房东全担），只记账绝不碰房态（房里还住着人）。
+保洁在飞书群自助申请打扫、拿门锁码、点「打扫完了」撤码；前台/管家点「通过」审批。
+保洁点完成即按实际打扫日记续住打扫费；审批只做月结授权，绝不产生预计支出或改房态。
 详见 PRD：~/.claude/plans/打扫申请群-飞书自助-PRD-2026-07-12.md
 """
 from __future__ import annotations
@@ -14,9 +14,9 @@ from sqlalchemy import exists, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.cleaning_pricing import INSTAY_CLEANING_FEE, OWNER_SELF_INSTAY_CLEANING_FEE
+from app.core.cleaning_pricing import OWNER_SELF_INSTAY_CLEANING_FEE
 from app.core.config import settings
-from app.core.datetime_helpers import today_cn
+from app.core.datetime_helpers import to_cn, today_cn
 from app.core.trial_tags import trial_tag_for_notes
 from app.models.cleaning_request import (
     CleaningApprovalStatus,
@@ -28,6 +28,8 @@ from app.models.order import Order, OrderStatus, is_owner_self_order
 from app.models.order_room import OrderRoom
 from app.models.managed_stay_group import ManagedStayGroup, ManagedStayGroupKind
 from app.models.room import Room
+from app.services.audit import log_action_tx
+from app.services.service_fees import get_service_fees
 
 
 async def _collect_active_stays(
@@ -480,22 +482,142 @@ async def room_belongs_to_checked_in_order(
 
 
 async def mark_cleaning_done(
-    db: AsyncSession, *, request_id: str
+    db: AsyncSession,
+    *,
+    request_id: str,
+    completed_at: datetime | None = None,
+    completed_by_open_id: str = "",
 ) -> CleaningRequest | None:
-    """保洁点【打扫完了】→ 申请标 cleaned（幂等）。撤码由调用方另做。"""
+    """保洁点【打扫完了】→ 标记实际发生并立即记账（幂等）。"""
     req = (
         await db.execute(
-            select(CleaningRequest).where(CleaningRequest.request_id == request_id)
+            select(CleaningRequest)
+            .where(CleaningRequest.request_id == request_id)
+            .with_for_update()
         )
     ).scalar_one_or_none()
     if req is None:
         return None
     if req.status != CleaningRequestStatus.cleaned:
         req.status = CleaningRequestStatus.cleaned
-        req.cleaned_at = datetime.now(timezone.utc)
-        await db.commit()
+        req.cleaned_at = completed_at or datetime.now(timezone.utc)
+        await db.flush()
+        # 行锁把「完成」与「审批」串行化；刷新当前事务中的最终状态后再判断是否计费。
         await db.refresh(req)
+    await _ensure_incurred_cleaning_expense(
+        db,
+        req,
+        completed_by_open_id=completed_by_open_id or None,
+    )
+    await db.commit()
+    await db.refresh(req)
     return req
+
+
+async def _ensure_incurred_cleaning_expense(
+    db: AsyncSession,
+    req: CleaningRequest,
+    *,
+    completed_by_open_id: str | None = None,
+) -> Expense | None:
+    """打扫完成即记实际支出，审批状态由月结另行校验。
+
+    一条 CleaningRequest 最多关联一条有效费用；不同 request_date 即使同日审批，
+    也绝不共用费用。已有同订单、同房、同实际打扫日的未占用手工费用可复用。
+    """
+    if req.status != CleaningRequestStatus.cleaned:
+        return None
+
+    completed_cn = to_cn(req.cleaned_at)
+    expense_date = completed_cn.date() if completed_cn is not None else req.request_date
+
+    if req.expense_id:
+        linked = (
+            await db.execute(
+                select(Expense).where(
+                    Expense.expense_id == req.expense_id,
+                    Expense.is_deleted == False,  # noqa: E712
+                )
+            )
+        ).scalar_one_or_none()
+        # 非空关联却没有有效费用表示财务已明确作废；任何飞书重试都不得偷偷重建。
+        # 月结完整性检查会把它列为阻断项，留给人工决定是否恢复。
+        return linked
+
+    order = (
+        await db.execute(select(Order).where(Order.order_id == req.order_id))
+    ).scalar_one_or_none()
+    room = (
+        await db.execute(select(Room).where(Room.room_id == req.room_id))
+    ).scalar_one_or_none()
+    if order is None or room is None or not room.owner_id:
+        return None
+
+    occupied_by_other_request = exists(
+        select(CleaningRequest.request_id).where(
+            CleaningRequest.expense_id == Expense.expense_id,
+            CleaningRequest.request_id != req.request_id,
+        )
+    )
+    exp = (
+        await db.execute(
+            select(Expense).where(
+                Expense.order_id == order.order_id,
+                Expense.room_id == room.room_id,
+                Expense.category == ExpenseCategory.cleaning,
+                Expense.expense_date == expense_date,
+                Expense.is_deleted == False,  # noqa: E712
+                Expense.description.like("续住打扫%"),
+                ~occupied_by_other_request,
+            ).limit(1)
+        )
+    ).scalar_one_or_none()
+    action = "expense.cleaning_renewal.link"
+    if exp is None:
+        owner_self = is_owner_self_order(order)
+        fees = await get_service_fees(db)
+        exp = Expense(
+            expense_id="EXP-" + uuid4().hex[:12].upper(),
+            category=ExpenseCategory.cleaning,
+            amount=(
+                OWNER_SELF_INSTAY_CLEANING_FEE
+                if owner_self
+                else fees.instay_cleaning_fee
+            ),
+            description=f"续住打扫 {room.room_name}",
+            expense_date=expense_date,
+            room_id=room.room_id,
+            order_id=order.order_id,
+            payer=ExpensePayer.company if owner_self else ExpensePayer.owner,
+            owner_id=room.owner_id,
+            notes=req.notes,
+            is_service_fee=True,
+        )
+        db.add(exp)
+        await db.flush()
+        action = "expense.cleaning_renewal.create"
+    elif not exp.is_service_fee:
+        exp.is_service_fee = True
+
+    req.expense_id = exp.expense_id
+    await log_action_tx(
+        db,
+        None,
+        action,
+        "expense",
+        exp.expense_id,
+        after_data={
+            "request_id": req.request_id,
+            "request_date": req.request_date.isoformat(),
+            "expense_date": expense_date.isoformat(),
+            "completed_at": req.cleaned_at.isoformat() if req.cleaned_at else None,
+            "completed_by_open_id": completed_by_open_id,
+            "amount": str(exp.amount),
+            "category": ExpenseCategory.cleaning.value,
+            "is_service_fee": True,
+        },
+    )
+    return exp
 
 
 async def approve_cleaning_request(
@@ -505,16 +627,17 @@ async def approve_cleaning_request(
     approver_open_id: str,
     ref_date: date | None = None,
 ) -> tuple[CleaningRequest, Expense | None]:
-    """前台/管家点【通过】→ 生成保洁费用(30，房东全担) 并标 approved。
+    """前台/管家点【通过】→ 标 approved；未完成时绝不生成预计费用。
 
     幂等：已 approved 直接返回原申请+已挂费用，不重复扣。
     **并发安全**：先用原子条件 UPDATE(WHERE approval_status != approved) 抢占审批权，
     只有赢家(rowcount==1)建费用；输家(两人同点/飞书重试)拿已挂费用返回，绝不双扣
     （同 cleaning.complete_cleaning_for_task 的原子闸手法）。
-    与前台横条续住登记跨路径去重：同订单同房同日已有一条续住打扫费用则复用它，不新建。
+    与前台横条续住登记跨路径去重：同订单、同房、同实际打扫日已有且未被其他
+    申请占用的续住打扫费用可复用。申请日期不同则一律独立记账。
     **红线**：绝不碰房态（房里还住着人）。权限校验由调用方用 is_cleaning_approver 把关。
     """
-    ref = ref_date or today_cn()
+    _ = ref_date  # 保留旧调用签名；费用日期只认实际完成时间（旧数据回退申请日期）。
     now = datetime.now(timezone.utc)
 
     async def _active_expense(expense_id: str | None) -> Expense | None:
@@ -546,7 +669,9 @@ async def approve_cleaning_request(
 
     req = (
         await db.execute(
-            select(CleaningRequest).where(CleaningRequest.request_id == request_id)
+            select(CleaningRequest)
+            .where(CleaningRequest.request_id == request_id)
+            .with_for_update()
         )
     ).scalar_one_or_none()
     if req is None:
@@ -554,56 +679,16 @@ async def approve_cleaning_request(
         return None, None  # type: ignore[return-value]
 
     if not won:
-        # 输家 / 已审批过：不重复建费用，返回已挂的有效费用。
+        # 输家 / 已审批过：完成态若曾漏账则幂等补齐，未完成则仍不做预计支出。
         exp = await _active_expense(req.expense_id)
+        if exp is None and req.expense_id is None:
+            exp = await _ensure_incurred_cleaning_expense(db, req)
         await db.commit()
         return req, exp
 
-    order = (
-        await db.execute(select(Order).where(Order.order_id == req.order_id))
-    ).scalar_one_or_none()
-    room = (
-        await db.execute(select(Room).where(Room.room_id == req.room_id))
-    ).scalar_one_or_none()
-    if order is None or room is None or not room.owner_id:
-        # 无业主/订单丢失 → 无法计费；approved 已由原子 UPDATE 落定，直接提交、expense_id 留空。
-        await db.commit()
-        await db.refresh(req)
-        return req, None
-
-    # 跨路径去重：同订单同房同日已有续住打扫费用则复用（前台横条可能先登记过）。
-    exp = (
-        await db.execute(
-            select(Expense).where(
-                Expense.order_id == order.order_id,
-                Expense.room_id == room.room_id,
-                Expense.category == ExpenseCategory.cleaning,
-                Expense.expense_date == ref,
-                Expense.is_deleted == False,  # noqa: E712
-                Expense.description.like("续住打扫%"),
-            ).limit(1)
-        )
-    ).scalar_one_or_none()
-    if exp is None:
-        owner_self = is_owner_self_order(order)
-        exp = Expense(
-            expense_id="EXP-" + uuid4().hex[:12].upper(),
-            category=ExpenseCategory.cleaning,
-            amount=OWNER_SELF_INSTAY_CLEANING_FEE if owner_self else INSTAY_CLEANING_FEE,
-            description=f"续住打扫 {room.room_name}",
-            expense_date=ref,
-            room_id=room.room_id,
-            order_id=order.order_id,
-            payer=ExpensePayer.company if owner_self else ExpensePayer.owner,
-            owner_id=room.owner_id,
-            notes=req.notes,
-        )
-        db.add(exp)
-        await db.flush()
-
-    # approved/approver/approved_at 已由上方原子 UPDATE 落定，这里只回填 expense_id。
-    req.expense_id = exp.expense_id
+    exp = await _ensure_incurred_cleaning_expense(db, req)
     await db.commit()
     await db.refresh(req)
-    await db.refresh(exp)
+    if exp is not None:
+        await db.refresh(exp)
     return req, exp

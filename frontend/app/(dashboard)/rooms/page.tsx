@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useMemo, useState } from "react";
+import dynamic from "next/dynamic";
 import { extractErrorMessage } from "@/lib/api-errors";
 import { useSearchParams } from "next/navigation";
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from "@tanstack/react-query";
@@ -18,28 +19,29 @@ import {
   AppstoreOutlined,
   TableOutlined,
   PlusOutlined,
+  HomeOutlined,
   ThunderboltOutlined,
   FilterOutlined,
   CalendarOutlined,
   ExclamationCircleFilled,
 } from "@ant-design/icons";
-import {
-  RoomCard, GanttView, MobileGantt, PricingDetailModal,
-  PendingRoomStrip, AssignRoomModal, QuickCreateOrderModal, BatchOrdersDrawer,
-  OrderQuickSearch,
-  TodayRoomList,
-  ROOM_STATUS,
-  type PricingDay, type PricingDetail, type QuickCreateInit,
-  type RoomGroup,
-} from "@/components/rooms";
-import { OrderDetailModal, PaymentModal } from "@/components/orders";
-import { formatRoomStatusSummary } from "@/lib/room-status-summary";
+import { RoomCard } from "@/components/rooms/RoomCard";
+import { PricingDetailModal } from "@/components/rooms/PricingDetailModal";
+import { PendingRoomStrip } from "@/components/rooms/PendingRoomStrip";
+import { AssignRoomModal } from "@/components/rooms/AssignRoomModal";
+import { OrderQuickSearch } from "@/components/rooms/OrderQuickSearch";
+import { TodayRoomList } from "@/components/rooms/TodayRoomList";
+import { ROOM_STATUS } from "@/components/rooms/constants";
+import type { PricingDay, PricingDetail } from "@/components/rooms/types";
+import type { QuickCreateInit } from "@/components/rooms/QuickCreateOrderModal";
+import type { RoomGroup } from "@/components/rooms/GanttView";
+import { formatCompactRoomStatusSummary, formatRoomStatusSummary } from "@/lib/room-status-summary";
 import type { OrderStatus, PaymentCreate } from "@/lib/types";
-import { useIsMobile } from "@/lib/responsive";
+import { useIsCompactTouch, useIsMobile } from "@/lib/responsive";
 import { useRoomsFocus } from "@/hooks/useRoomsFocus";
 import { useAuthStore } from "@/lib/auth";
 import { groupByRoomType } from "@/lib/room-types";
-import { shiftWindow, GANTT_LOOKBACK_DAYS, windowFocusMonth } from "@/lib/gantt-window";
+import { shiftWindow, GANTT_LOOKBACK_DAYS, windowFocusMonth, ymdLocal } from "@/lib/gantt-window";
 import { useRoomBlocking, type BlockType } from "@/hooks/useRoomBlocking";
 import { RoomBlockModal } from "@/components/rooms/RoomBlockModal";
 import { RoomStatusModal } from "@/components/rooms/RoomStatusModal";
@@ -50,6 +52,19 @@ import { PageHeader } from "@/components/ui/PageHeader";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { tokens } from "@/lib/design-tokens";
 
+const GanttView = dynamic(() => import("@/components/rooms/GanttView").then((module) => module.GanttView), {
+  ssr: false,
+  loading: () => <Skeleton active paragraph={{ rows: 8 }} />,
+});
+const MobileGantt = dynamic(() => import("@/components/rooms/MobileGantt").then((module) => module.MobileGantt), {
+  ssr: false,
+  loading: () => <Skeleton active paragraph={{ rows: 8 }} />,
+});
+const QuickCreateOrderModal = dynamic(() => import("@/components/rooms/QuickCreateOrderModal").then((module) => module.QuickCreateOrderModal), { ssr: false });
+const BatchOrdersDrawer = dynamic(() => import("@/components/rooms/BatchOrdersDrawer").then((module) => module.BatchOrdersDrawer), { ssr: false });
+const OrderDetailModal = dynamic(() => import("@/components/orders/OrderDetailModal").then((module) => module.default), { ssr: false });
+const PaymentModal = dynamic(() => import("@/components/orders/PaymentModal").then((module) => module.default), { ssr: false });
+
 // 待排房订单池入口开关。
 // bypms 自建单接口不带房型（unitName 为空），同步进来只能在本系统手动排房，
 // 故该入口须常开（2026-07-08 交接后由操作员自行排房）。甘特图拖拽排房不受此开关影响。
@@ -57,6 +72,8 @@ const SHOW_PENDING_ROOM_STRIP = true;
 
 export default function RoomsPage() {
   const isMobile = useIsMobile();
+  const isCompactTouch = useIsCompactTouch();
+  const isCompact = isMobile || isCompactTouch;
   const today = new Date();
   const qc = useQueryClient();
   type View = "grid" | "gantt" | "today";
@@ -65,7 +82,7 @@ export default function RoomsPage() {
 
   // ─── 全屏专注模式（接线抽到 useRoomsFocus，含手机首帧竞态守卫）──────────
   const role = useAuthStore((s) => s.user?.role);
-  const { toggleFocus, focusActive } = useRoomsFocus({ isMobile, role, view, setView });
+  const { toggleFocus, focusActive } = useRoomsFocus({ isMobile: isCompact, role, view, setView });
   const [calMonth, setCalMonth] = useState({ year: today.getFullYear(), month: today.getMonth() + 1 });
   // D1 滚动日期窗口（甘特图用）：起始日默认「今天 - GANTT_LOOKBACK_DAYS」，
   // 这样今天落在第 3 列，左侧能看到最近两天（方便看今天/前两天要退房的），往后 30 天，天然跨月。
@@ -76,7 +93,7 @@ export default function RoomsPage() {
   // 二者原本是两套独立日期 state（windowStart vs calMonth），导致用户在桌面选的未来日期丢失、
   // 移动端回到今天。这里让移动甘特跟随桌面滚动窗口的锚点月，保住用户选的日期。
   // 桌面「单日」视图仍用 calMonth(=今天)；它与移动甘特从不同时激活，互不影响。
-  const activeCalMonth = isMobile && view === "gantt" ? windowFocusMonth(windowStart) : calMonth;
+  const activeCalMonth = isCompact && view === "gantt" ? windowFocusMonth(windowStart) : calMonth;
   // 7 日定价 Drawer（甘特图行 hover 菜单触发）
   const [pricingForRoom, setPricingForRoom] = useState<string | null>(null);
 
@@ -108,7 +125,8 @@ export default function RoomsPage() {
   const {
     contextHolder,
     draggingOrderId,
-    startDrag, clearDrag, canDropOnCell,
+    startDrag, clearDrag, canDropOnCell, readDropPayload,
+    swapConfirmation, openSwapConfirmation, closeSwapConfirmation, confirmSwap,
     lastDragSnapshot, setLastDragSnapshot,
     assignRoomMutation,
     dragRescheduleMutation,
@@ -205,7 +223,7 @@ export default function RoomsPage() {
     queryKey: ["rooms", "calendar", activeCalMonth.year, activeCalMonth.month],
     queryFn: () => roomsApi.calendar(activeCalMonth.year, activeCalMonth.month).then((r) => r.data),
     // 桌面甘特已改用滚动窗口(calendarWindow)，这里只服务移动端甘特 + 单日视图。
-    enabled: (isMobile && view === "gantt") || view === "today",
+    enabled: (isCompact && view === "gantt") || view === "today",
     placeholderData: keepPreviousData,
     ...CALENDAR_REFRESH,
   });
@@ -214,7 +232,7 @@ export default function RoomsPage() {
   const { data: calendarWindow, isLoading: calWindowLoading } = useQuery<CalendarRoom[]>({
     queryKey: ["rooms", "calendar-window", windowStart, rangeDays],
     queryFn: () => roomsApi.calendarWindow(windowStart, rangeDays).then((r) => r.data),
-    enabled: !isMobile && view === "gantt",
+    enabled: !isCompact && view === "gantt",
     placeholderData: keepPreviousData,
     ...CALENDAR_REFRESH,
   });
@@ -329,16 +347,19 @@ export default function RoomsPage() {
     });
   };
 
-  const prevMonth = () =>
-    setCalMonth((p) => {
-      const d = new Date(p.year, p.month - 2, 1);
-      return { year: d.getFullYear(), month: d.getMonth() + 1 };
-    });
-  const nextMonth = () =>
-    setCalMonth((p) => {
-      const d = new Date(p.year, p.month, 1);
-      return { year: d.getFullYear(), month: d.getMonth() + 1 };
-    });
+  const moveCompactMonth = (offset: number) => {
+    const d = new Date(activeCalMonth.year, activeCalMonth.month - 1 + offset, 1);
+    const next = { year: d.getFullYear(), month: d.getMonth() + 1 };
+    setCalMonth(next);
+    setWindowStart(shiftWindow(ymdLocal(d), -GANTT_LOOKBACK_DAYS));
+  };
+  const prevMonth = () => moveCompactMonth(-1);
+  const nextMonth = () => moveCompactMonth(1);
+  const returnToCurrentMonth = () => {
+    const now = new Date();
+    setCalMonth({ year: now.getFullYear(), month: now.getMonth() + 1 });
+    setWindowStart(shiftWindow(ymdLocal(now), -GANTT_LOOKBACK_DAYS));
+  };
 
   // 页头计数用当日 effective_status,与房卡(RoomCard 用 effective_status ?? room_status)
   // 口径一致;否则同屏的"空置/在住"数字会和卡片对不上 (#49)。
@@ -348,6 +369,7 @@ export default function RoomsPage() {
   }, {} as Record<string, number>);
   // 页头明细：列出所有非零状态桶，加总 = 总房间数（不再只显示空置/在住，避免"少 5 间"错觉）。
   const statusSummary = formatRoomStatusSummary(statusCounts);
+  const compactStatusSummary = formatCompactRoomStatusSummary(rooms?.length ?? 0, statusCounts);
 
   // ─── 房间分组（按 room_type） ────────────────────────────────────────────
   // calendar 接口不返回 room_type，需要从 rooms 列表里查；rooms 没拉到时 fallback 到扁平。
@@ -404,7 +426,7 @@ export default function RoomsPage() {
   }, [rooms]);
 
   // 桌面甘特用滚动窗口数据，其余（移动甘特/单日）用自然月数据
-  const ganttCalendar = !isMobile && view === "gantt" ? calendarWindow : calendar;
+  const ganttCalendar = !isCompact && view === "gantt" ? calendarWindow : calendar;
 
   // 房型展示顺序统一从 lib/room-types 取，避免 dashboard / 业主端两处重复维护
   const groupedRooms: RoomGroup[] = useMemo(() => {
@@ -521,19 +543,35 @@ export default function RoomsPage() {
   const pendingCount = pendingRoomOrders?.length ?? 0;
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+    <div className={`rooms-page${isCompact ? " rooms-page-compact" : ""}`} style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       {contextHolder}
+      <Modal
+        open={Boolean(swapConfirmation)}
+        title={swapConfirmation?.title}
+        okText={swapConfirmation?.kind === "warning" ? "知道了" : "确认对调"}
+        cancelText="取消"
+        cancelButtonProps={
+          swapConfirmation?.kind === "warning" ? { style: { display: "none" } } : undefined
+        }
+        confirmLoading={swapMutation.isPending}
+        onCancel={closeSwapConfirmation}
+        onOk={() => void confirmSwap()}
+      >
+        {swapConfirmation?.content}
+      </Modal>
       <PageHeader
         title="房态管理"
-        subtitle={focusActive ? undefined : `共 ${rooms?.length ?? 0} 套房间${statusSummary ? ` · ${statusSummary}` : ""}${SHOW_PENDING_ROOM_STRIP && pendingCount > 0 ? ` · ${pendingCount} 单待排房` : ""}`}
+        subtitle={focusActive ? undefined : isCompact
+          ? `${compactStatusSummary}${SHOW_PENDING_ROOM_STRIP && pendingCount > 0 ? ` · 待排${pendingCount}` : ""}`
+          : `共 ${rooms?.length ?? 0} 套房间${statusSummary ? ` · ${statusSummary}` : ""}${SHOW_PENDING_ROOM_STRIP && pendingCount > 0 ? ` · ${pendingCount} 单待排房` : ""}`}
         extra={focusActive ? undefined : (
-          <Space wrap>
+          <Space className="rooms-page-actions" wrap style={isCompact ? { width: "100%" } : undefined}>
             {/* 常驻订单快搜（前台反馈：搜索常用，别收起进抽屉）。选中 → 直接开订单详情 */}
             <OrderQuickSearch
               onSelectOrder={openOrderDetailById}
-              style={isMobile ? { width: "100%" } : undefined}
+              style={isCompact ? { width: "100%" } : undefined}
             />
-            {!isMobile && (
+            {!isCompact && (
               <Button
                 icon={<FilterOutlined />}
                 onClick={() => setBatchDrawerOpen(true)}
@@ -541,7 +579,7 @@ export default function RoomsPage() {
                 筛选 / 批量
               </Button>
             )}
-            {!isMobile && (
+            {!isCompact && (
               <Button
                 icon={<ThunderboltOutlined />}
                 onClick={async () => {
@@ -558,20 +596,25 @@ export default function RoomsPage() {
               </Button>
             )}
             <Button
+              aria-label="新建房间"
+              title="新建房间"
+              icon={<HomeOutlined />}
               onClick={() => {
                 setEditingRoom(null);
                 roomForm.resetFields();
                 setRoomModalOpen(true);
               }}
             >
-              新建房间
+              {isCompact ? null : "新建房间"}
             </Button>
             <Button
+              aria-label="新建订单"
+              title="新建订单"
               type="primary"
               icon={<PlusOutlined />}
               onClick={() => openCreateAt(null)}
             >
-              新建订单
+              {isCompact ? null : "新建订单"}
             </Button>
           </Space>
         )}
@@ -586,7 +629,7 @@ export default function RoomsPage() {
         isLoading={pendingLoading}
         onAssign={(o) => setAssignTarget(o)}
         onDetail={(o) => openOrderDetailFromKnown(o)}
-        draggable={!isMobile && view === "gantt"}
+        draggable={!isCompact && view === "gantt"}
         collapsible={focusActive}
         onDragStart={(o, e) => {
           startDrag(o.order_id, "pending");
@@ -597,8 +640,9 @@ export default function RoomsPage() {
       )}
 
       {/* 移动端视图切换：甘特(默认) / 房卡 */}
-      {isMobile && (
+      {isCompact && (
         <Segmented
+          className="rooms-page-view-switch"
           block
           value={view === "grid" ? "grid" : "gantt"}
           onChange={(v) => setView(v as View)}
@@ -609,7 +653,7 @@ export default function RoomsPage() {
         />
       )}
 
-      {!isMobile && !focusActive && (
+      {!isCompact && !focusActive && (
         <div
           style={{
             display: "flex",
@@ -655,13 +699,16 @@ export default function RoomsPage() {
       )}
 
       {/* 视图分支：移动端默认甘特(MobileGantt)，view==="grid" 时走房卡；桌面按 view 切换 */}
-      {isMobile && view !== "grid" ? (
+      {isCompact && view !== "grid" ? (
         <Skeleton loading={calLoading} active>
           <MobileGantt
             rooms={calendar ?? []}
             calMonth={activeCalMonth}
             roomTypeById={roomTypeById}
             effectiveStatusById={effectiveStatusById}
+            onPreviousMonth={prevMonth}
+            onNextMonth={nextMonth}
+            onToday={returnToCurrentMonth}
             onOrderClick={(orderId) => openOrderDetailById(orderId)}
             onCellClick={(roomId, date) => {
               // 空格 → 新建订单 Modal，预填房间 + 入住日期，退房默认 +1 天
@@ -756,8 +803,13 @@ export default function RoomsPage() {
           }}
           onCellDrop={(roomId, date, day, e) => {
             e.preventDefault();
-            const orderId = e.dataTransfer.getData("text/order-id");
-            const sourceType = e.dataTransfer.getData("text/source-type");
+            const {
+              orderId,
+              sourceType,
+              sourceRoomId,
+              sourceDate,
+              sourceOrderRoomId,
+            } = readDropPayload(e.dataTransfer);
             if (!orderId) {
               clearDrag();
               return;
@@ -774,9 +826,6 @@ export default function RoomsPage() {
             }
             // 分支 2 / 3：gantt 已排房订单
             if (sourceType === "gantt") {
-              const sourceRoomId = e.dataTransfer.getData("text/source-room-id");
-              const sourceDate = e.dataTransfer.getData("text/source-date");
-              const sourceOrderRoomId = e.dataTransfer.getData("text/source-order-room-id");
               // 同位置不动
               if (sourceRoomId === roomId && sourceDate === date) {
                 clearDrag();
@@ -797,7 +846,8 @@ export default function RoomsPage() {
                     const ob = rb.data;
                     const checkedIn = (s: string) => s === "checked_in";
                     if (checkedIn(oa.order_status) && checkedIn(ob.order_status)) {
-                      Modal.warning({
+                      openSwapConfirmation({
+                        kind: "warning",
                         title: "无法对调",
                         content: "两个订单都在住，不支持对调房间。",
                       });
@@ -848,18 +898,16 @@ export default function RoomsPage() {
                       anyCompleted && aOwner && bOwner && aOwner !== bOwner
                         ? "\n\n⚠️ 这两间房不是同一个房东，对调已完成的订单会改变这段收入的归属。若本月房东分账已经生成，请记得重新生成一次。"
                         : "";
-                    Modal.confirm({
+                    openSwapConfirmation({
+                      kind: "confirm",
                       title: "对调房间",
                       content: `把【${oa.guest_name} · 房间${aRoomName}】与【${ob.guest_name} · 房间${bRoomName}】对调？A → 房间${bRoomName}、B → 房间${aRoomName}，各自日期不变。${priceNote}${lockNote}${ownerNote}`,
-                      okText: "确认对调",
-                      cancelText: "取消",
-                      onOk: () =>
-                        swapMutation.mutate({
+                      payload: {
                           order_a_id: orderId,
                           order_room_a_id: aRow.order_room_id,
                           order_b_id: targetOrderId,
                           order_room_b_id: bRow.order_room_id,
-                        }),
+                      },
                     });
                     clearDrag();
                   })
@@ -1008,7 +1056,7 @@ export default function RoomsPage() {
                                 lineHeight: 1.9,
                               }}
                             >
-                              <div style={{ fontWeight: 600, color: "#cf1322", marginBottom: 2 }}>
+                              <div style={{ fontWeight: 500, color: "#cf1322", marginBottom: 2 }}>
                                 注意：入住日期将被改动，与实际入住时间不符
                               </div>
                               <div>
@@ -1047,7 +1095,7 @@ export default function RoomsPage() {
                                 lineHeight: 1.8,
                               }}
                             >
-                              <div style={{ fontWeight: 600, color: "#ad6800", marginBottom: 2 }}>
+                              <div style={{ fontWeight: 500, color: "#ad6800", marginBottom: 2 }}>
                                 🔁 门锁密码将重置
                               </div>
                               <div>{plan.lockWarning}</div>
@@ -1063,7 +1111,7 @@ export default function RoomsPage() {
                                 lineHeight: 1.8,
                               }}
                             >
-                              <div style={{ fontWeight: 600, color: "#ad6800", marginBottom: 2 }}>
+                              <div style={{ fontWeight: 500, color: "#ad6800", marginBottom: 2 }}>
                                 ⚠️ 分账归属将改变
                               </div>
                               <div>{plan.settlementWarning}</div>
@@ -1079,7 +1127,7 @@ export default function RoomsPage() {
                                 lineHeight: 1.8,
                               }}
                             >
-                              <div style={{ fontWeight: 600, color: "#ad6800", marginBottom: 2 }}>
+                              <div style={{ fontWeight: 500, color: "#ad6800", marginBottom: 2 }}>
                                 ⚠️ 续住组：仅移动该段
                               </div>
                               <div>{plan.stayGroupWarning}</div>
@@ -1105,7 +1153,7 @@ export default function RoomsPage() {
             clearDrag();
           }}
           onCellDragStart={(orderId, source, e) => {
-            startDrag(orderId, "gantt");
+            startDrag(orderId, "gantt", source);
             e.dataTransfer.setData("text/order-id", orderId);
             e.dataTransfer.setData("text/source-type", "gantt");
             e.dataTransfer.setData("text/source-room-id", source.roomId);

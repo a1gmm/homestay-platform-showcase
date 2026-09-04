@@ -130,7 +130,7 @@ export function RoomCard({
                   onClick={(e) => e.stopPropagation()}
                   style={{ cursor: "pointer", display: "inline-block", minWidth: 0, maxWidth: "100%" }}
                 >
-                  <div style={{ fontSize: 16, fontWeight: 600, color: tokens.color.text.primary, lineHeight: 1.2 }}>
+                  <div style={{ fontSize: 16, fontWeight: 500, color: tokens.color.text.primary, lineHeight: 1.2 }}>
                     {room.room_id}
                   </div>
                   <div
@@ -214,7 +214,7 @@ export function RoomCard({
           >
             <div>
               <div style={{ fontSize: 11, color: tokens.color.text.tertiary }}>基础房价</div>
-              <div className="tabular" style={{ fontSize: 16, fontWeight: 600 }}>
+              <div className="tabular" style={{ fontSize: 16, fontWeight: 500 }}>
                 ¥{room.base_price ?? "—"}
                 <span style={{ fontSize: 11, color: tokens.color.text.tertiary, marginLeft: 2 }}>
                   /晚
@@ -228,7 +228,7 @@ export function RoomCard({
                   className="tabular"
                   style={{
                     fontSize: 13,
-                    fontWeight: 600,
+                    fontWeight: 500,
                     color: tokens.color.brand.primary,
                   }}
                 >

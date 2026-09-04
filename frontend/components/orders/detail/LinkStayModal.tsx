@@ -51,6 +51,13 @@ export function LinkStayModal({ open, order, onClose }: Props) {
     onError: (e: any) => message.error(extractErrorMessage(e, "关联失败")),
   });
 
+  const pickedCandidate = candidates.find((candidate) => candidate.next_order_id === picked);
+  const baseGuestName = (order?.guest_name || "").trim();
+  const candidateGuestName = (pickedCandidate?.guest_name || "").trim();
+  const hasGuestNameMismatch = !!baseGuestName
+    && !!candidateGuestName
+    && candidateGuestName !== baseGuestName;
+
   return (
     <Modal
       open={open}
@@ -61,24 +68,9 @@ export function LinkStayModal({ open, order, onClose }: Props) {
           message.warning("请选择要关联的续住单");
           return;
         }
-        const c = candidates.find((x) => x.next_order_id === picked);
-        const baseName = (order?.guest_name || "").trim();
-        const candName = (c?.guest_name || "").trim();
-        // 不同名（如夫妻各定一单）二次确认——把「规避重名误配」的责任落到人点确认这一步。
-        // 仅在两边名字都已知且确实不同时才提示；缺名无法有意义比较，不打扰。
-        if (c && baseName && candName && candName !== baseName) {
-          Modal.confirm({
-            title: "两张单客名不同，确认是同一批客人的续住？",
-            content: `本单「${baseName}」将与「${(c.guest_name || "").trim()}」拴成一段连续入住（同房 ${c.room_id}、日期首尾相连）。确认前请核对确为同一批客人（如夫妻用两个名字各定一单）。`,
-            okText: "确认是同一批客人",
-            cancelText: "再想想",
-            onOk: () => linkMutation.mutate(),
-          });
-          return;
-        }
         linkMutation.mutate();
       }}
-      okText="确认关联"
+      okText={hasGuestNameMismatch ? "确认是同一批客人并关联" : "确认关联"}
       cancelText="取消"
       okButtonProps={{ disabled: !picked }}
       confirmLoading={linkMutation.isPending}

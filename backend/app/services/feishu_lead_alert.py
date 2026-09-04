@@ -162,6 +162,35 @@ async def send_ops_alert(text: str) -> None:
     )
 
 
+async def send_content_publish_alert(
+    channel: str,
+    job_id: str,
+    stage: str,
+    error_code: str,
+    admin_url: str,
+) -> None:
+    """Send only operational identifiers for a terminal content publish failure.
+
+    Draft text, media URLs, object keys, credentials and provider response bodies
+    are deliberately absent from this interface.
+    """
+    safe_channel = _sanitize(channel)[:20]
+    safe_job_id = _sanitize(job_id)[:24]
+    safe_stage = _sanitize(stage)[:40]
+    safe_error = _sanitize(error_code)[:60]
+    safe_admin_url = _sanitize(admin_url)[:300]
+    await _post_to_feishu(
+        "⚠️ 小程序内容发布失败\n"
+        f"频道：{safe_channel}\n"
+        f"任务：{safe_job_id}\n"
+        f"阶段：{safe_stage}\n"
+        f"错误码：{safe_error}\n"
+        f"后台：{safe_admin_url}",
+        url=settings.FEISHU_TODO_WEBHOOK_URL,
+        secret=settings.FEISHU_TODO_WEBHOOK_SECRET,
+    )
+
+
 async def send_password_text(text: str) -> None:
     """发送门锁客人入住卡片纯文本到密码群（PASSWORD）。走纯文本通道——方便前台
     整条选中复制转发给客人（交互卡片带表头/按钮不便逐字复制）。密码群只发密码
@@ -1189,7 +1218,7 @@ def _build_cleaning_review_card(
 ) -> dict:
     """发到审核保洁群的审核卡（schema 2.0）：房/客人 + 【通过】按钮。
 
-    通过(cr_approve)：管家点 → 计费 + 本卡改灰。保洁不在此群 = 点不到 = 天然防自批。
+    通过(cr_approve)：管家点 → 月结授权 + 本卡改灰；完成即记实际支出。保洁不在此群防自批。
     不同意就不点（无「驳回」按钮，留白即拒）。
     """
     md = (
@@ -1257,7 +1286,7 @@ async def grey_cleaning_password_card(
 
 
 async def grey_cleaning_review_card(*, message_id: str, room_name: str) -> None:
-    """通过后把审核卡改灰（已计费）。best-effort。"""
+    """通过后把审核卡改灰（已授权；实际支出由完成事件触发）。best-effort。"""
     if not message_id:
         return
     await _patch_message_card(

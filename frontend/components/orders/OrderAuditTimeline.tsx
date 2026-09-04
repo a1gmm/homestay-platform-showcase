@@ -182,7 +182,7 @@ function AuditEntryCard({
         <span style={{ color: tokens.color.text.tertiary, fontSize: 12, marginRight: 8 }}>
           {dayjs(timestamp).format("YYYY-MM-DD HH:mm:ss")}
         </span>
-        <span style={{ fontWeight: 600, color: tokens.color.text.primary, marginRight: 8 }}>
+        <span style={{ fontWeight: 500, color: tokens.color.text.primary, marginRight: 8 }}>
           {actionLabel}
         </span>
         <span style={{ color: tokens.color.text.secondary }}>{operator}</span>

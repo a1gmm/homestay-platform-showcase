@@ -29,6 +29,7 @@ class Notification(Base):
     user_id: Mapped[str | None] = mapped_column(String(20), ForeignKey("users.user_id"))
     title: Mapped[str] = mapped_column(String(200), nullable=False)
     content: Mapped[str | None] = mapped_column(Text)
+    action_url: Mapped[str | None] = mapped_column(String(500))
     type: Mapped[NotificationType] = mapped_column(
         String(30), default=NotificationType.system
     )

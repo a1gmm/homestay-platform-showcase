@@ -24,7 +24,7 @@ ownerApi.interceptors.response.use(
       localStorage.removeItem(OWNER_TOKEN_KEY);
       const next = encodeURIComponent(window.location.pathname + window.location.search);
       if (!window.location.pathname.startsWith("/owner/login")) {
-        window.location.href = `/owner/login?next=${next}`;
+        window.location.replace(`/owner/login?next=${next}`);
       }
     }
     return Promise.reject(error);

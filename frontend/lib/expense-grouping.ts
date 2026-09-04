@@ -1,7 +1,8 @@
 // 支出明细页：筛选 + 按订单折叠 的纯逻辑（从 finance/page.tsx 抽出以便单测）。
 //
 // 口径：
-// - 先按 类别 / 房号 / 描述关键词 过滤（三者 AND，空则不限）。
+// - 先按 类别 / 房号 / 关键词 过滤（三者 AND，空则不限）。
+// - 关键词覆盖费用 ID、订单 ID、描述和房号，便于月结深链精确定位。
 // - 再把同一 order_id 的 ≥2 笔折叠成一个可展开父行（children 为原始明细，保持入参顺序）。
 // - 单笔或无 order_id（公摊水电、手动录入等）保持平铺。
 // - 顶层按代表日期（组内最大 expense_date）倒序，与后端 expense_date desc 一致。
@@ -50,7 +51,11 @@ export function filterExpenses(
   return raw.filter((e) => {
     if (filters.category && e.category !== filters.category) return false;
     if (filters.room && String(e.room_id ?? "") !== filters.room) return false;
-    if (kw && !String(e.description ?? "").toLowerCase().includes(kw)) return false;
+    if (kw) {
+      const searchable = [e.expense_id, e.order_id, e.description, e.room_id]
+        .map((value) => String(value ?? "").toLowerCase());
+      if (!searchable.some((value) => value.includes(kw))) return false;
+    }
     return true;
   });
 }

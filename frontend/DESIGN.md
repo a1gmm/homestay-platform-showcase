@@ -35,27 +35,28 @@
 
 ## 字体
 
-- Sans:`var(--font-inter)` + PingFang SC fallback(`--font-sans`)
-- Serif:`Cormorant Garamond` + Noto Serif SC + Songti SC(`--font-serif`)
-- 加载方式:`next/font/google`(见 `app/layout.tsx`)
+- 全站统一正式无衬线字体：`var(--font-inter)` + PingFang SC / HarmonyOS Sans SC / 系统字体 fallback（`--font-sans`）。
+- 不加载 Cormorant Garamond、Noto Serif SC、Songti SC 等装饰性或衬线字体。
+- 历史 `.serif` / `--font-serif` 仅作为兼容别名，实际必须映射到 `--font-sans`。
+- 加载方式：仅通过 `next/font/google` 加载 Inter（见 `app/layout.tsx`）。
 
 ### 排版规则
 
 | 场景 | 字体 | 字号 | 字重 | letter-spacing | line-height |
 |---|---|---|---|---|---|
-| H1 | serif | 32-52 | 400 | 0 | 1.4 |
-| H2 | serif | 22-30 | 400 | 0 | 1.4 |
-| 卡片标题 / 房源名 | serif | 17-22 | 400 | 0 | 1.4 |
-| 价格 / 数字 / 订单号 | serif | 跟随场景 | 400 | 0 | — |
+| H1 | sans | 32-52 | 500 | 0 | 1.4 |
+| H2 | sans | 22-30 | 500 | 0 | 1.4 |
+| 卡片标题 / 房源名 | sans | 17-22 | 500 | 0 | 1.4 |
+| 价格 / 数字 / 订单号 | sans | 跟随场景 | 500 | 0 | — |
 | 正文 | sans | 12-14 | 400 | 0 | 1.8-2.0 |
 | 英文大写小标签 | sans | 10 | 400 | **0.2em** | — |
 
 **铁律**:
 - CJK `letter-spacing` 永远 `0`
 - 只有英文大写标签用 `0.2em`
-- CJK **不用 italic**(宋体无真斜体)
+- 全站中文、英文与数字均不得使用 italic
 - font-weight **不得 ≥ 600**(token 层已封顶 500)
-- 数字 / 百分比 / 房号统一 serif
+- 数字 / 百分比 / 房号统一正式 sans，并优先使用等宽数字特性
 
 ## 圆角
 
@@ -80,7 +81,7 @@
 
 | 类 | 用途 |
 |---|---|
-| `.serif` | 宋体/衬线 + CJK 标点压缩 |
+| `.serif` | 历史兼容别名，实际使用正式 `--font-sans` |
 | `.en-label` | 英文大写小标签(10px / 0.2em / driftwood) |
 | `.fade-up` / `-2` / `-3` | 进场动画 3 层错位 |
 | `.card-hoverable` | 卡片 hover `translateY(-4px)` |
@@ -94,7 +95,7 @@
 - **卡片**:`12-16px` 圆角,无阴影,`0.5px` linen 边
 - **状态**:小圆点 + 文字(sage/clay/stone),不用胶囊
 - **订单号**:`ORD · 20260420 · 01` 格式(中点分隔)
-- **价格**:`¥488 / 晚`,serif,不用"488 元/晚"
+- **价格**:`¥488 / 晚`,正式 sans,不用"488 元/晚"
 - **日期**:`04.20 → 04.22`
 
 ## 架构
@@ -109,18 +110,18 @@
 ### 已完成(基建 PR + 组件层 PR)
 
 - [x] 颜色/圆角/字体/动效 token 重映射(`lib/design-tokens.ts`)
-- [x] 字体加载(Inter + Cormorant Garamond + Noto Serif SC via `next/font/google`)
+- [x] 字体加载（仅 Inter via `next/font/google`；中文使用正式系统无衬线字体）
 - [x] Ant ConfigProvider 完整主题(pill 按钮 / shell 底 / 无阴影)
 - [x] `globals.css` 重写(工具类 + Ant 覆盖 + breath 曲线)
 - [x] 4 个 layout shell(`(dashboard)` / `booking` / `staff` / `owner`)去蓝去白
-- [x] 原子组件:`EnLabel` / `Serif` / `MobileHero`(`components/ui/`)
+- [x] 原子组件:`EnLabel` / `Serif`（历史兼容名）/ `MobileHero`(`components/ui/`)
 - [x] 6 处移动端 hero 蓝紫渐变 → 墨底 + 金沙 en-label
 - [x] 所有 `#2E5CFF` 硬编码蓝清除(27 处 → 0,文档引用除外)
 - [x] Dashboard 图表调色板 → 岸屿 6 色(ink/stone/sage/clay/driftwood/text-secondary)
 - [x] RoomCard `STATUS_ACCENT` → 岸屿语义色
 - [x] `rooms/constants.ts` 彩色状态 bg → 米色系
 - [x] `EmptyState` SVG 插画 → 墨底米字
-- [x] Login 页蓝紫营销面板 → 墨底 serif "岸屿 ÀN·YŬ"
+- [x] Login 页蓝紫营销面板 → 墨底正式 sans "岸屿 ÀN·YŬ"
 - [x] Owner/Staff/Booking 的 "我的"页、结算页、房间详情页主要白卡 → 沙色 + 0.5px linen 边
 
 ### 下一轮候选(未做)
@@ -168,6 +169,14 @@
 - [ ] 所有按钮是 pill(`999px`)
 - [ ] 状态用小圆点 + 文字,不用彩色胶囊
 - [ ] 所有可点击元素有 hover 态
-- [ ] 价格 / 数字 / 房号用 serif
+- [ ] 价格 / 数字 / 房号用正式 sans
 - [ ] 订单号用 `ORD · 20260420 · 01` 格式
 - [ ] 没有"热销""特惠"等营销词
+
+## 管理后台字体守卫范围
+
+- 自动守卫覆盖 `app/(dashboard)` 以及管理后台直接使用的 layout、ui、rooms、orders、finance 组件。
+- 管理后台正文、控件、一级标题、品牌、金额、百分比、房号和订单号全部使用 `var(--font-sans)`；历史 `.serif` / `var(--font-serif)` 只能作为同字体兼容别名。
+- 管理后台只使用 400 和 500 字重，中文与数字不使用负字距。
+- 微信小程序、客户预订端、业主端、员工独立端和托管招商页不在本轮守卫范围，后续按各端计划单独迁移。
+- 甘特条、告警、房态和图表序列的功能状态色是信息编码，不按品牌装饰色清理。

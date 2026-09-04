@@ -20,6 +20,50 @@ CHECKOUT_SERVICE_FEE_PREFIXES: Mapping[ExpenseCategory, str] = MappingProxyType(
 )
 
 
+class CheckoutExpenseRecognitionError(RuntimeError):
+    """Checkout cannot recognize every incurred service expense safely."""
+
+    code = "checkout_expense_recognition_failed"
+    _MESSAGES = MappingProxyType(
+        {
+            "missing_order": "订单不存在，无法记录退房支出",
+            "no_rooms": "订单没有已分配房间，无法记录退房支出",
+            "room_not_in_order": "本次退房房间不属于该订单，无法记录退房支出",
+            "missing_room": "房间资料不存在，无法记录退房支出",
+            "missing_owner": "房间未绑定业主，无法记录退房支出",
+            "missing_checkout_date": "无法确定最终退房日期，无法记录退房支出",
+        }
+    )
+
+    def __init__(
+        self,
+        *,
+        reason: str,
+        order_id: str | None,
+        room_ids: tuple[str, ...] = (),
+    ) -> None:
+        self.reason = reason
+        self.order_id = order_id
+        self.room_ids = room_ids
+        super().__init__(
+            f"checkout expense recognition failed reason={reason} "
+            f"order={order_id} rooms={','.join(room_ids)}"
+        )
+
+    def to_detail(self) -> dict:
+        """Return a stable, actionable payload for checkout API callers."""
+        return {
+            "code": self.code,
+            "message": self._MESSAGES.get(
+                self.reason,
+                "退房支出记录失败，请核对订单与房间资料后重试",
+            ),
+            "reason": self.reason,
+            "order_id": self.order_id,
+            "room_ids": list(self.room_ids),
+        }
+
+
 class CheckoutServiceFeeWrongMonthError(RuntimeError):
     """An active checkout-fee business key is posted outside its checkout month."""
 

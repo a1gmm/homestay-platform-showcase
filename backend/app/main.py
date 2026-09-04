@@ -11,6 +11,8 @@ from sqlalchemy import text
 from app.core.config import settings
 from app.core.database import engine
 from app.core.keepalive import start_keepalive, stop_keepalive
+from app.core.monthly_close_upload_limit import MonthlyCloseIntakeBodyLimitMiddleware
+from app.core.privacy_mode import PrivacyModeMiddleware
 
 # Ensure app loggers write to stdout at INFO level. Without this, uvicorn's default
 # logging config swallows our request-timing middleware output, so Railway logs only
@@ -24,7 +26,10 @@ if not logging.getLogger().handlers:
 logging.getLogger("app").setLevel(logging.INFO)
 
 logger = logging.getLogger(__name__)
-from app.api.v1 import auth, orders, rooms, finance, tasks, dashboard, audit, guests, settlements, room_blocks, notifications, export as export_api, search as search_api, owners, booking, customer_auth, owner_portal, staff_auth, staff_portal, unified_auth, admin_demo, hosting_leads, feishu_callback, reconciliation, lock_events, deposit_receipt, billing_recon, assistant, utility_recon
+from app.api.v1 import auth, orders, rooms, finance, tasks, dashboard, audit, guests, settlements, room_blocks, notifications, export as export_api, search as search_api, owners, booking, customer_auth, owner_portal, staff_auth, staff_portal, unified_auth, admin_demo, hosting_leads, feishu_callback, reconciliation, lock_events, deposit_receipt, billing_recon, miniapp_content_shared, miniapp_content_guides, miniapp_content_owner, assistant, utility_recon, monthly_close
+from app.api.v1 import release_announcements as release_announcements_api
+from app.api.v1.miniapp_content_errors import install_content_exception_handlers
+from app.api.v1 import bypms_sync
 
 if settings.SENTRY_DSN:
     sentry_sdk.init(
@@ -173,6 +178,14 @@ async def lifespan(app: FastAPI):
                         is_read BOOLEAN DEFAULT FALSE,
                         created_at TIMESTAMPTZ DEFAULT now()
                     )
+                    """
+                )
+            )
+            await conn.execute(
+                text(
+                    """
+                    ALTER TABLE notifications
+                    ADD COLUMN IF NOT EXISTS action_url VARCHAR(500)
                     """
                 )
             )
@@ -426,8 +439,11 @@ async def lifespan(app: FastAPI):
                             ) WHERE (
                                 room_id IS NOT NULL
                                 AND is_deleted = false
-                                AND order_status::text NOT IN ('cancelled', 'completed')
-                            );
+                                AND order_status NOT IN (
+                                    'cancelled'::order_status,
+                                    'completed'::order_status
+                                )
+                            ) DEFERRABLE INITIALLY IMMEDIATE;
                         END IF;
                     END $$
                     """
@@ -476,6 +492,10 @@ app.add_middleware(
     allow_methods=settings.CORS_METHODS,
     allow_headers=["*"],
 )
+app.add_middleware(MonthlyCloseIntakeBodyLimitMiddleware)
+app.add_middleware(PrivacyModeMiddleware)
+
+install_content_exception_handlers(app)
 
 
 @app.middleware("http")
@@ -532,8 +552,14 @@ app.include_router(reconciliation.router, prefix=settings.API_PREFIX)
 app.include_router(lock_events.router, prefix=settings.API_PREFIX)
 app.include_router(deposit_receipt.router, prefix=settings.API_PREFIX)
 app.include_router(billing_recon.router, prefix=settings.API_PREFIX)
+app.include_router(miniapp_content_shared.router, prefix=settings.API_PREFIX)
+app.include_router(miniapp_content_guides.router, prefix=settings.API_PREFIX)
+app.include_router(miniapp_content_owner.router, prefix=settings.API_PREFIX)
 app.include_router(utility_recon.router, prefix=settings.API_PREFIX)
+app.include_router(monthly_close.router, prefix=settings.API_PREFIX)
 app.include_router(assistant.router, prefix=settings.API_PREFIX)
+app.include_router(release_announcements_api.router, prefix=settings.API_PREFIX)
+app.include_router(bypms_sync.router, prefix=settings.API_PREFIX)
 
 # admin_demo 路由含演示账号种子（硬编码密码），生产环境不注册，避免凭证泄露面。
 if settings.APP_ENV != "production":

@@ -128,7 +128,7 @@ export default function AssistantPage() {
           icon={<SendOutlined />}
           loading={mutation.isPending}
           onClick={() => submit(question)}
-          style={{ height: "auto", minWidth: 104, fontWeight: 600 }}
+          style={{ height: "auto", minWidth: 104, fontWeight: 500 }}
         >
           {hasConversation ? "发送" : "开始查询"}
         </Button>

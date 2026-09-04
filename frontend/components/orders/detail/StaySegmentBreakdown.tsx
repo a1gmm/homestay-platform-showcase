@@ -89,7 +89,7 @@ function SegmentRow({ seg, onClick }: { seg: StaySegment; onClick?: (id: string)
           );
         if (roomIds.length === 0) return null;
         return (
-          <span style={{ fontSize: 13, fontWeight: 600, color: tokens.color.text.primary }}>
+          <span style={{ fontSize: 13, fontWeight: 500, color: tokens.color.text.primary }}>
             {roomIds.join("/")}
           </span>
         );

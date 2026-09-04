@@ -109,13 +109,13 @@ export function DailyPriceModal({ ctx, order, orderRooms, totalPaid, onClose }: 
               >
                 <div>
                   保存后房间总价：
-                  <span className="tabular" style={{ fontWeight: 600 }}>
+                  <span className="tabular" style={{ fontWeight: 500 }}>
                     ¥{newRoomTotal.toLocaleString(undefined, { maximumFractionDigits: 2 })}
                   </span>
                 </div>
                 <div>
                   自动均摊到 {targetNights} 晚：
-                  <span className="tabular" style={{ fontWeight: 600, color: tokens.color.brand.primary }}>
+                  <span className="tabular" style={{ fontWeight: 500, color: tokens.color.brand.primary }}>
                     ¥{avgPerNight.toLocaleString(undefined, { maximumFractionDigits: 2 })}
                   </span>
                   <span style={{ color: tokens.color.text.tertiary }}> / 晚</span>

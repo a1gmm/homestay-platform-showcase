@@ -10,6 +10,32 @@ import { extractErrorMessage } from "@/lib/api-errors";
 // issue#8: 拖拽源类型 — pending 卡片 vs 已排房格子，决定 drop 行为分支
 export type DragSource = "pending" | "gantt";
 
+export interface GanttDragOrigin {
+  roomId: string;
+  date: string;
+  orderRoomId?: string;
+}
+
+interface DragSession {
+  orderId: string;
+  source: DragSource;
+  origin?: GanttDragOrigin;
+}
+
+export interface SwapRoomsPayload {
+  order_a_id: string;
+  order_room_a_id: string;
+  order_b_id: string;
+  order_room_b_id: string;
+}
+
+export interface SwapConfirmation {
+  kind: "confirm" | "warning";
+  title: string;
+  content: string;
+  payload?: SwapRoomsPayload;
+}
+
 // 撤销快照：上一次拖拽换房/换日期前的状态，用于 5 秒撤销
 // Multi-room: beforeRooms 记录完整 rooms[] 用于多房订单准确还原
 export interface DragSnapshot {
@@ -38,11 +64,14 @@ export function useDragReschedule() {
   const [dragSource, setDragSource] = useState<DragSource | null>(null);
   // 原生 dragover 可能紧跟 dragstart 触发，早于 React state 重渲染。
   // 用 ref 同步记录会话，避免首个 dragover 未 preventDefault、浏览器直接吞掉 drop。
-  const dragSessionRef = useRef<{ orderId: string; source: DragSource } | null>(null);
+  const dragSessionRef = useRef<DragSession | null>(null);
   const [lastDragSnapshot, setLastDragSnapshot] = useState<DragSnapshot | null>(null);
+  // 旧版 Chrome 下，异步回调里的静态 Modal.confirm 偶发不挂载。
+  // 把对调确认存进页面 state，由调用方渲染受控 Modal，保证弹窗属于稳定 React 树。
+  const [swapConfirmation, setSwapConfirmation] = useState<SwapConfirmation | null>(null);
 
-  const startDrag = (orderId: string, source: DragSource) => {
-    dragSessionRef.current = { orderId, source };
+  const startDrag = (orderId: string, source: DragSource, origin?: GanttDragOrigin) => {
+    dragSessionRef.current = { orderId, source, origin };
     setDraggingOrderId(orderId);
     setDragSource(source);
   };
@@ -57,6 +86,25 @@ export function useDragReschedule() {
     const session = dragSessionRef.current;
     return Boolean(session && !(session.source === "pending" && occupied));
   };
+
+  const readDropPayload = (transfer: DataTransfer) => {
+    const session = dragSessionRef.current;
+    // Safari/Chrome 偶发在 drop 阶段返回空 dataTransfer；优先读浏览器数据，
+    // 缺失字段再回退到 dragstart 同步保存的会话，避免无声跳过确认框。
+    return {
+      orderId: transfer.getData("text/order-id") || session?.orderId || "",
+      sourceType:
+        (transfer.getData("text/source-type") as DragSource) || session?.source || "",
+      sourceRoomId:
+        transfer.getData("text/source-room-id") || session?.origin?.roomId || "",
+      sourceDate: transfer.getData("text/source-date") || session?.origin?.date || "",
+      sourceOrderRoomId:
+        transfer.getData("text/source-order-room-id") || session?.origin?.orderRoomId || "",
+    };
+  };
+
+  const openSwapConfirmation = (value: SwapConfirmation) => setSwapConfirmation(value);
+  const closeSwapConfirmation = () => setSwapConfirmation(null);
 
   const assignRoomMutation = useMutation({
     mutationFn: ({ orderId, roomId }: { orderId: string; roomId: string }) =>
@@ -136,12 +184,7 @@ export function useDragReschedule() {
   });
 
   const swapMutation = useMutation({
-    mutationFn: (body: {
-      order_a_id: string;
-      order_room_a_id: string;
-      order_b_id: string;
-      order_room_b_id: string;
-    }) => ordersApi.swapRooms(body).then((r) => r.data),
+    mutationFn: (body: SwapRoomsPayload) => ordersApi.swapRooms(body).then((r) => r.data),
     onSuccess: () => {
       invalidateOrderRelated(qc);
       qc.invalidateQueries({ queryKey: ["rooms", "calendar"] });
@@ -153,6 +196,20 @@ export function useDragReschedule() {
     },
   });
 
+  const confirmSwap = async () => {
+    const payload = swapConfirmation?.payload;
+    if (!payload) {
+      closeSwapConfirmation();
+      return;
+    }
+    try {
+      await swapMutation.mutateAsync(payload);
+      closeSwapConfirmation();
+    } catch {
+      // swapMutation.onError 已提示失败；保留弹窗，方便用户重试或取消。
+    }
+  };
+
   return {
     contextHolder,
     draggingOrderId,
@@ -160,6 +217,11 @@ export function useDragReschedule() {
     startDrag,
     clearDrag,
     canDropOnCell,
+    readDropPayload,
+    swapConfirmation,
+    openSwapConfirmation,
+    closeSwapConfirmation,
+    confirmSwap,
     lastDragSnapshot, setLastDragSnapshot,
     assignRoomMutation,
     dragRescheduleMutation,

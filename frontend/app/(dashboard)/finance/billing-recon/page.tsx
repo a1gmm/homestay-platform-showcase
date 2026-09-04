@@ -1,23 +1,28 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Alert, Button, Card, Descriptions, Modal, Popconfirm, Space, Table, Tag, Typography, Upload, message,
 } from "antd";
+import type { UploadProps } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import { InboxOutlined } from "@ant-design/icons";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { useAuthStore } from "@/lib/auth";
 import { extractErrorMessage } from "@/lib/api-errors";
 import { billingReconApi, ordersApi, type ReconBatchDetail } from "@/lib/api";
+import { MappingReviewDrawer } from "@/components/billing-recon/MappingReviewDrawer";
 import { OrderQuickSearch } from "@/components/rooms/OrderQuickSearch";
 import {
   ACTIONS_BY_CLASS, CLAIM_CONFIDENCE_SINGLE, DIFF_CLASS_META, DIFF_STATUS_META,
   amountExplanation, claimReason, compensationLabel, shortPaidAmount,
-  type ClaimCandidate, type DiffActionDef, type ReconBatchOut, type ReconDiffOut,
+  type BillingReconConfirmInput, type BillingReconFieldError, type ClaimCandidate,
+  type DiffActionDef, type MappingCoordinates, type ReconBatchOut, type ReconDiffOut, type WorkbookAnalysis,
 } from "@/lib/billing-recon";
+import { safeMonthlyCloseReturnTarget } from "@/lib/monthly-close";
+import { tokens } from "@/lib/design-tokens";
 
 const { Text } = Typography;
 
@@ -37,6 +42,25 @@ function confirmTitle(d: ReconDiffOut, a: DiffActionDef): string {
   return comp ? `${base}（${comp}，账单净额已扣除赔款）` : base;
 }
 
+function billingReconError(error: unknown, fallback: BillingReconFieldError): BillingReconFieldError {
+  const detail = (error as { response?: { data?: { detail?: unknown } } } | null)?.response?.data?.detail;
+  if (!detail || typeof detail !== "object" || Array.isArray(detail)) return fallback;
+  const candidate = detail as Record<string, unknown>;
+  if (typeof candidate.code !== "string" || typeof candidate.message !== "string"
+    || (candidate.field !== undefined && candidate.field !== null && typeof candidate.field !== "string")) {
+    return fallback;
+  }
+  return {
+    code: candidate.code as BillingReconFieldError["code"],
+    message: candidate.message,
+    field: candidate.field as string | null | undefined,
+  };
+}
+
+function mappingVersion(coordinates: MappingCoordinates): string {
+  return JSON.stringify(coordinates);
+}
+
 export default function BillingReconPage() {
   const { user } = useAuthStore();
   const router = useRouter();
@@ -49,10 +73,48 @@ export default function BillingReconPage() {
   }, [user, router]);
 
   const qc = useQueryClient();
+  const [returnTo] = useState(() => {
+    if (typeof window === "undefined") return null;
+    return safeMonthlyCloseReturnTarget(window.location.search, window.location.origin);
+  });
+  const [requestedDiff] = useState(() => (
+    typeof window === "undefined"
+      ? null
+      : new URLSearchParams(window.location.search).get("diff")
+  ));
   const [activeBatchId, setActiveBatchId] = useState<string | null>(null);
   const [pickerDiff, setPickerDiff] = useState<ReconDiffOut | null>(null);
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
   const [viewOrderId, setViewOrderId] = useState<string | null>(null);
+  const [pendingFile, setPendingFile] = useState<File | null>(null);
+  const [analysis, setAnalysis] = useState<WorkbookAnalysis | null>(null);
+  const [mappingDrawerOpen, setMappingDrawerOpen] = useState(false);
+  const [analyzeError, setAnalyzeError] = useState<BillingReconFieldError | null>(null);
+  const [confirmError, setConfirmError] = useState<BillingReconFieldError | null>(null);
+  const [isConfirming, setIsConfirming] = useState(false);
+  const [isReanalyzing, setIsReanalyzing] = useState(false);
+  const [currentMappingVersion, setCurrentMappingVersion] = useState<string | null>(null);
+  const [verifiedMappingVersion, setVerifiedMappingVersion] = useState<string | null>(null);
+  const [reviewSession, setReviewSession] = useState(0);
+  const reconOperation = useRef<"analyze" | "confirm" | null>(null);
+  const mountedRef = useRef(false);
+  const reviewSessionRef = useRef(0);
+  const analyzeRequestRef = useRef(0);
+  const confirmRequestRef = useRef(0);
+  const reanalysisRequestRef = useRef(0);
+  const reanalysisTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      analyzeRequestRef.current += 1;
+      confirmRequestRef.current += 1;
+      reanalysisRequestRef.current += 1;
+      if (reanalysisTimerRef.current) clearTimeout(reanalysisTimerRef.current);
+      reconOperation.current = null;
+    };
+  }, []);
 
   useEffect(() => {
     const requested = new URLSearchParams(window.location.search).get("batch");
@@ -92,32 +154,164 @@ export default function BillingReconPage() {
     }
   }, [detail.isError, activeBatchId, batches.data]);
 
-  const upload = useMutation({
-    mutationFn: (file: File) => billingReconApi.upload(file),
-    onSuccess: (resp) => {
-      const d: ReconBatchDetail = resp.data;
-      message.success(`对账完成：${d.batch.bill_month} 共 ${d.diffs.length} 条差异`);
-      setActiveBatchId(d.batch.batch_id);
-      qc.invalidateQueries({ queryKey: ["billing-recon"] });
-    },
-    onError: (e: unknown) => {
-      // 三种失败形态都要给人话：422 拒收（detail 是 {errors,batch_id} 或纯字符串）、
-      // 503 AI 不可用（detail 是字符串）、其余走通用 extractErrorMessage（超时/网络/500）。
-      const ax = e as { response?: { data?: { detail?: unknown } } };
-      const detail = ax?.response?.data?.detail;
-      const errors = detail && typeof detail === "object" && "errors" in (detail as Record<string, unknown>)
-        ? (detail as { errors?: unknown }).errors
-        : null;
-      Modal.error({
-        title: "账单被拒收",
-        content: Array.isArray(errors)
-          ? errors.join("；")
-          : typeof detail === "string"
-            ? detail
-            : extractErrorMessage(e, "上传失败"),
-      });
-    },
+  const analyze = useMutation({ mutationFn: (file: File) => billingReconApi.analyze(file) });
+  const confirmMapping = useMutation({
+    mutationFn: (input: BillingReconConfirmInput) => billingReconApi.confirm(input),
   });
+  const analysisCurrent = currentMappingVersion !== null
+    && currentMappingVersion === verifiedMappingVersion;
+
+  const beginReviewSession = () => {
+    const next = reviewSessionRef.current + 1;
+    reviewSessionRef.current = next;
+    setReviewSession(next);
+    return next;
+  };
+
+  const clearMappingReview = () => {
+    analyzeRequestRef.current += 1;
+    reanalysisRequestRef.current += 1;
+    if (reanalysisTimerRef.current) {
+      clearTimeout(reanalysisTimerRef.current);
+      reanalysisTimerRef.current = null;
+    }
+    reconOperation.current = null;
+    beginReviewSession();
+    setMappingDrawerOpen(false);
+    setPendingFile(null);
+    setAnalysis(null);
+    setAnalyzeError(null);
+    setConfirmError(null);
+    setIsReanalyzing(false);
+    setCurrentMappingVersion(null);
+    setVerifiedMappingVersion(null);
+  };
+
+  const startAnalysis = async (file: File): Promise<boolean> => {
+    if (reconOperation.current || analyze.isPending || isConfirming || isReanalyzing) return false;
+    const request = analyzeRequestRef.current + 1;
+    analyzeRequestRef.current = request;
+    const session = beginReviewSession();
+    reconOperation.current = "analyze";
+    setPendingFile(file);
+    setAnalysis(null);
+    setCurrentMappingVersion(null);
+    setVerifiedMappingVersion(null);
+    setAnalyzeError(null);
+    setConfirmError(null);
+    setMappingDrawerOpen(false);
+    try {
+      const response = await analyze.mutateAsync(file);
+      if (!mountedRef.current || request !== analyzeRequestRef.current || session !== reviewSessionRef.current) return false;
+      setAnalysis(response.data);
+      const version = mappingVersion(response.data.coordinates);
+      setCurrentMappingVersion(version);
+      setVerifiedMappingVersion(version);
+      setMappingDrawerOpen(true);
+      return true;
+    } catch (error) {
+      if (!mountedRef.current || request !== analyzeRequestRef.current || session !== reviewSessionRef.current) return false;
+      setAnalyzeError(billingReconError(error, {
+        code: "AI_UNAVAILABLE", message: "账单分析暂时不可用，请稍后重试。", field: "file",
+      }));
+      setMappingDrawerOpen(true);
+      return false;
+    } finally {
+      if (request === analyzeRequestRef.current) reconOperation.current = null;
+    }
+  };
+
+  const handleMappingChange = (coordinates: MappingCoordinates) => {
+    setCurrentMappingVersion(mappingVersion(coordinates));
+    setAnalyzeError(null);
+    setConfirmError(null);
+  };
+
+  const scheduleReanalysis = (coordinates: MappingCoordinates) => {
+    const file = pendingFile;
+    const session = reviewSessionRef.current;
+    const request = reanalysisRequestRef.current + 1;
+    reanalysisRequestRef.current = request;
+    if (reanalysisTimerRef.current) clearTimeout(reanalysisTimerRef.current);
+    if (!file || !mappingDrawerOpen) return;
+    // Treat the debounce window as part of reanalysis so confirmation can never
+    // race ahead using quality metrics from the previous mapping.
+    setIsReanalyzing(true);
+    reanalysisTimerRef.current = setTimeout(async () => {
+      reanalysisTimerRef.current = null;
+      if (!mountedRef.current || request !== reanalysisRequestRef.current || session !== reviewSessionRef.current) return;
+      setAnalyzeError(null);
+      try {
+        const response = await billingReconApi.analyze(file, coordinates);
+        if (!mountedRef.current || request !== reanalysisRequestRef.current || session !== reviewSessionRef.current) return;
+        setAnalysis(response.data);
+        setVerifiedMappingVersion(mappingVersion(coordinates));
+      } catch (error) {
+        if (!mountedRef.current || request !== reanalysisRequestRef.current || session !== reviewSessionRef.current) return;
+        setAnalyzeError(billingReconError(error, {
+          code: "AI_UNAVAILABLE", message: "账单重分析暂时不可用，请稍后重试。", field: "mapping_json",
+        }));
+      } finally {
+        if (mountedRef.current && request === reanalysisRequestRef.current && session === reviewSessionRef.current) {
+          setIsReanalyzing(false);
+        }
+      }
+    }, 250);
+  };
+
+  const confirmAnalysis = async (edited: Omit<BillingReconConfirmInput, "file" | "file_fingerprint">) => {
+    if (!pendingFile || !analysis || !analysisCurrent || reconOperation.current || analyze.isPending || isConfirming || isReanalyzing) return;
+    reanalysisRequestRef.current += 1;
+    if (reanalysisTimerRef.current) {
+      clearTimeout(reanalysisTimerRef.current);
+      reanalysisTimerRef.current = null;
+    }
+    const file = pendingFile;
+    const fileFingerprint = analysis.file_fingerprint;
+    const session = reviewSessionRef.current;
+    const request = confirmRequestRef.current + 1;
+    confirmRequestRef.current = request;
+    reconOperation.current = "confirm";
+    setIsConfirming(true);
+    setConfirmError(null);
+    try {
+      const response = await confirmMapping.mutateAsync({ ...edited, file, file_fingerprint: fileFingerprint });
+      if (!mountedRef.current || request !== confirmRequestRef.current) return;
+      const result: ReconBatchDetail = response.data;
+      message.success(`对账完成：${result.batch.bill_month} 共 ${result.diffs.length} 条差异`);
+      setActiveBatchId(result.batch.batch_id);
+      qc.invalidateQueries({ queryKey: ["billing-recon"] });
+      // A late result after an explicit close still selects the committed batch,
+      // but must never clear or revive a newer review session's sensitive draft.
+      if (session === reviewSessionRef.current) clearMappingReview();
+    } catch (error) {
+      if (mountedRef.current && request === confirmRequestRef.current && session === reviewSessionRef.current) {
+        setConfirmError(billingReconError(error, {
+          code: "MAPPING_INCOMPLETE", message: "确认对账失败，请检查映射后重试。", field: "mapping_json",
+        }));
+      }
+    } finally {
+      if (request === confirmRequestRef.current) {
+        reconOperation.current = null;
+        if (mountedRef.current) setIsConfirming(false);
+      }
+    }
+  };
+
+  const handleUploadRequest: NonNullable<UploadProps["customRequest"]> = ({ file, onSuccess, onError }) => {
+    if (!(file instanceof File)) {
+      onError?.(new Error("请选择有效的账单文件"));
+      return;
+    }
+    if (reconOperation.current || analyze.isPending || isConfirming || isReanalyzing) {
+      onError?.(new Error("账单正在处理中，请稍候"));
+      return;
+    }
+    void startAnalysis(file).then((succeeded) => {
+      if (succeeded) onSuccess?.({});
+      else onError?.(new Error("账单分析未完成"));
+    });
+  };
 
   // R5：onSuccess 只做 invalidate + message.success；结算警告弹窗移到调用点（onConfirm /
   // 全部采纳循环），避免连续操作时警告弹窗此起彼伏盖住操作区。
@@ -166,6 +360,12 @@ export default function BillingReconPage() {
   });
 
   const diffs = useMemo(() => detail.data?.diffs ?? [], [detail.data]);
+  const displayedDiffs = useMemo(() => {
+    if (!requestedDiff) return diffs;
+    return [...diffs].sort((left, right) => (
+      Number(right.diff_id === requestedDiff) - Number(left.diff_id === requestedDiff)
+    ));
+  }, [diffs, requestedDiff]);
   const pendingFixes = useMemo(
     () => diffs.filter((d) => d.diff_class === "fix_amount" && d.status === "pending"),
     [diffs],
@@ -270,7 +470,7 @@ export default function BillingReconPage() {
       ),
     },
     { title: "客人", dataIndex: "guest_name", render: (v: string | null) => v ?? "—" },
-    { title: "携程单号", dataIndex: "platform_order_id", render: (v: string | null) => v ?? "—" },
+    { title: "平台单号", dataIndex: "platform_order_id", render: (v: string | null) => v ?? "—" },
     {
       title: "系统单",
       dataIndex: "order_id",
@@ -409,10 +609,15 @@ export default function BillingReconPage() {
         title="账单对账"
         subtitle="上传 OTA 月账单对账 · 宝禹↔系统日常对账在 财务→对账"
         extra={
-          pendingFixes.length > 0 && (
+          (returnTo || pendingFixes.length > 0) && (
+            <Space>
+              {returnTo && <Button onClick={() => router.push(returnTo)}>返回月结中心</Button>}
+              {pendingFixes.length > 0 && (
             <Button type="primary" danger disabled={act.isPending} onClick={adoptAll}>
               全部采纳（{pendingFixes.length}）
             </Button>
+              )}
+            </Space>
           )
         }
       />
@@ -461,21 +666,31 @@ export default function BillingReconPage() {
       <Card>
         <Upload.Dragger
           accept=".xls,.xlsx"
-          maxCount={1}
           showUploadList={false}
-          customRequest={({ file }) => upload.mutate(file as File)}
-          disabled={upload.isPending}
+          customRequest={handleUploadRequest}
+          disabled={analyze.isPending || isConfirming || isReanalyzing}
         >
           <p className="ant-upload-drag-icon"><InboxOutlined /></p>
           <p className="ant-upload-text">
-            {upload.isPending ? "AI 解析对账中（最长约 2 分钟）…" : "点击或拖入携程账单（.xls / .xlsx）"}
+            {analyze.isPending ? "正在识别账单字段…" : isReanalyzing ? "正在按新映射重新分析…" : isConfirming ? "正在确认映射并对账…" : "上传 OTA 账单（.xls / .xlsx）"}
           </p>
           <p className="ant-upload-hint">
-            当前仅支持携程系账单（含去哪儿/同程/智行）；按离店月自动对账；
-            同月重传会作废旧的待处理差异（申诉追踪保留）；对不上的行 AI 会帮你找单
+            支持不同平台和自定义 Excel；系统会先识别字段，确认后再对账。
           </p>
         </Upload.Dragger>
       </Card>
+      <MappingReviewDrawer
+        key={reviewSession}
+        open={mappingDrawerOpen}
+        analysis={analysis}
+        analysisCurrent={analysisCurrent}
+        loading={analyze.isPending || isConfirming || isReanalyzing}
+        error={confirmError ?? analyzeError}
+        onClose={clearMappingReview}
+        onConfirm={confirmAnalysis}
+        onMappingChange={handleMappingChange}
+        onReanalyze={scheduleReanalysis}
+      />
       {batches.isSuccess && batches.data.length === 0 && (
         <Alert type="success" showIcon message="当前没有打开的对账结果" description="上传新账单后，结果会显示在这里。" />
       )}
@@ -523,8 +738,11 @@ export default function BillingReconPage() {
           rowKey="diff_id"
           size="small"
           loading={detail.isLoading}
-          dataSource={diffs}
+          dataSource={displayedDiffs}
           columns={columns}
+          onRow={(record) => record.diff_id === requestedDiff ? {
+            style: { background: tokens.color.bg.subtle },
+          } : {}}
           pagination={false}
           scroll={{ x: 900 }}
           locale={{ emptyText: "暂无差异——账单与系统完全一致，或还没上传账单" }}

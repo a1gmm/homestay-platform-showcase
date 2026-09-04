@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <rect width="64" height="64" rx="32" fill="#2b2721"/>
+  <text
+    x="32"
+    y="42"
+    fill="#f8f4ec"
+    font-family="PingFang SC, HarmonyOS Sans SC, Arial, sans-serif"
+    font-size="32"
+    font-weight="500"
+    text-anchor="middle"
+  >成</text>
+</svg>

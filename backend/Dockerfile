@@ -3,7 +3,9 @@ FROM python:3.12-slim
 WORKDIR /app
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    gcc libpq-dev curl \
+    gcc libpq-dev curl ffmpeg \
+    && ffmpeg -version \
+    && ffprobe -version \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .

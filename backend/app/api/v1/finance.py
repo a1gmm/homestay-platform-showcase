@@ -821,6 +821,7 @@ async def summary_by_room(
     month: Optional[int] = Query(default=None, ge=1, le=12),
     start_date: Optional[date] = Query(default=None, description="起始日期 YYYY-MM-DD"),
     end_date: Optional[date] = Query(default=None, description="结束日期 YYYY-MM-DD"),
+    actual_only: bool = Query(default=False, description="仅统计已实际退房订单"),
 ):
     """
     按房号聚合财务。日期范围可通过两种方式指定(二选一):
@@ -880,7 +881,13 @@ async def summary_by_room(
 
     out: list[ByRoomSummaryItem] = []
     for room in rooms:
-        stat = await compute_room_period_owner_stat(db, room, start_date, end_date)
+        stat = await compute_room_period_owner_stat(
+            db,
+            room,
+            start_date,
+            end_date,
+            recognized_only=actual_only,
+        )
         exp = exp_rows.get(room.room_id)
         revenue = stat.revenue
         commission = stat.commission
@@ -919,6 +926,7 @@ async def summary_room_segments(
     month: Optional[int] = Query(default=None, ge=1, le=12),
     start_date: Optional[date] = Query(default=None, description="起始日期 YYYY-MM-DD"),
     end_date: Optional[date] = Query(default=None, description="结束日期 YYYY-MM-DD"),
+    actual_only: bool = Query(default=False, description="仅统计已实际退房订单"),
 ):
     """单房详情页「区间订单（收入来源）」明细：按 OrderRoom **段**返回该房的营收行。
 
@@ -948,7 +956,7 @@ async def summary_room_segments(
         raise HTTPException(status_code=400, detail="end_date 必须 >= start_date")
 
     from app.models.order_room import OrderRoom
-    rows = (await db.execute(
+    stmt = (
         select(
             OrderRoom.order_id, OrderRoom.order_room_id, OrderRoom.room_id,
             OrderRoom.check_in_date, OrderRoom.check_out_date, OrderRoom.actual_price,
@@ -960,9 +968,21 @@ async def summary_room_segments(
         .where(OrderRoom.room_id == room_id)
         .where(OrderRoom.check_out_date >= start_date)
         .where(OrderRoom.check_out_date <= end_date)
-        # 入住日升序，同日按段键稳定（翻页/多次查询顺序一致）
-        .order_by(OrderRoom.check_in_date.asc(), OrderRoom.order_room_id.asc())
-    )).all()
+    )
+    if actual_only:
+        stmt = stmt.where(Order.order_status.in_((
+            OrderStatus.pending_checkout,
+            OrderStatus.pending_payment,
+            OrderStatus.completed,
+        )))
+    rows = (
+        await db.execute(
+            stmt.order_by(
+                OrderRoom.check_in_date.asc(),
+                OrderRoom.order_room_id.asc(),
+            )
+        )
+    ).all()
 
     return [
         RoomRevenueSegment(

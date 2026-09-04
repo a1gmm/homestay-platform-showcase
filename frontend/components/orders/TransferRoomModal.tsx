@@ -120,7 +120,7 @@ export function TransferRoomModal({ order, orderRoomId: orderRoomIdProp, onClose
         return (Number(a.base_price) || 0) - (Number(b.base_price) || 0);
       })
       .map((r) => ({ value: r.room_id, label: `${r.room_id} · ${r.room_name}`, room: r }));
-  }, [rooms, order]);
+  }, [rooms, currentRoomId]);
 
   return (
     <Modal

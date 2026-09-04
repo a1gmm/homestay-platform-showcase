@@ -27,6 +27,19 @@ from app.models.cleaning_request import (
 )
 from app.models.service_fee_config import ServiceFeeConfig
 from app.models.recon import ReconBatch, ReconDiff, ReconDiffClass, ReconDiffStatus  # noqa
+from app.models.recon_layout_template import ReconLayoutTemplate
+from app.models.miniapp_content import (
+    MiniappChannelConfig,
+    MiniappContentRelease,
+    MiniappContentWorkspace,
+    MiniappImagePairGeneration,
+    MiniappImagePairUpload,
+    MiniappMedia,
+    MiniappVideoUpload,
+    MiniappPublishJob,
+    MiniappPublishOutbox,
+    OwnerCase,
+)
 from app.models.order_sync_conflict import OrderSyncConflict, OrderSyncConflictStatus
 from app.models.order_operation import OrderOperation, OrderOperationStatus
 from app.models.managed_stay_group import ManagedStayGroup, ManagedStayGroupKind
@@ -46,6 +59,7 @@ from app.models.utility_recon import (  # noqa
     UtilityReconSuggestion,
     UtilityReconUpload,
 )
+from app.models.release_announcement import ReleaseAnnouncementReceipt
 
 __all__ = [
     "User", "Owner", "Room", "Order", "OrderRoom", "Payment", "Refund",
@@ -58,6 +72,10 @@ __all__ = [
     "CleaningRequest", "CleaningRequestStatus", "CleaningApprovalStatus",
     "ServiceFeeConfig",
     "ReconBatch", "ReconDiff", "ReconDiffClass", "ReconDiffStatus",
+    "ReconLayoutTemplate",
+    "MiniappContentWorkspace", "MiniappChannelConfig", "MiniappMedia", "MiniappImagePairUpload", "MiniappImagePairGeneration", "MiniappVideoUpload",
+    "OwnerCase", "MiniappPublishJob", "MiniappPublishOutbox",
+    "MiniappContentRelease",
     "OrderSyncConflict", "OrderSyncConflictStatus",
     "OrderOperation", "OrderOperationStatus",
     "ManagedStayGroup", "ManagedStayGroupKind",
@@ -65,4 +83,24 @@ __all__ = [
     "CompanySponsoredStay", "CompanySponsorshipStatus", "PaymentResponsibility",
     "CompanySponsorshipAdjustment",
     "UtilityReconUpload", "UtilityReconBatch", "UtilityReconRow", "UtilityReconSuggestion",
+    "ReleaseAnnouncementReceipt",
+]
+from app.models.monthly_close import (
+    MonthlyCloseCycle,
+    MonthlyCloseDocument,
+    MonthlyCloseInboxItem,
+    MonthlyCloseIntakeLink,
+    MonthlyCloseServiceLine,
+    MonthlyCloseSourceRequirement,
+    MonthlyCloseStepConfirmation,
+)
+
+__all__ += [
+    "MonthlyCloseCycle",
+    "MonthlyCloseDocument",
+    "MonthlyCloseInboxItem",
+    "MonthlyCloseIntakeLink",
+    "MonthlyCloseServiceLine",
+    "MonthlyCloseSourceRequirement",
+    "MonthlyCloseStepConfirmation",
 ]

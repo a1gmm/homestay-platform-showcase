@@ -58,7 +58,7 @@ export function SourcePriceOverrideDialog({
     setReason("");
     setStatus("");
     setError("");
-  }, [open, currentSnapshot?.source_price_snapshot_id, checkInDate, checkOutDate]);
+  }, [open, currentSnapshot?.source_price_snapshot_id, currentSnapshot?.nightly_bases, checkInDate, checkOutDate]);
 
   const parsedTotal = Number(total);
   const totalIsValid = total.trim() !== "" && Number.isFinite(parsedTotal) && parsedTotal >= 0;

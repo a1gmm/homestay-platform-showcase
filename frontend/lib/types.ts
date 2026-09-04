@@ -116,19 +116,255 @@ export type UserRole = "admin" | "operator" | "finance" | "cleaner" | "owner";
 
 export type StaySettlementKind = "free_room" | "company_sponsored";
 
-export type ManualOverrideField =
-  | "guest_name"
-  | "guest_profile"
-  | "check_in_date"
-  | "check_out_date"
-  | "room_assignment"
-  | "stay_structure"
-  | "actual_price"
-  | "daily_prices"
-  | "ota_owner_revenue"
-  | "channel"
-  | "note"
-  | "order_status";
+export const MANUAL_OVERRIDE_FIELDS = [
+  "guest_name",
+  "guest_profile",
+  "check_in_date",
+  "check_out_date",
+  "room_assignment",
+  "stay_structure",
+  "actual_price",
+  "daily_prices",
+  "ota_owner_revenue",
+  "channel",
+  "note",
+  "order_status",
+] as const;
+
+export type ManualOverrideField = (typeof MANUAL_OVERRIDE_FIELDS)[number];
+
+// ─── BYPMS admin synchronization workbench ──────────────────────────────────
+
+export const BYPMS_ADMIN_CYCLE_STATUSES = [
+  "running",
+  "succeeded",
+  "partial",
+  "failed",
+  "skipped",
+] as const;
+
+export type BypmsAdminCycleStatus = (typeof BYPMS_ADMIN_CYCLE_STATUSES)[number];
+
+export const BYPMS_ADMIN_CYCLE_TRIGGERS = [
+  "scheduled",
+  "admin_retry",
+  "unknown",
+] as const;
+
+export type BypmsAdminCycleTrigger = (typeof BYPMS_ADMIN_CYCLE_TRIGGERS)[number];
+
+export const BYPMS_ADMIN_STEP_NAMES = [
+  "pull",
+  "price_reconcile",
+  "name_reconcile",
+  "create",
+  "date_reconcile",
+  "room_reconcile",
+  "assign",
+  "status_reconcile",
+  "subsidized_scan",
+  "cancel",
+  "room_status_reconcile",
+] as const;
+
+export type BypmsAdminStepName = (typeof BYPMS_ADMIN_STEP_NAMES)[number] | "unknown";
+
+export const BYPMS_ADMIN_STEP_STATUSES = [
+  "running",
+  "succeeded",
+  "failed",
+  "skipped",
+] as const;
+export type BypmsAdminStepStatus = (typeof BYPMS_ADMIN_STEP_STATUSES)[number];
+
+export const BYPMS_ADMIN_STEP_SUMMARY_STATUSES = [
+  "success",
+  "failure",
+  "skipped",
+] as const;
+export type BypmsAdminStepSummaryStatus =
+  (typeof BYPMS_ADMIN_STEP_SUMMARY_STATUSES)[number];
+
+export const BYPMS_ADMIN_STEP_ERROR_CODES = [
+  "authentication_failed",
+  "cancelled",
+  "configuration_invalid",
+  "conflict",
+  "database_unavailable",
+  "internal_error",
+  "incomplete_response",
+  "network_error",
+  "not_found",
+  "timeout",
+  "unknown",
+  "upstream_unavailable",
+  "upstream_http_error",
+  "upstream_response_invalid",
+  "validation_failed",
+] as const;
+export type BypmsAdminStepErrorCode = (typeof BYPMS_ADMIN_STEP_ERROR_CODES)[number];
+
+export type BypmsAdminStepCount =
+  | "active"
+  | "adopted"
+  | "alert_deposit"
+  | "alert_manual"
+  | "alerted"
+  | "assigned"
+  | "cancelled"
+  | "changed"
+  | "completed"
+  | "conflicts"
+  | "created"
+  | "excluded"
+  | "fetched"
+  | "fixed"
+  | "found"
+  | "incremented"
+  | "multi_room"
+  | "noop"
+  | "reset"
+  | "restructure"
+  | "scanned"
+  | "seen"
+  | "skipped"
+  | "skipped_ambiguous"
+  | "skipped_locked"
+  | "subsidy_written"
+  | "to_adopt"
+  | "to_complete"
+  | "to_create"
+  | "to_fix"
+  | "total"
+  | "total_fetched"
+  | "unmapped"
+  | "written";
+
+export const BYPMS_ADMIN_WRITE_MODES = [
+  "date_reconcile",
+  "room_reconcile",
+  "status_reconcile",
+  "room_status_reconcile",
+] as const;
+
+export type BypmsAdminWriteMode = (typeof BYPMS_ADMIN_WRITE_MODES)[number];
+
+export interface BypmsAdminSyncStepSummary {
+  name: BypmsAdminStepName;
+  status: BypmsAdminStepSummaryStatus;
+  counts: Partial<Record<BypmsAdminStepCount, number>>;
+  error_code: BypmsAdminStepErrorCode | null;
+  duration_ms: number;
+}
+
+export interface BypmsAdminSyncStep {
+  step_id: number;
+  name: BypmsAdminStepName;
+  status: BypmsAdminStepStatus;
+  started_at: string;
+  finished_at: string | null;
+  duration_ms: number;
+  summary: BypmsAdminSyncStepSummary | null;
+}
+
+export interface BypmsAdminSyncCycle {
+  cycle_id: string;
+  trigger: BypmsAdminCycleTrigger;
+  status: BypmsAdminCycleStatus;
+  started_at: string;
+  finished_at: string | null;
+  duration_ms: number;
+  write_modes: Partial<Record<BypmsAdminWriteMode, boolean>>;
+}
+
+export interface BypmsAdminSyncCycleWithSteps extends BypmsAdminSyncCycle {
+  steps: BypmsAdminSyncStep[];
+}
+
+export interface BypmsAdminSyncOverview {
+  available: boolean;
+  message: string | null;
+  stale_after_seconds: number;
+  clock_skew_detected: boolean;
+  latest_cycle: BypmsAdminSyncCycle | null;
+  last_successful_or_partial_at: string | null;
+  last_successful_or_partial_age_seconds: number | null;
+  pending_retry_count: number;
+  open_conflicts_by_field: Partial<Record<ManualOverrideField, number>>;
+  staging_watermark: string | null;
+  staging_lag_seconds: number | null;
+  write_modes: Partial<Record<BypmsAdminWriteMode, boolean>>;
+  retry_available: boolean;
+}
+
+export interface BypmsAdminSyncCyclesResponse {
+  available: boolean;
+  message: string | null;
+  items: BypmsAdminSyncCycleWithSteps[];
+}
+
+export const BYPMS_ADMIN_CONFLICT_STATUSES = ["open", "ignored", "resolved"] as const;
+export type BypmsAdminConflictStatus = (typeof BYPMS_ADMIN_CONFLICT_STATUSES)[number];
+export const BYPMS_ADMIN_CONFLICT_FIELDS = MANUAL_OVERRIDE_FIELDS;
+export type BypmsAdminConflictField = ManualOverrideField | "unknown";
+
+export interface BypmsAdminSyncConflict {
+  conflict_id: string;
+  source_order_id: string;
+  channel: Channel | "unknown";
+  check_in_date: string;
+  check_out_date: string;
+  field: BypmsAdminConflictField;
+  local_value: unknown;
+  upstream_value: unknown;
+  status: BypmsAdminConflictStatus;
+  first_seen_at: string;
+  last_seen_at: string;
+}
+
+export interface BypmsAdminSyncConflictsResponse {
+  items: BypmsAdminSyncConflict[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
+export const BYPMS_ADMIN_RETRY_ACTORS = [
+  "admin",
+  "operations",
+  "ops",
+  "pms_admin",
+  "system",
+] as const;
+export type BypmsAdminRetryRequestedBy = (typeof BYPMS_ADMIN_RETRY_ACTORS)[number];
+
+export const BYPMS_ADMIN_RETRY_STATUSES = [
+  "queued",
+  "running",
+  "succeeded",
+  "failed",
+  "skipped",
+] as const;
+export type BypmsAdminRetryStatus = (typeof BYPMS_ADMIN_RETRY_STATUSES)[number];
+
+export interface BypmsAdminSyncRetryResponse {
+  request_id: string;
+  requested_by: BypmsAdminRetryRequestedBy;
+  status: BypmsAdminRetryStatus;
+  requested_at: string;
+}
+
+export interface BypmsAdminCyclesFilters {
+  limit?: number;
+  status?: BypmsAdminCycleStatus;
+}
+
+export interface BypmsAdminConflictsFilters {
+  field?: ManualOverrideField;
+  status?: BypmsAdminConflictStatus;
+  page?: number;
+  page_size?: number;
+}
 
 // ─── User ────────────────────────────────────────────────────────────────────
 
@@ -1027,6 +1263,7 @@ export interface NotificationOut {
   user_id?: string | null;
   title: string;
   content?: string | null;
+  action_url?: string | null;
   type: string;
   is_read: boolean;
   created_at: string;

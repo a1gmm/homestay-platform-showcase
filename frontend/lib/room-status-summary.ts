@@ -8,10 +8,32 @@ const SUMMARY_ORDER = [
   "occupied", "reserved", "pending_clean", "cleaning", "maintenance", "locked", "available",
 ];
 
+const COMPACT_STATUS_LABEL: Record<string, string> = {
+  occupied: "在",
+  reserved: "订",
+  pending_clean: "待清",
+  cleaning: "清扫",
+  maintenance: "修",
+  locked: "锁",
+  available: "空",
+};
+
 /** 返回如「8 在住 · 4 已预订 · 3 维修 · 17 空置」，只含非零桶。全零/空 → 空串。 */
 export function formatRoomStatusSummary(counts: Record<string, number>): string {
   return SUMMARY_ORDER
     .filter((k) => (counts?.[k] ?? 0) > 0)
     .map((k) => `${counts[k]} ${ROOM_STATUS[k]?.label ?? k}`)
     .join(" · ");
+}
+
+/** 移动端页头摘要：保留完整状态口径，但把文案压缩到一行。 */
+export function formatCompactRoomStatusSummary(
+  total: number,
+  counts: Record<string, number>,
+): string {
+  const statusParts = SUMMARY_ORDER
+    .filter((key) => (counts?.[key] ?? 0) > 0)
+    .map((key) => `${COMPACT_STATUS_LABEL[key] ?? key}${counts[key]}`);
+
+  return [`${total}间`, ...statusParts].join(" · ");
 }

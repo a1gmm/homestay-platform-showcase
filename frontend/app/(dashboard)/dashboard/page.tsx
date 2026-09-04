@@ -106,7 +106,7 @@ function SectionTitle({
           fontSize: tokens.font.size.lg,
           fontWeight: tokens.font.weight.semibold,
           color: tokens.color.text.primary,
-          letterSpacing: "-.01em",
+          letterSpacing: 0,
         }}
       >
         {title}
@@ -133,7 +133,7 @@ function ChartCard({
 }) {
   return (
     <Card
-      bordered={false}
+      variant="borderless"
       style={{
         borderRadius: tokens.radius.lg,
         border: `1px solid ${tokens.color.bg.border}`,
@@ -204,7 +204,7 @@ export default function DashboardPage() {
   const { todayStats, monthlyStats, trend, channel, comparison, isLoading } = useDashboard();
   const todayData = todayStats;
   const monthlyData = monthlyStats;
-  const trendData = trend ?? [];
+  const trendData = useMemo(() => trend ?? [], [trend]);
   const todayLoading = isLoading;
   const monthlyLoading = isLoading;
   const channelData = channel;
@@ -383,7 +383,7 @@ export default function DashboardPage() {
       <Row gutter={[16, 16]}>
         <Col xs={24} lg={canViewRevenue ? 8 : 12}>
           <Card
-            bordered={false}
+            variant="borderless"
             style={{
               borderRadius: tokens.radius.lg,
               border: `1px solid ${tokens.color.bg.border}`,
@@ -456,7 +456,7 @@ export default function DashboardPage() {
                   <div style={{ fontSize: 12, color: tokens.color.text.secondary }}>在住 / 总数</div>
                   <div
                     className="tabular"
-                    style={{ fontSize: 20, fontWeight: 600, marginTop: 2 }}
+                    style={{ fontSize: 20, fontWeight: 500, marginTop: 2 }}
                   >
                     {todayData?.checked_in ?? 0}
                     <span style={{ color: tokens.color.text.tertiary, fontWeight: 400 }}>
@@ -471,7 +471,7 @@ export default function DashboardPage() {
                       className="tabular"
                       style={{
                         fontSize: 18,
-                        fontWeight: 600,
+                        fontWeight: 500,
                         marginTop: 2,
                         color:
                           occupancyMoM >= 0 ? tokens.color.status.active : tokens.color.status.warn,
@@ -689,7 +689,7 @@ export default function DashboardPage() {
                 >
                   <span
                     className="tabular"
-                    style={{ fontSize: channelIsRevenue ? 20 : 24, fontWeight: 700, letterSpacing: "-.02em" }}
+                    style={{ fontSize: channelIsRevenue ? 20 : 24, fontWeight: 500, letterSpacing: 0 }}
                   >
                     {channelIsRevenue ? `¥${formatCompact(pieTotal)}` : pieTotal}
                   </span>
@@ -858,7 +858,7 @@ export default function DashboardPage() {
           <Row gutter={[16, 16]}>
             <Col xs={24}>
               <Card
-                bordered={false}
+                variant="borderless"
                 style={{
                   borderRadius: tokens.radius.lg,
                   border: `1px solid ${tokens.color.bg.border}`,
@@ -876,7 +876,7 @@ export default function DashboardPage() {
                 >
                   <Space size={8}>
                     <CalendarOutlined style={{ color: tokens.color.brand.primary }} />
-                    <span style={{ fontWeight: 600 }}>今日待入住</span>
+                    <span style={{ fontWeight: 500 }}>今日待入住</span>
                   </Space>
                   <Link
                     href="/orders"
@@ -917,7 +917,7 @@ export default function DashboardPage() {
                             alignItems: "center",
                             justifyContent: "center",
                             fontSize: 12,
-                            fontWeight: 600,
+                            fontWeight: 500,
                             flex: "0 0 28px",
                           }}
                         >
@@ -947,7 +947,7 @@ export default function DashboardPage() {
             </Col>
             <Col xs={24}>
               <Card
-                bordered={false}
+                variant="borderless"
                 style={{
                   borderRadius: tokens.radius.lg,
                   border: `1px solid ${tokens.color.bg.border}`,
@@ -965,7 +965,7 @@ export default function DashboardPage() {
                 >
                   <Space size={8}>
                     <CheckSquareOutlined style={{ color: tokens.color.status.warn }} />
-                    <span style={{ fontWeight: 600 }}>逾期任务</span>
+                    <span style={{ fontWeight: 500 }}>逾期任务</span>
                   </Space>
                   <Link
                     href="/tasks"

@@ -176,14 +176,29 @@ def start_ws_client_in_thread() -> bool:
         settings.FEISHU_APP_ID,
         settings.FEISHU_APP_SECRET,
         event_handler=handler,
-        log_level=lark.LogLevel.INFO,
+        # SDK 的 INFO 连接日志会包含短期 access_key/ticket 查询参数；生产日志
+        # 不应记录这些连接凭据，异常与重连告警保留即可。
+        log_level=lark.LogLevel.WARNING,
     )
 
     def _run():
+        # lark-oapi 在 ws.client 模块中缓存了一个全局 event loop。Client 在
+        # FastAPI 主线程构造、在 daemon 线程 start 时，如果该全局 loop 正被
+        # uvloop/FastAPI 使用，就会报 “this event loop is already running”。
+        # 为 WS 线程显式安装独立 loop，并同步更新 SDK 的模块级引用。
+        ws_loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(ws_loop)
+        import lark_oapi.ws.client as ws_client_module
+
+        ws_client_module.loop = ws_loop
         try:
             client.start()  # 阻塞 + 自动重连
         except Exception:  # noqa: BLE001
             logger.warning("飞书长连接客户端退出", exc_info=True)
+        finally:
+            asyncio.set_event_loop(None)
+            if not ws_loop.is_running():
+                ws_loop.close()
 
     threading.Thread(target=_run, name="feishu-ws", daemon=True).start()
     _started = True

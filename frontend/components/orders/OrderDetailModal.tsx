@@ -828,7 +828,7 @@ export default function OrderDetailModal({
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
-              fontWeight: 600,
+              fontWeight: 500,
               fontSize: 18,
               flex: "0 0 44px",
             }}
@@ -836,7 +836,7 @@ export default function OrderDetailModal({
             {order.guest_name?.charAt(0) ?? "?"}
           </div>
           <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: 16, fontWeight: 600 }}>{order.guest_name}</div>
+            <div style={{ fontSize: 16, fontWeight: 500 }}>{order.guest_name}</div>
             <div style={{ fontSize: 13, color: tokens.color.text.secondary }}>
               {order.guest_phone} · {CHANNEL_LABELS[order.channel] || order.channel}
             </div>
@@ -877,7 +877,7 @@ export default function OrderDetailModal({
             }}
           >
             <WarningOutlined style={{ color: tokens.color.status.warn, fontSize: 16, flex: "0 0 auto" }} />
-            <span style={{ fontSize: 13, color: tokens.color.status.warn, fontWeight: 600 }}>
+            <span style={{ fontSize: 13, color: tokens.color.status.warn, fontWeight: 500 }}>
               已入住但{checkinRisks.map((r) => r.label).join("、")}，请及时收取
             </span>
           </div>
@@ -966,7 +966,7 @@ export default function OrderDetailModal({
                   >
                     {/* 第一行：房号 / 日期区间（可点击改） / 晚数 / 实收 / 续住 / 换房按钮 */}
                     <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-                      <span style={{ minWidth: 60, fontWeight: 600 }}>
+                      <span style={{ minWidth: 60, fontWeight: 500 }}>
                         {or.room_id || <span style={{ color: tokens.color.text.tertiary, fontWeight: 400 }}>待排房</span>}
                       </span>
                       {/* 内联日期编辑：点击日期文字打开 RangePicker Modal，无需跳"修改订单" */}
@@ -1001,7 +1001,7 @@ export default function OrderDetailModal({
                       <span style={{ fontSize: 12, color: tokens.color.text.tertiary }}>
                         {nights} 晚
                       </span>
-                      <span className="tabular" style={{ marginLeft: "auto", color: tokens.color.brand.primary, fontWeight: 600 }}>
+                      <span className="tabular" style={{ marginLeft: "auto", color: tokens.color.brand.primary, fontWeight: 500 }}>
                         ¥{Number(or.actual_price ?? 0).toLocaleString()}
                       </span>
                       {/* 晚数调整 stepper：[− N 晚 +]，能加能减 */}
@@ -1138,7 +1138,7 @@ export default function OrderDetailModal({
                                   className="tabular"
                                   style={{
                                     fontSize: 13,
-                                    fontWeight: 600,
+                                    fontWeight: 500,
                                     color: tokens.color.text.primary,
                                   }}
                                 >
@@ -1162,11 +1162,11 @@ export default function OrderDetailModal({
             {(isGroup
               ? stayGroup!.segments.some((s) => s.order_status !== "cancelled" && s.price_pending)
               : order.price_pending) ? (
-              <span style={{ color: tokens.color.text.tertiary, fontWeight: 600 }}>
+              <span style={{ color: tokens.color.text.tertiary, fontWeight: 500 }}>
                 价格同步中…
               </span>
             ) : (
-              <span className="tabular" style={{ color: tokens.color.brand.primary, fontWeight: 600 }}>
+              <span className="tabular" style={{ color: tokens.color.brand.primary, fontWeight: 500 }}>
                 ¥{Number((isGroup ? stayGroup!.total_amount : order.actual_price) ?? 0).toLocaleString()}
               </span>
             )}
@@ -1178,7 +1178,7 @@ export default function OrderDetailModal({
               续住组的净房费下沉到「分段明细」每行，各段各显示自己的。 */}
           {!isGroup && formatExpectedRevenue(order.expected_revenue) && (
             <Field label="净房费">
-              <span className="tabular" style={{ color: tokens.color.brand.primary, fontWeight: 600 }}>
+              <span className="tabular" style={{ color: tokens.color.brand.primary, fontWeight: 500 }}>
                 {formatExpectedRevenue(order.expected_revenue)}
               </span>
             </Field>
@@ -1254,12 +1254,12 @@ export default function OrderDetailModal({
               marginBottom: 12,
             }}
           >
-            <span style={{ fontWeight: 600 }}>收款记录</span>
+            <span style={{ fontWeight: 500 }}>收款记录</span>
             <span
               className="tabular"
               style={{
                 color: tokens.color.status.active,
-                fontWeight: 600,
+                fontWeight: 500,
                 fontSize: 14,
               }}
             >
@@ -1311,7 +1311,7 @@ export default function OrderDetailModal({
                     <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
                       <span
                         className="tabular"
-                        style={{ color: tokens.color.status.active, fontWeight: 600 }}
+                        style={{ color: tokens.color.status.active, fontWeight: 500 }}
                       >
                         +¥{Number(p.amount).toLocaleString()}
                       </span>
@@ -1432,7 +1432,7 @@ export default function OrderDetailModal({
                         className="tabular"
                         style={{
                           fontSize: 18,
-                          fontWeight: 700,
+                          fontWeight: 500,
                           letterSpacing: 2,
                           color: tokens.color.text.primary,
                         }}

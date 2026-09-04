@@ -22,6 +22,7 @@ from app.core.datetime_helpers import now_cn
 from app.models.order import DepositStatus, Order, OrderStatus, order_status_label
 from app.models.order_room import OrderRoom
 from app.models.room import Room, RoomStatus
+from app.services.cleaning import ensure_checkout_service_expenses
 
 
 async def mark_room_reserved_if_available(db, room_id: str) -> None:
@@ -198,6 +199,11 @@ async def apply_order_transition(db, order: Order, target_status: OrderStatus) -
     # 强制记录收款才能完成是多余负担。完成订单不再校验房费是否收齐。
     # 注：营收/结算报表按 Order.actual_price 计（见 dashboard.py / settlements.py），
     # 不依赖收款记录，故取消此卡点不影响财务数字。押金收/退仍走独立路径，不受影响。
+
+    # 客人实际退房时，保洁、洗涤、日耗已经发生。先把正式支出写进同一事务，
+    # 再改变订单状态；完整性错误会让调用方回滚，不能出现“已退房但支出没记”。
+    if target_status == OrderStatus.pending_checkout:
+        await ensure_checkout_service_expenses(db, order=order)
 
     before_status = order.order_status.value
     order.order_status = target_status

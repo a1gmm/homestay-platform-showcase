@@ -26,6 +26,13 @@ from app.services.order_pricing import (
     order_room_commission,
     safe_decimal,
 )
+from app.services.order_browse import (
+    OrderDateBasis,
+    matching_group_keys_statement,
+    order_browse_member_conditions,
+    resolve_order_browse_date_filter,
+)
+from app.services.stay_group import summarize_group_members
 
 router = APIRouter(prefix="/export", tags=["export"])
 
@@ -98,58 +105,159 @@ async def export_orders(
     db: DBSession,
     current_user: CurrentUser,
     status: Optional[str] = Query(default=None),
+    channel: Optional[Channel] = Query(default=None),
+    room_id: Optional[str] = Query(default=None),
+    keyword: Optional[str] = Query(default=None),
     check_in_from: Optional[date] = Query(default=None),
     check_in_to: Optional[date] = Query(default=None),
+    check_out_from: Optional[date] = Query(default=None),
+    check_out_to: Optional[date] = Query(default=None),
+    date_basis: Optional[OrderDateBasis] = Query(default=None),
+    date_from: Optional[date] = Query(default=None),
+    date_to: Optional[date] = Query(default=None),
 ):
-    """Export filtered orders as Excel."""
+    """按订单页整段口径导出，并附组内原始订单明细供追溯。"""
     if current_user["role"] not in ("admin", "operator", "finance"):
         from fastapi import HTTPException
         raise HTTPException(status_code=403, detail="无权导出")
 
-    q = select(Order).options(selectinload(Order.rooms)).where(Order.is_deleted == False)
-    if status:
-        q = q.where(Order.order_status == status)
-    if check_in_from:
-        q = q.where(Order.check_in_date >= check_in_from)
-    if check_in_to:
-        q = q.where(Order.check_in_date <= check_in_to)
-    q = q.order_by(Order.created_at.desc())
+    browse_date = resolve_order_browse_date_filter(
+        date_basis=date_basis,
+        date_from=date_from,
+        date_to=date_to,
+        check_in_from=check_in_from,
+        check_in_to=check_in_to,
+        check_out_from=check_out_from,
+        check_out_to=check_out_to,
+    )
+    member_conditions = order_browse_member_conditions(
+        status=status,
+        channel=channel,
+        room_id=room_id,
+        keyword=keyword,
+    )
+    key_rows = (await db.execute(
+        matching_group_keys_statement(
+            member_conditions=member_conditions,
+            date_filter=browse_date,
+        )
+    )).all()
+    keys = [row.group_key for row in key_rows]
 
-    result = await db.execute(q)
-    orders = result.scalars().all()
+    orders = []
+    if keys:
+        orders = list((await db.execute(
+            select(Order)
+            .where(
+                func.coalesce(Order.stay_group_id, Order.order_id).in_(keys),
+                Order.is_deleted == False,
+            )
+            .options(selectinload(Order.rooms))
+            .order_by(Order.check_in_date.asc(), Order.order_id.asc())
+        )).scalars().all())
+
+    orders_by_key: dict[str, list[Order]] = {key: [] for key in keys}
+    for order in orders:
+        orders_by_key.setdefault(order.stay_group_id or order.order_id, []).append(order)
 
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = "订单列表"
 
-    headers = ["订单号", "渠道", "客人姓名", "手机号", "房间", "入住日期", "退房日期",
-               "晚数", "实收金额", "佣金", "净收入", "预计收入(业主到手)", "状态", "创建时间"]
-    ws.append(headers)
-    _style_header(ws, len(headers))
+    summary_headers = [
+        "订单号", "续住组ID", "渠道", "客人姓名", "手机号", "房间", "首次入住日",
+        "最终退房日", "晚数", "原始订单数", "实收金额", "佣金", "净收入",
+        "预计收入(业主到手)", "状态", "创建时间",
+    ]
+    ws.append(summary_headers)
+    _style_header(ws, len(summary_headers))
 
-    for o in orders:
+    for key in keys:
+        members = orders_by_key.get(key, [])
+        if not members:
+            continue
+        summary = summarize_group_members(members)
+        anchor = summary.anchor
+        accounting_members = summary.active_segments
+        expected_values = [
+            order.expected_revenue
+            for order in accounting_members
+            if order.expected_revenue is not None
+        ]
+        created_at = max(
+            (order.created_at for order in members if order.created_at is not None),
+            default=None,
+        )
+        room_rows = sorted(
+            (
+                room.check_in_date,
+                room.position,
+                room.order_id,
+                room.order_room_id,
+                room.room_id,
+            )
+            for order in members
+            for room in order.rooms
+            if room.room_id is not None
+        )
+        rooms: list[str] = []
+        for *_order, room_id_value in room_rows:
+            if room_id_value not in rooms:
+                rooms.append(room_id_value)
         ws.append([
-            o.order_id,
-            CHANNEL_LABELS.get(o.channel.value, o.channel.value),
-            o.guest_name,
-            o.guest_phone,
-            # 多房订单读 order_rooms（room_id 顶层字段已废弃，多房单恒 NULL → 曾显示"待排房"）
-            "、".join(o.room_ids) or "待排房",
-            str(o.check_in_date),
-            str(o.check_out_date),
-            o.nights,
-            float(o.actual_price or 0),
-            float(o.platform_commission),
-            float(o.net_revenue),
-            float(o.expected_revenue) if o.expected_revenue is not None else "",
-            STATUS_LABELS.get(o.order_status.value, o.order_status.value),
-            to_cn(o.created_at).strftime("%Y-%m-%d %H:%M") if o.created_at else "",
+            anchor.order_id,
+            anchor.stay_group_id or "",
+            "、".join(
+                CHANNEL_LABELS.get(value, value) for value in summary.channels
+            ),
+            anchor.guest_name,
+            anchor.guest_phone,
+            "、".join(rooms) or "待排房",
+            str(summary.anchor.check_in_date),
+            str(summary.last.check_out_date),
+            summary.nights,
+            len(members),
+            float(summary.total_amount or 0),
+            float(sum((order.platform_commission for order in accounting_members), Decimal("0"))),
+            float(sum((order.net_revenue for order in accounting_members), Decimal("0"))),
+            float(sum(expected_values, Decimal("0"))) if expected_values else "",
+            STATUS_LABELS.get(summary.status.value, summary.status.value),
+            to_cn(created_at).strftime("%Y-%m-%d %H:%M") if created_at else "",
+        ])
+
+    detail = wb.create_sheet("订单明细")
+    detail_headers = [
+        "订单号", "平台订单号", "续住组ID", "渠道", "客人姓名", "手机号", "房间",
+        "入住日期", "退房日期", "晚数", "实收金额", "佣金", "净收入",
+        "预计收入(业主到手)", "状态", "创建时间",
+    ]
+    detail.append(detail_headers)
+    _style_header(detail, len(detail_headers))
+    for order in orders:
+        detail.append([
+            order.order_id,
+            order.platform_order_id or "",
+            order.stay_group_id or "",
+            CHANNEL_LABELS.get(order.channel.value, order.channel.value),
+            order.guest_name,
+            order.guest_phone,
+            "、".join(order.room_ids) or "待排房",
+            str(order.check_in_date),
+            str(order.check_out_date),
+            order.nights,
+            float(order.actual_price or 0),
+            float(order.platform_commission),
+            float(order.net_revenue),
+            float(order.expected_revenue) if order.expected_revenue is not None else "",
+            STATUS_LABELS.get(order.order_status.value, order.order_status.value),
+            to_cn(order.created_at).strftime("%Y-%m-%d %H:%M") if order.created_at else "",
         ])
 
     # Auto-width
-    for col in ws.columns:
-        max_len = max((len(str(cell.value or "")) for cell in col), default=10)
-        ws.column_dimensions[col[0].column_letter].width = min(max_len + 4, 30)
+    for sheet in (ws, detail):
+        for col in sheet.columns:
+            max_len = max((len(str(cell.value or "")) for cell in col), default=10)
+            sheet.column_dimensions[col[0].column_letter].width = min(max_len + 4, 30)
 
     today_str = today_cn().strftime("%Y%m%d")
     return _to_streaming(wb, f"orders_{today_str}.xlsx")

@@ -1,6 +1,6 @@
 import "@ant-design/v5-patch-for-react-19";
 import type { Metadata, Viewport } from "next";
-import { Inter, Cormorant_Garamond, Noto_Serif_SC } from "next/font/google";
+import { Inter } from "next/font/google";
 import "./globals.css";
 import { Providers } from "./providers";
 import { MOBILE_DEVICE_CLASS, MOBILE_UA_REGEX } from "@/lib/mobile-device";
@@ -10,21 +10,6 @@ const inter = Inter({
   weight: ["400", "500"],
   display: "swap",
   variable: "--font-inter",
-});
-
-const cormorant = Cormorant_Garamond({
-  subsets: ["latin"],
-  weight: ["400", "500"],
-  style: ["normal", "italic"],
-  display: "swap",
-  variable: "--font-cormorant",
-});
-
-const notoSerifSC = Noto_Serif_SC({
-  weight: ["400", "500"],
-  display: "swap",
-  preload: false,
-  variable: "--font-noto-serif-sc",
 });
 
 export const metadata: Metadata = {
@@ -54,7 +39,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html
       lang="zh-CN"
       suppressHydrationWarning
-      className={`${inter.variable} ${cormorant.variable} ${notoSerifSC.variable}`}
+      className={inter.variable}
     >
       <body>
         <script dangerouslySetInnerHTML={{ __html: DEVICE_CLASS_SCRIPT }} />

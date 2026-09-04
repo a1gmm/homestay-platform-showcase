@@ -3,11 +3,14 @@
 import { usePathname, useRouter } from "next/navigation";
 import { HomeOutlined, AppstoreOutlined, UserOutlined } from "@ant-design/icons";
 import { useStaffStore } from "@/lib/staff-store";
+import { ReleaseAnnouncementGate } from "@/components/release-announcements/ReleaseAnnouncementGate";
+import { staffReleaseAnnouncementClient } from "@/lib/staff-api";
 
 export default function StaffLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
   const user = useStaffStore((s) => s.user);
+  const accessToken = useStaffStore((s) => s.access_token);
 
   const showTabs =
     pathname === "/staff/cleaner" ||
@@ -37,6 +40,12 @@ export default function StaffLayout({ children }: { children: React.ReactNode })
         paddingBottom: showTabs ? 68 : 0,
       }}
     >
+      {showTabs && user && accessToken ? (
+        <ReleaseAnnouncementGate
+          userId={user.user_id}
+          client={staffReleaseAnnouncementClient}
+        />
+      ) : null}
       {children}
 
       {showTabs && (

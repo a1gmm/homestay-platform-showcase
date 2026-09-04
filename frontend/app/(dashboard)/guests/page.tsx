@@ -146,7 +146,7 @@ export default function GuestsPage() {
 
       {/* Search + Table / Card list */}
       <Card
-        bordered={false}
+        variant="borderless"
         style={{
           borderRadius: tokens.radius.lg,
           border: `1px solid ${tokens.color.bg.border}`,

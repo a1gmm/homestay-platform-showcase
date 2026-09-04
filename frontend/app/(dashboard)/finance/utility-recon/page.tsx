@@ -9,6 +9,7 @@ import { PageHeader } from "@/components/ui/PageHeader";
 import { useAuthStore } from "@/lib/auth";
 import { extractErrorMessage, utilityReconApi } from "@/lib/api";
 import { ANOMALY_LABELS, CATEGORY_LABELS, type UtilityFloorSummary, type UtilityRow, type UtilitySuggestion } from "@/lib/utility-recon";
+import { safeMonthlyCloseReturnTarget } from "@/lib/monthly-close";
 
 const { Text, Title } = Typography;
 
@@ -21,12 +22,25 @@ export default function UtilityReconPage() {
   const router = useRouter();
   const { user } = useAuthStore();
   const qc = useQueryClient();
-  const allowed = !!user && ["admin", "finance", "operator"].includes(user.role);
-  const canDecide = !!user && ["admin", "finance"].includes(user.role);
+  const allowed = !!user && user.role === "admin";
+  const canDecide = allowed;
   const [files, setFiles] = useState<File[]>([]);
-  const [activeBatchId, setActiveBatchId] = useState<string | null>(null);
+  const [requestedTarget] = useState(() => {
+    if (typeof window === "undefined") return { batch: null, month: null };
+    const params = new URLSearchParams(window.location.search);
+    const month = params.get("month");
+    return {
+      batch: params.get("batch"),
+      month: month && /^\d{4}-(0[1-9]|1[0-2])$/.test(month) ? month : null,
+    };
+  });
+  const [activeBatchId, setActiveBatchId] = useState<string | null>(requestedTarget.batch);
   const [view, setView] = useState<"raw" | "corrected">("raw");
   const [floor, setFloor] = useState<string | undefined>();
+  const [returnTo] = useState(() => {
+    if (typeof window === "undefined") return null;
+    return safeMonthlyCloseReturnTarget(window.location.search, window.location.origin);
+  });
 
   useEffect(() => { if (user && !allowed) router.replace("/dashboard"); }, [user, allowed, router]);
 
@@ -47,11 +61,21 @@ export default function UtilityReconPage() {
     queryKey: ["utility-recon", "batches"], enabled: allowed,
     queryFn: async () => (await utilityReconApi.batches()).data,
   });
-  const batchId = activeBatchId ?? batches.data?.[0]?.batch_id ?? null;
+  const batchId = activeBatchId
+    ?? batches.data?.find((item) => item.month === requestedTarget.month)?.batch_id
+    ?? batches.data?.[0]?.batch_id
+    ?? null;
   const detail = useQuery({
     queryKey: ["utility-recon", "detail", batchId], enabled: allowed && !!batchId,
     queryFn: async () => (await utilityReconApi.detail(batchId!)).data,
   });
+  useEffect(() => {
+    if (detail.isError && activeBatchId && batches.data?.[0]
+      && activeBatchId !== batches.data[0].batch_id) {
+      message.warning("指定的水电对账批次不可用，已为你打开最近批次");
+      setActiveBatchId(batches.data[0].batch_id);
+    }
+  }, [detail.isError, activeBatchId, batches.data]);
   const decide = useMutation({
     mutationFn: ({ id, action }: { id: string; action: "adopt" | "revert" }) => action === "adopt" ? utilityReconApi.adopt(id) : utilityReconApi.revert(id),
     onSuccess: () => { message.success("处理结果已保存"); qc.invalidateQueries({ queryKey: ["utility-recon"] }); },
@@ -77,7 +101,11 @@ export default function UtilityReconPage() {
 
   if (!allowed) return null;
   return <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-    <PageHeader title="水电费对账" subtitle="上传已收明细和费用明细，自动按月份、楼层和水电项目找出差异" />
+    <PageHeader
+      title="水电费对账"
+      subtitle="上传已收明细和费用明细，自动按月份、楼层和水电项目找出差异"
+      extra={returnTo ? <Button onClick={() => router.push(returnTo)}>返回月结中心</Button> : undefined}
+    />
 
     <Card title="1. 上传两份 Excel">
       <Upload.Dragger

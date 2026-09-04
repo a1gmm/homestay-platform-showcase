@@ -59,14 +59,14 @@ export function RoomPricingDrawer({ roomId, onClose, isMobile }: Props) {
                 }}
               >
                 <div>
-                  <div style={{ fontSize: 13, fontWeight: 600 }}>{String(p.date)}</div>
+                  <div style={{ fontSize: 13, fontWeight: 500 }}>{String(p.date)}</div>
                   {p.source && (
                     <div style={{ fontSize: 11, color: tokens.color.text.tertiary }}>
                       {p.source}
                     </div>
                   )}
                 </div>
-                <div className="tabular" style={{ fontSize: 16, fontWeight: 600, color: tokens.color.brand.primary }}>
+                <div className="tabular" style={{ fontSize: 16, fontWeight: 500, color: tokens.color.brand.primary }}>
                   {price != null ? `¥${price.toLocaleString()}` : "—"}
                 </div>
               </div>

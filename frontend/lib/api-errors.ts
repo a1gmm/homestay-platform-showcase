@@ -20,7 +20,12 @@ export function isDuplicateOrderError(error: unknown): boolean {
 }
 
 export function extractErrorMessage(error: unknown, fallback?: string): string {
-  const ax = error as AxiosError<{ detail?: string | Array<{ msg?: string }> }>;
+  if (error instanceof Error && error.name === "PrivacyModeReadOnlyError") {
+    return error.message;
+  }
+  const ax = error as AxiosError<{
+    detail?: string | Array<{ msg?: string }> | { message?: string };
+  }>;
   if (ax?.code === "ECONNABORTED") {
     return "请求超时，可能是后端冷启动或网络抖动，请稍后重试";
   }
@@ -29,6 +34,9 @@ export function extractErrorMessage(error: unknown, fallback?: string): string {
   }
   const detail = ax?.response?.data?.detail;
   if (typeof detail === "string") return detail;
+  if (detail && !Array.isArray(detail) && typeof detail.message === "string") {
+    return detail.message;
+  }
   // pydantic 自定义校验消息带 "Value error, " 前缀，剥掉只留中文
   if (Array.isArray(detail) && detail[0]?.msg)
     return String(detail[0].msg).replace(/^Value error, /, "");

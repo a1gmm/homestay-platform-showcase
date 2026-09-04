@@ -77,19 +77,38 @@ def normalize_amount(raw: object) -> NormalizedValue:
     return NormalizedValue(value.quantize(Decimal("0.01")))
 
 
-def normalize_date(raw: object) -> NormalizedValue:
+def normalize_date(
+    raw: object,
+    target_month: str | None = None,
+) -> NormalizedValue:
     if isinstance(raw, datetime):
         return NormalizedValue(raw.date())
     if isinstance(raw, date):
         return NormalizedValue(raw)
     text = str(raw or "").strip()
     match = re.search(r"(20\d{2})\D{0,3}(1[0-2]|0?[1-9])\D{0,3}(3[01]|[12]\d|0?[1-9])", text)
-    if not match:
-        return NormalizedValue(None, "日期无法解析")
-    try:
-        return NormalizedValue(date(*(int(part) for part in match.groups())))
-    except ValueError:
-        return NormalizedValue(None, "日期无法解析")
+    if match:
+        try:
+            return NormalizedValue(date(*(int(part) for part in match.groups())))
+        except ValueError:
+            return NormalizedValue(None, "日期无法解析")
+    short = re.fullmatch(
+        r"(?P<month>1[0-2]|0?[1-9])(?:[/.-]|月)(?P<day>3[01]|[12]\d|0?[1-9])(?:日)?",
+        text,
+    )
+    target = re.fullmatch(r"(?P<year>20\d{2})-(?P<month>1[0-2]|0[1-9])", target_month or "")
+    if short and target and int(short.group("month")) == int(target.group("month")):
+        try:
+            return NormalizedValue(
+                date(
+                    int(target.group("year")),
+                    int(short.group("month")),
+                    int(short.group("day")),
+                )
+            )
+        except ValueError:
+            pass
+    return NormalizedValue(None, "日期无法解析")
 
 
 def _cell(row: tuple, columns: dict[str, int], key: str) -> object:
@@ -97,7 +116,10 @@ def _cell(row: tuple, columns: dict[str, int], key: str) -> object:
     return row[index] if index is not None and index < len(row) else None
 
 
-def normalize_table(table: DetectedTable) -> NormalizationResult:
+def normalize_table(
+    table: DetectedTable,
+    target_month: str | None = None,
+) -> NormalizationResult:
     buckets: dict[str, list[NormalizedRow]] = {"valid": [], "excluded": [], "unparseable": []}
     for offset, source in enumerate(table.rows, start=table.header_row + 1):
         raw_date = _cell(source, table.columns, "date")
@@ -106,7 +128,7 @@ def normalize_table(table: DetectedTable) -> NormalizationResult:
         raw_category = _cell(source, table.columns, "category") or raw_summary
         amount_key = "receipt_amount" if table.role == "receipt" else "expense_amount"
         raw_amount = _cell(source, table.columns, amount_key)
-        parsed_date = normalize_date(raw_date)
+        parsed_date = normalize_date(raw_date, target_month)
         floor = normalize_floor(raw_floor)
         category = normalize_category(raw_category)
         amount = normalize_amount(raw_amount)

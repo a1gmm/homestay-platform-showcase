@@ -142,12 +142,12 @@ export default function UsersPage() {
             return (
               <Card
                 key={record.user_id}
-                bordered={false}
+                variant="borderless"
                 styles={{ body: { padding: 14 } }}
                 style={{ borderRadius: 12, boxShadow: "0 2px 8px rgba(0,0,0,0.06)" }}
               >
                 <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                  <span style={{ fontSize: 16, fontWeight: 600, minWidth: 0 }}>
+                  <span style={{ fontSize: 16, fontWeight: 500, minWidth: 0 }}>
                     {record.display_name || record.username}
                   </span>
                   <Tag color={roleTag.color} style={{ marginInlineEnd: 0 }}>{roleTag.label}</Tag>
@@ -190,7 +190,7 @@ export default function UsersPage() {
         </div>
       ) : (
       <Card
-        bordered={false}
+        variant="borderless"
         style={{ borderRadius: 12, boxShadow: "0 2px 8px rgba(0,0,0,0.06)" }}
       >
         <Table
@@ -383,4 +383,3 @@ export default function UsersPage() {
     </div>
   );
 }
-

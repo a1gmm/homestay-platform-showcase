@@ -28,6 +28,7 @@ export function useMediaQuery(query: string): boolean {
 export const isMobileQuery = "(max-width: 1023px)";
 export const isTabletQuery = "(min-width: 768px) and (max-width: 1023px)";
 export const isDesktopQuery = "(min-width: 1024px)";
+export const compactTouchQuery = "(max-width: 1023px) and (pointer: coarse)";
 
 // UA 判定与设备类名的真相源在 lib/mobile-device.ts（零 React 依赖，layout.tsx
 // 的内联脚本也从那里插值生成）。这里 re-export 维持既有 import 路径不变。
@@ -83,3 +84,21 @@ export function useIsDesktop(): boolean {
   return useSyncExternalStore(subscribeDeviceType, desktopSnapshot, serverSnapshotFalse);
 }
 
+const compactTouchSnapshot = () =>
+  typeof window !== "undefined" &&
+  typeof window.matchMedia === "function" &&
+  window.matchMedia(compactTouchQuery).matches;
+
+const subscribeCompactTouch = (onStoreChange: () => void) => {
+  if (typeof window === "undefined" || typeof window.matchMedia !== "function") return () => {};
+  const media = window.matchMedia(compactTouchQuery);
+  media.addEventListener("change", onStoreChange);
+  return () => media.removeEventListener("change", onStoreChange);
+};
+
+// iPadOS 的“请求桌面网站”UA 不含 Mobile，但仍是窄屏触控设备。
+// 房态图需要在这类设备切换为紧凑甘特；普通电脑即使把窗口拉窄，pointer 仍是 fine，
+// 不会触发模式翻转，也就不会重现桌面甘特日期状态丢失的问题。
+export function useIsCompactTouch(): boolean {
+  return useSyncExternalStore(subscribeCompactTouch, compactTouchSnapshot, serverSnapshotFalse);
+}

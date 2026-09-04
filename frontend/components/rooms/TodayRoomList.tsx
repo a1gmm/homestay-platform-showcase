@@ -101,7 +101,7 @@ export function TodayRoomList({
         <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
           <span
             style={{
-              fontWeight: 600,
+              fontWeight: 500,
               color: tokens.color.text.primary,
               display: "inline-flex",
               alignItems: "center",
@@ -151,7 +151,7 @@ export function TodayRoomList({
         return (
           <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <span style={{ fontWeight: 600, fontSize: 13 }}>{r.today.guest_name}</span>
+              <span style={{ fontWeight: 500, fontSize: 13 }}>{r.today.guest_name}</span>
               <Tag color={STATUS_COLOR[r.today.status as string] ?? "default"} bordered={false}>
                 {STATUS_LABEL[r.today.status as string] ?? r.today.status}
               </Tag>
@@ -162,7 +162,7 @@ export function TodayRoomList({
                   style={{
                     color: TRIAL_BADGE.fg,
                     background: TRIAL_BADGE.bg,
-                    fontWeight: 700,
+                    fontWeight: 500,
                     marginInlineEnd: 0,
                   }}
                 >
@@ -177,7 +177,7 @@ export function TodayRoomList({
                   display: "inline-flex",
                   alignItems: "center",
                   fontSize: 11,
-                  fontWeight: 600,
+                  fontWeight: 500,
                   padding: "1px 8px",
                   borderRadius: 5,
                   background: getChannelBarColors(r.today.channel).body,

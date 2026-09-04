@@ -1,11 +1,15 @@
-from pydantic import model_validator
+from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing import List
 import json
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        extra="ignore",
+        hide_input_in_errors=True,
+    )
 
     # App
     APP_ENV: str = "development"
@@ -18,6 +22,9 @@ class Settings(BaseSettings):
 
     # Redis
     REDIS_URL: str = "redis://:redis_pass@localhost:6379/0"
+    # Independent Beat cutover gate. Deploy the new Beat service with this false,
+    # remove every legacy embedded ``-B`` owner, then enable it on exactly one service.
+    CELERY_BEAT_SCHEDULE_ENABLED: bool = False
 
     # JWT — 强制环境变量提供，无默认值。生产环境未设会启动失败，避免使用弱 key 签发 token。
     JWT_SECRET_KEY: str
@@ -50,6 +57,15 @@ class Settings(BaseSettings):
     # Railway(海外)↔OSS(上海)跨海写慢/超时，走加速端点显著变快。空则退回 OSS_ENDPOINT。
     # 公开看图 URL 仍用 OSS_ENDPOINT（区域端点），不受此影响。
     OSS_UPLOAD_ENDPOINT: str = ""
+
+    # Mini-program content storage is a strict, separately injected boundary.
+    # Never fall back to OSS_*: room-image deletion is intentionally best effort,
+    # while content publishing must fail closed and propagate provider failures.
+    MINIAPP_CONTENT_OSS_ACCESS_KEY_ID: str = ""
+    MINIAPP_CONTENT_OSS_ACCESS_KEY_SECRET: str = ""
+    MINIAPP_CONTENT_OSS_BUCKET: str = ""
+    MINIAPP_CONTENT_OSS_ENDPOINT: str = ""
+    MINIAPP_CONTENT_OSS_UPLOAD_ENDPOINT: str = ""
 
     # Business Config
     DEFAULT_OWNER_SHARE_RATIO: float = 0.6
@@ -145,7 +161,7 @@ class Settings(BaseSettings):
     FEISHU_SYNC_ALERT_WEBHOOK_SECRET: str = ""
     # 水位超此分钟数无新拉取 → 告警。拉取正常每 1-2 分钟一轮且每轮全量刷新 fetched_at，
     # 30 分钟不动几乎必然是停摆（部署重启也就几分钟）。
-    BYPMS_PULL_STALE_ALERT_MINUTES: int = 30
+    BYPMS_PULL_STALE_ALERT_MINUTES: int = Field(default=30, ge=1, le=24 * 60)
     # 持续停摆时的重报周期（小时）：停着就每隔这么久再喊一次（同门锁回调教训——报一次会被漏看）。
     BYPMS_PULL_REALERT_HOURS: int = 6
 
@@ -153,6 +169,9 @@ class Settings(BaseSettings):
     # 再开 PMS canonical writer，最后开 split；默认全部关闭。
     PMS_CANONICAL_LOCK_WRITE_ENABLED: bool = False
     BYPMS_SPLIT_STAY_ENABLED: bool = False
+    # PMS 管理员重试队列的独立 HMAC 密钥；不得复用 JWT/会话密钥。
+    # 非生产可留空以关闭重试，生产必须至少 32 bytes。
+    BYPMS_RETRY_HMAC_KEY: SecretStr = SecretStr("")
 
     # 飞书保洁群（退房→脏房自动通知打扫哪间，#116）。与 ota-sync 命名对齐。
     # 空 = 不发通知，只 log（沿用 LEADS/TODO 的优雅降级约定）。
@@ -176,7 +195,7 @@ class Settings(BaseSettings):
     # 空则回退用 FEISHU_CLEANING_CHAT_ID（先复用退房保洁群，待王总建独立群后填）。
     FEISHU_CLEANING_REQUEST_CHAT_ID: str = ""
     # 「审核保洁群」的 chat_id（只有管家/管理员在里面）。保洁每申请一间，系统往这里
-    # 发一张带【通过】按钮的审核卡；管家点通过=计费。**保洁不在此群 = 天然防自批**。
+    # 发一张带【通过】按钮的审核卡；完成即记实际支出，通过用于月结授权。保洁不在此群防自批。
     # 空则回退用 FEISHU_CLEANING_REQUEST_CHAT_ID（未分群时先发同群，待王总建审核群后填）。
     FEISHU_CLEANING_REVIEW_CHAT_ID: str = ""
     # 可选：额外用飞书 open_id 白名单再收一道审批权（逗号分隔）。防线主要靠「审核群
@@ -214,6 +233,25 @@ class Settings(BaseSettings):
                 stripped = value.strip()
                 if stripped != value:
                     setattr(self, name, stripped)
+        return self
+
+    @model_validator(mode="after")
+    def _validate_bypms_retry_hmac_key(self) -> "Settings":
+        retry_hmac_key = self.BYPMS_RETRY_HMAC_KEY.get_secret_value()
+        if (
+            self.APP_ENV == "production"
+            and len(retry_hmac_key.encode("utf-8")) < 32
+        ):
+            raise ValueError(
+                "BYPMS_RETRY_HMAC_KEY must be configured with at least 32 bytes "
+                "in production"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _reject_production_debug(self) -> "Settings":
+        if self.APP_ENV == "production" and self.DEBUG:
+            raise ValueError("DEBUG must be false in production")
         return self
 
     # DB keepalive — Neon serverless 免费档 5 分钟 idle 后 auto-suspend，下一次请求要冷启动 5-18s。

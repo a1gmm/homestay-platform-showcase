@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.utility_recon import UtilityReconBatch, UtilityReconRow, UtilityReconSuggestion, UtilityReconUpload
-from .contracts import WorkbookInput
+from .contracts import PreflightResult, WorkbookInput
 from .matcher import reconcile_month
 from .normalize import normalize_table
 from .workbook import inspect_workbooks_with_ai
@@ -29,12 +29,19 @@ def _summary_json(summary) -> dict:
     }
 
 
-async def run_upload(db: AsyncSession, files: list[WorkbookInput], actor_id: str) -> list[UtilityReconBatch]:
-    preflight = await inspect_workbooks_with_ai(files)
-    by_filename = {item.filename: item for item in files}
+async def run_upload(
+    db: AsyncSession,
+    files: list[WorkbookInput],
+    actor_id: str,
+    *,
+    preflight: PreflightResult | None = None,
+) -> list[UtilityReconBatch]:
+    preflight = preflight or await inspect_workbooks_with_ai(files)
+    if len(preflight.files) != len(files):
+        raise ValueError("preflight does not match uploaded files")
     fingerprints = {
-        inspected.role: sha256(by_filename[inspected.filename].content).hexdigest()
-        for inspected in preflight.files
+        inspected.role: sha256(item.content).hexdigest()
+        for inspected, item in zip(preflight.files, files, strict=True)
     }
     fingerprint_key = sha256(f"{fingerprints['receipt']}:{fingerprints['expense']}".encode()).hexdigest()
     existing = (await db.execute(
@@ -47,9 +54,14 @@ async def run_upload(db: AsyncSession, files: list[WorkbookInput], actor_id: str
     normalized = []
     excluded_count = 0
     unparseable_count = 0
+    target_month = (
+        preflight.common_months[0]
+        if len(preflight.common_months) == 1
+        else None
+    )
     for inspected in preflight.files:
         for table in inspected.sheets:
-            result = normalize_table(table)
+            result = normalize_table(table, target_month=target_month)
             normalized.extend(result.valid + result.excluded + result.unparseable)
             excluded_count += len(result.excluded)
             unparseable_count += len(result.unparseable)

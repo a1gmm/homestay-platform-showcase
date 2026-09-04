@@ -57,13 +57,49 @@ import type {
   ZeroFeeSplitPayload,
   ZeroFeeSplitResult,
   ManualOverrideField,
+  BypmsAdminCyclesFilters,
+  BypmsAdminConflictsFilters,
+  BypmsAdminSyncConflictsResponse,
+  BypmsAdminSyncCyclesResponse,
+  BypmsAdminSyncOverview,
+  BypmsAdminSyncRetryResponse,
 } from "./types";
 import type {
+  BillingReconConfirmInput,
   DiffActionResult,
+  MappingCoordinates,
   ReconBatchOut,
   ReconDiffOut,
+  WorkbookAnalysis,
 } from "./billing-recon";
+import { getAuthSessionAccessToken, getAuthSessionRefreshToken, getPersistedAuthSessionId, updateAuthSessionTokens, useAuthStore } from "./auth";
 import type { UtilityBatch, UtilityBatchDetail, UtilityPreflight } from "./utility-recon";
+import type {
+  MonthlyCloseCycle,
+  MonthlyCloseInboxItem,
+  MonthlyCloseIntakeLink,
+  MonthlyCloseIntakeLinkCreated,
+  MonthlyCloseLayoutMemory,
+  MonthlyCloseLayoutMetrics,
+  MonthlyCloseOverview,
+  MonthlyClosePublicIntake,
+  MonthlyCloseSourceClassification,
+  OperatingExpenseAnalysis,
+  OperatingExpenseMapping,
+  ServiceStatementAnalysis,
+  ServiceStatementMapping,
+  UtilityStatementAnalysis,
+  UtilityStatementMapping,
+} from "./monthly-close";
+import type {
+  ReleaseAnnouncementClient,
+  ReleaseAnnouncementList,
+} from "./release-announcements";
+import {
+  isPrivacyRequestAllowed,
+  PrivacyModeReadOnlyError,
+  readPrivacyMode,
+} from "./privacy-mode";
 
 export const api = axios.create({
   baseURL: process.env.NEXT_PUBLIC_API_URL || "/api/v1",
@@ -73,6 +109,18 @@ export const api = axios.create({
   // longer is almost certainly a real outage.
   timeout: 25000,
 });
+
+export const dashboardReleaseAnnouncementClient: ReleaseAnnouncementClient = {
+  unread: async () =>
+    (await api.get<ReleaseAnnouncementList>("/release-announcements/unread")).data.items,
+  acknowledge: async (announcementIds) =>
+    (
+      await api.post<{ acknowledged_ids: string[] }>(
+        "/release-announcements/acknowledge",
+        { announcement_ids: announcementIds },
+      )
+    ).data.acknowledged_ids,
+};
 
 // billing-recon 上传要跑 AI 列映射 + 对账，可能要几十秒，不能复用上面的默认 25s
 // （否则正常长任务会被误判超时）；诊断见 billingReconApi.upload。
@@ -84,8 +132,14 @@ export { extractErrorMessage, isDuplicateOrderError } from "./api-errors";
 
 // Attach access token from localStorage (fallback for non-cookie auth)
 api.interceptors.request.use((config) => {
+  if (readPrivacyMode()) {
+    config.headers["X-Privacy-Mode"] = "1";
+    if (!isPrivacyRequestAllowed(config.method, config.url, config.responseType)) {
+      throw new PrivacyModeReadOnlyError();
+    }
+  }
   if (typeof window !== "undefined") {
-    const token = localStorage.getItem("access_token");
+    const token = getAuthSessionAccessToken();
     if (token) config.headers["Authorization"] = `Bearer ${token}`;
   }
   return config;
@@ -96,24 +150,23 @@ api.interceptors.request.use((config) => {
 let refreshInflight: Promise<string> | null = null;
 
 async function performRefresh(): Promise<string> {
-  const refresh_token = localStorage.getItem("refresh_token");
+  const sessionId = getPersistedAuthSessionId();
+  const refresh_token = getAuthSessionRefreshToken(sessionId);
   if (!refresh_token) throw new Error("No refresh token");
   const { data } = await axios.post<{ access_token: string; refresh_token: string }>(
     "/api/v1/auth/refresh",
     { refresh_token }
   );
-  localStorage.setItem("access_token", data.access_token);
-  localStorage.setItem("refresh_token", data.refresh_token);
+  if (!sessionId || !updateAuthSessionTokens(sessionId, data.access_token, data.refresh_token)) throw new Error("Auth session changed during refresh");
   return data.access_token;
 }
 
 function clearAuthAndRedirect() {
-  localStorage.removeItem("access_token");
-  localStorage.removeItem("refresh_token");
-  localStorage.removeItem("last_activity_at");
+  const sessionId = getPersistedAuthSessionId();
+  useAuthStore.getState().clearAuth(sessionId ?? undefined);
   // 已在 /login 时不再整页跳转,避免登录失败时无谓刷新、吞掉表单报错 (#43)。
   if (typeof window !== "undefined" && window.location.pathname !== "/login") {
-    window.location.href = "/login";
+    window.location.replace("/login");
   }
 }
 
@@ -145,7 +198,7 @@ api.interceptors.response.use(
       // 跨标签页竞态:另一标签可能已刷新出新 token。若 localStorage 里的 access token
       // 已不同于本请求所用的,直接用新 token 重放,不再触发刷新(避免重复轮换互相作废)(#50)。
       const usedAuth = original.headers?.["Authorization"];
-      const stored = typeof window !== "undefined" ? localStorage.getItem("access_token") : null;
+      const stored = typeof window !== "undefined" ? getAuthSessionAccessToken() : null;
       if (stored && usedAuth && `Bearer ${stored}` !== usedAuth) {
         original.headers["Authorization"] = `Bearer ${stored}`;
         return api(original);
@@ -164,7 +217,7 @@ api.interceptors.response.use(
       } catch {
         // 刷新失败:可能是另一标签刚轮换过(本标签的 refresh token 已作废)。
         // 再读一次 localStorage,若已有新 access token 就重放,否则才登出 (#50)。
-        const fresh = typeof window !== "undefined" ? localStorage.getItem("access_token") : null;
+        const fresh = typeof window !== "undefined" ? getAuthSessionAccessToken() : null;
         if (fresh && usedAuth && `Bearer ${fresh}` !== usedAuth) {
           original.headers["Authorization"] = `Bearer ${fresh}`;
           return api(original);
@@ -529,13 +582,26 @@ export const financeApi = {
       api.get("/expenses/import-template", { responseType: "blob" }),
   },
   summaryByRoom: (
-    params: { year?: number; month?: number; start_date?: string; end_date?: string }
+    params: {
+      year?: number;
+      month?: number;
+      start_date?: string;
+      end_date?: string;
+      actual_only?: boolean;
+    }
   ) => api.get<ByRoomSummaryItem[]>("/summary/by-room", { params }),
   // 单房明细「收入来源」：按 OrderRoom 段返回（含多房订单里该房那一段），
   // 口径同 summaryByRoom（离店日归属 + 段级实收）。不能用 ordersApi.list({room_id})——
   // 那走 Order.room_id 顶层过滤，多房单顶层为空会漏。
   roomRevenueSegments: (
-    params: { room_id: string; year?: number; month?: number; start_date?: string; end_date?: string }
+    params: {
+      room_id: string;
+      year?: number;
+      month?: number;
+      start_date?: string;
+      end_date?: string;
+      actual_only?: boolean;
+    }
   ) => api.get<RoomRevenueSegment[]>("/summary/room-segments", { params }),
   // 保洁费：续住/在住房打扫登记（金额后端固定 30，收房东）+ 误登记作废。
   // 退房打扫的 60 由后端「打扫完了」自动记，前端不涉及。
@@ -664,6 +730,164 @@ export const settlementsApi = {
   dispute: (id: string, notes: string) => api.post(`/settlements/${id}/dispute`, { notes }),
 };
 
+// ─── 管理员固定九步月结 ────────────────────────────────────────────────────
+export const monthlyCloseApi = {
+  list: () => api.get<MonthlyCloseCycle[]>("/monthly-close"),
+  overview: () => api.get<MonthlyCloseOverview[]>("/monthly-close/overview"),
+  get: (billingMonth: string) =>
+    api.get<MonthlyCloseCycle>(`/monthly-close/${billingMonth}`),
+  start: (billingMonth: string) =>
+    api.post<MonthlyCloseCycle>(`/monthly-close/${billingMonth}`),
+  confirmStep: (billingMonth: string, stepKey: string, evidenceHash: string, note?: string) =>
+    api.post<MonthlyCloseCycle>(`/monthly-close/${billingMonth}/steps/${stepKey}/confirm`, {
+      expected_evidence_hash: evidenceHash,
+      note,
+    }),
+  reopen: (billingMonth: string, reason: string) =>
+    api.post<MonthlyCloseCycle>(`/monthly-close/${billingMonth}/reopen`, { reason }),
+  uploadDocument: (billingMonth: string, sourceType: string, file: File) => {
+    const form = new FormData();
+    form.append("file", file);
+    return api.post(`/monthly-close/${billingMonth}/documents`, form, {
+      params: { source_type: sourceType },
+      timeout: BILLING_RECON_UPLOAD_TIMEOUT_MS,
+    });
+  },
+  classifyDocument: (billingMonth: string, file: File) => {
+    const form = new FormData();
+    form.append("file", file);
+    return api.post<MonthlyCloseSourceClassification>(
+      `/monthly-close/${billingMonth}/documents/classify`,
+      form,
+      { timeout: BILLING_RECON_UPLOAD_TIMEOUT_MS },
+    );
+  },
+  listInbox: (billingMonth: string) =>
+    api.get<MonthlyCloseInboxItem[]>(`/monthly-close/${billingMonth}/inbox`),
+  receiveInbox: (billingMonth: string, file: File) => {
+    const form = new FormData();
+    form.append("file", file);
+    return api.post<MonthlyCloseInboxItem>(`/monthly-close/${billingMonth}/inbox`, form, {
+      timeout: BILLING_RECON_UPLOAD_TIMEOUT_MS,
+    });
+  },
+  classifyInbox: (billingMonth: string, itemId: string) =>
+    api.post<MonthlyCloseInboxItem>(`/monthly-close/${billingMonth}/inbox/${itemId}/classify`),
+  setInboxSource: (billingMonth: string, itemId: string, sourceType: string) =>
+    api.patch<MonthlyCloseInboxItem>(`/monthly-close/${billingMonth}/inbox/${itemId}`, { source_type: sourceType }),
+  confirmInbox: (billingMonth: string, itemId: string) =>
+    api.post<MonthlyCloseInboxItem>(`/monthly-close/${billingMonth}/inbox/${itemId}/confirm`),
+  listIntakeLinks: (billingMonth: string) =>
+    api.get<MonthlyCloseIntakeLink[]>(`/monthly-close/${billingMonth}/intake-links`),
+  createIntakeLink: (billingMonth: string, input: { label: string; source_type: string | null }) =>
+    api.post<MonthlyCloseIntakeLinkCreated>(`/monthly-close/${billingMonth}/intake-links`, input),
+  revokeIntakeLink: (billingMonth: string, linkId: string) =>
+    api.post<MonthlyCloseIntakeLink>(`/monthly-close/${billingMonth}/intake-links/${linkId}/revoke`),
+  getPublicIntake: (token: string) =>
+    api.get<MonthlyClosePublicIntake>(`/monthly-close/intake/${token}`),
+  uploadPublicIntake: (token: string, file: File) => {
+    const form = new FormData();
+    form.append("file", file);
+    return api.post<{ receipt_id: string; status: string; message: string }>(`/monthly-close/intake/${token}`, form, {
+      timeout: BILLING_RECON_UPLOAD_TIMEOUT_MS,
+    });
+  },
+  listLayoutMemories: () => api.get<MonthlyCloseLayoutMemory[]>("/monthly-close/layout-memories"),
+  layoutMemoryMetrics: () => api.get<MonthlyCloseLayoutMetrics>("/monthly-close/layout-memory-metrics"),
+  setLayoutMemoryEnabled: (documentId: string, enabled: boolean) =>
+    api.patch<MonthlyCloseLayoutMemory>(`/monthly-close/layout-memories/${documentId}`, { enabled }),
+  markNotApplicable: (billingMonth: string, sourceType: string, reason: string) =>
+    api.post(`/monthly-close/${billingMonth}/sources/${sourceType}/not-applicable`, { reason }),
+  archiveDocument: (billingMonth: string, documentId: string) =>
+    api.post(`/monthly-close/${billingMonth}/documents/${documentId}/archive`),
+  downloadDocument: (documentId: string) =>
+    api.get(`/monthly-close/documents/${documentId}/download`, { responseType: "blob" }),
+  analyzeServiceStatement: (
+    billingMonth: string,
+    documentId: string,
+    mapping?: ServiceStatementMapping,
+  ) => api.post<ServiceStatementAnalysis>(
+    `/monthly-close/${billingMonth}/documents/${documentId}/service/analyze`,
+    { mapping },
+    { timeout: BILLING_RECON_UPLOAD_TIMEOUT_MS },
+  ),
+  confirmServiceStatement: (
+    billingMonth: string,
+    documentId: string,
+    mapping: ServiceStatementMapping,
+  ) => api.post<{ document_id: string; processing_status: string; line_count: number }>(
+    `/monthly-close/${billingMonth}/documents/${documentId}/service/confirm`,
+    { mapping },
+  ),
+  analyzeOperatingExpense: (
+    billingMonth: string,
+    documentId: string,
+    mapping?: OperatingExpenseMapping,
+  ) => api.post<OperatingExpenseAnalysis>(
+    `/monthly-close/${billingMonth}/documents/${documentId}/operating-expense/analyze`,
+    { mapping },
+    { timeout: BILLING_RECON_UPLOAD_TIMEOUT_MS },
+  ),
+  confirmOperatingExpense: (
+    billingMonth: string,
+    documentId: string,
+    mapping: OperatingExpenseMapping,
+  ) => api.post<{ imported_count: number; failed: Array<{ row: number; errors: string }> }>(
+    `/monthly-close/${billingMonth}/documents/${documentId}/operating-expense/confirm`,
+    { mapping },
+    { timeout: BILLING_RECON_UPLOAD_TIMEOUT_MS },
+  ),
+  analyzeUtilityStatement: (
+    billingMonth: string,
+    documentId: string,
+    mapping?: UtilityStatementMapping,
+  ) => api.post<UtilityStatementAnalysis>(
+    `/monthly-close/${billingMonth}/documents/${documentId}/utility/analyze`,
+    { mapping },
+    { timeout: BILLING_RECON_UPLOAD_TIMEOUT_MS },
+  ),
+  confirmUtilityStatement: (
+    billingMonth: string,
+    documentId: string,
+    mapping: UtilityStatementMapping,
+  ) => api.post<{ document_id: string; role: string; months: string[] }>(
+    `/monthly-close/${billingMonth}/documents/${documentId}/utility/confirm`,
+    { mapping },
+  ),
+  runUtility: (billingMonth: string) =>
+    api.post<{ batch_id: string; month: string; status: string }>(
+      `/monthly-close/${billingMonth}/actions/utility/run`,
+      null,
+      { timeout: BILLING_RECON_UPLOAD_TIMEOUT_MS },
+    ),
+  importOperatingExpenses: (billingMonth: string) =>
+    api.post<{ document_count: number; total_rows: number; imported_count: number; failed: Array<{ row: number; errors: string }> }>(
+      `/monthly-close/${billingMonth}/actions/operating-expenses/import`,
+      null,
+      { timeout: BILLING_RECON_UPLOAD_TIMEOUT_MS },
+    ),
+  reconcileServiceFees: (billingMonth: string) =>
+    api.post<{ created_count: number; corrected_count: number; blocked: Array<Record<string, unknown>>; reprocessed_document_count: number }>(
+      `/monthly-close/${billingMonth}/actions/service-fees/reconcile`,
+      null,
+    ),
+  analyzeOta: (billingMonth: string, documentId: string, coordinates?: MappingCoordinates) =>
+    api.post<WorkbookAnalysis>(
+      `/monthly-close/${billingMonth}/documents/${documentId}/ota/analyze`,
+      { coordinates },
+      { timeout: BILLING_RECON_UPLOAD_TIMEOUT_MS },
+    ),
+  confirmOta: (
+    billingMonth: string,
+    documentId: string,
+    input: Omit<BillingReconConfirmInput, "file" | "file_fingerprint">,
+  ) => api.post<ReconBatchDetail>(
+    `/monthly-close/${billingMonth}/documents/${documentId}/ota/confirm`,
+    input,
+    { timeout: BILLING_RECON_UPLOAD_TIMEOUT_MS },
+  ),
+};
+
 // ─── Notifications (Features 3 & 10) ─────────────────────────────────────────
 export const notificationsApi = {
   list: (params?: { is_read?: boolean; page?: number; page_size?: number }) =>
@@ -676,15 +900,88 @@ export const notificationsApi = {
   checkinCard: (orderId: string) => `/api/v1/notifications/checkin-card/${orderId}`,
 };
 
+// ─── BYPMS synchronization workbench (admin-only) ───────────────────────────
+function boundedInteger(
+  value: number | undefined,
+  fallback: number,
+  minimum: number,
+  maximum: number,
+  field: string,
+): number {
+  const normalized = value ?? fallback;
+  if (!Number.isInteger(normalized) || normalized < minimum || normalized > maximum) {
+    throw new RangeError(`${field} is outside the supported range`);
+  }
+  return normalized;
+}
+
+export function normalizeBypmsCyclesFilters(filters: BypmsAdminCyclesFilters = {}) {
+  return {
+    limit: boundedInteger(filters.limit, 20, 1, 100, "limit"),
+    status: filters.status ?? null,
+  };
+}
+
+export function normalizeBypmsConflictsFilters(filters: BypmsAdminConflictsFilters = {}) {
+  return {
+    field: filters.field ?? null,
+    status: filters.status ?? "open",
+    page: boundedInteger(filters.page, 1, 1, 1_000_000, "page"),
+    page_size: boundedInteger(filters.page_size, 50, 1, 100, "page_size"),
+  };
+}
+
+export const bypmsSyncApi = {
+  overview: () => api.get<BypmsAdminSyncOverview>("/system/bypms-sync/overview"),
+  cycles: (filters: BypmsAdminCyclesFilters = {}) => {
+    const normalized = normalizeBypmsCyclesFilters(filters);
+    return api.get<BypmsAdminSyncCyclesResponse>("/system/bypms-sync/cycles", {
+      params: {
+        limit: normalized.limit,
+        ...(normalized.status === null ? {} : { status: normalized.status }),
+      },
+    });
+  },
+  conflicts: (filters: BypmsAdminConflictsFilters = {}) => {
+    const normalized = normalizeBypmsConflictsFilters(filters);
+    return api.get<BypmsAdminSyncConflictsResponse>("/system/bypms-sync/conflicts", {
+      params: {
+        ...(normalized.field === null ? {} : { field: normalized.field }),
+        status: normalized.status,
+        page: normalized.page,
+        page_size: normalized.page_size,
+      },
+    });
+  },
+  retry: (idempotencyKey: string) =>
+    api.post<BypmsAdminSyncRetryResponse>("/system/bypms-sync/retry", undefined, {
+      headers: { "Idempotency-Key": idempotencyKey },
+    }),
+};
+
 // ─── Audit ─────────────────────────────────────────────────────────────────────
 export const auditApi = {
-  list: (params?: { page?: number; page_size?: number; resource_type?: string; resource_id?: string }) =>
+  list: (params?: {
+    page?: number;
+    page_size?: number;
+    resource_type?: string;
+    resource_id?: string;
+    date_from?: string;
+    date_to?: string;
+  }) =>
     api.get("/audit-logs", { params }),
 };
 
 // ─── Export (Feature A) ──────────────────────────────────────────────────────
 export const exportApi = {
-  orders: (params?: { status?: string; check_in_from?: string; check_in_to?: string }) =>
+  orders: (params?: {
+    status?: string;
+    channel?: string;
+    keyword?: string;
+    date_basis?: "final_checkout" | "first_checkin";
+    date_from?: string;
+    date_to?: string;
+  }) =>
     api.get("/export/orders", { params, responseType: "blob" }),
   finance: (params: { year?: number; month?: number; start_date?: string; end_date?: string; floor?: number; owner_id?: string; room_id?: string }) =>
     api.get("/export/finance", { params, responseType: "blob" }),
@@ -728,6 +1025,26 @@ export interface ReconBatchDetail {
 }
 
 export const billingReconApi = {
+  analyze: (file: File, coordinates?: MappingCoordinates) => {
+    const fd = new FormData();
+    fd.append("file", file);
+    if (coordinates) fd.append("mapping_json", JSON.stringify(coordinates));
+    return api.post<WorkbookAnalysis>("/billing-recon/analyze", fd, {
+      timeout: BILLING_RECON_UPLOAD_TIMEOUT_MS,
+    });
+  },
+  confirm: (input: BillingReconConfirmInput) => {
+    const fd = new FormData();
+    fd.append("file", input.file);
+    fd.append("file_fingerprint", input.file_fingerprint);
+    fd.append("mapping_json", JSON.stringify(input.coordinates));
+    fd.append("platform_scope", input.platform_scope);
+    fd.append("remember_layout", String(input.remember_layout));
+    return api.post<ReconBatchDetail>("/billing-recon/confirm", fd, {
+      timeout: BILLING_RECON_UPLOAD_TIMEOUT_MS,
+    });
+  },
+  /** @deprecated Use analyze() and confirm(); retained for the page migration in Task 9. */
   upload: (file: File) => {
     const fd = new FormData();
     fd.append("file", file);

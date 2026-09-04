@@ -14,8 +14,7 @@ import {
 import { MobileInputNumber } from "@/components/ui/MobileInputNumber";
 import type { UploadProps } from "antd";
 import {
-  DollarOutlined, RiseOutlined, BarChartOutlined,
-  PlusOutlined, FallOutlined, DownloadOutlined, UploadOutlined,
+  PlusOutlined, DownloadOutlined, UploadOutlined,
   FileExcelOutlined, DeleteOutlined,
 } from "@ant-design/icons";
 import { exportApi } from "@/lib/api";
@@ -26,10 +25,13 @@ import { useAuthStore } from "@/lib/auth";
 import { navForRole } from "@/lib/nav-config";
 import { getChannelLabel } from "@/lib/channels";
 import { PageHeader } from "@/components/ui/PageHeader";
-import { StatCard } from "@/components/ui/StatCard";
 import { tokens } from "@/lib/design-tokens";
+import { FinanceSummaryCards } from "@/components/finance/FinanceSummaryCards";
 import ServiceFeeConfigCard from "@/components/finance/ServiceFeeConfigCard";
 import { buildExpenseRows } from "@/lib/expense-grouping";
+import { parseMonthlyCloseReviewParams } from "@/lib/monthly-close";
+import { ReturnToMonthlyClose } from "@/components/monthly-close/ReturnToMonthlyClose";
+import { BusinessDateRangeField } from "@/components/ui/BusinessDateRangeField";
 
 const { Title, Text } = Typography;
 
@@ -99,7 +101,7 @@ function MetricCard({
 }) {
   return (
     <Card
-      bordered={false}
+      variant="borderless"
       style={{
         borderRadius: 12,
         boxShadow: highlight
@@ -116,7 +118,7 @@ function MetricCard({
             value={value}
             prefix={prefix}
             suffix={suffix}
-            valueStyle={{ fontSize: 24, fontWeight: 700, color: highlight ? color : "#1a1a2e" }}
+            valueStyle={{ fontSize: 24, fontWeight: 500, color: highlight ? color : "#1a1a2e" }}
             style={{ marginTop: 4 }}
           />
         </div>
@@ -145,13 +147,16 @@ export default function FinancePage() {
   }, [user, canAccessFinance, router]);
   const qc = useQueryClient();
   // 全局日期区间：驱动月度汇总卡片 / 支出明细 / 导出 / 按房号核对。默认本月整月。
-  const [range, setRange] = useState<[Dayjs, Dayjs]>([
-    dayjs().startOf("month"),
-    dayjs().endOf("month"),
-  ]);
+  const [reviewParams] = useState(() => parseMonthlyCloseReviewParams(
+    typeof window === "undefined" ? "" : window.location.search,
+  ));
+  const [range, setRange] = useState<[Dayjs, Dayjs]>(() => {
+    const anchor = reviewParams.month ? dayjs(`${reviewParams.month}-01`) : dayjs();
+    return [anchor.startOf("month"), anchor.endOf("month")];
+  });
   const startDate = range[0].format("YYYY-MM-DD");
   const endDate = range[1].format("YYYY-MM-DD");
-  const [activeTab, setActiveTab] = useState<string>("summary");
+  const [activeTab, setActiveTab] = useState<string>(reviewParams.tab || "summary");
   const [addExpenseOpen, setAddExpenseOpen] = useState(false);
 
   // 日期范围选择器的快捷预设（本月/上月/近3月/近6月/今年）
@@ -162,13 +167,6 @@ export default function FinancePage() {
     { label: "近 6 个月", value: [dayjs().subtract(5, "month").startOf("month"), dayjs().endOf("month")] as [Dayjs, Dayjs] },
     { label: "今年", value: [dayjs().startOf("year"), dayjs().endOf("year")] as [Dayjs, Dayjs] },
   ];
-
-  // 初始化 activeTab 从 URL(支持 ?tab=by-room 深链)
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const t = new URLSearchParams(window.location.search).get("tab");
-    if (t) setActiveTab(t);
-  }, []);
 
   const handleTabChange = (key: string) => {
     setActiveTab(key);
@@ -254,7 +252,7 @@ export default function FinancePage() {
   // —— 支出明细：筛选 + 按订单分组 —— //
   const [expCategory, setExpCategory] = useState<string | undefined>(undefined);
   const [expRoom, setExpRoom] = useState<string | undefined>(undefined);
-  const [expSearch, setExpSearch] = useState("");
+  const [expSearch, setExpSearch] = useState(reviewParams.search);
 
   // 类别 / 房号筛选下拉的可选项：只列出当前区间实际出现过的值（避免下拉塞满空类别）。
   const { categoryFilterOptions, roomFilterOptions } = useMemo(() => {
@@ -318,7 +316,7 @@ export default function FinancePage() {
   // 关联对象模式：单个房间 / 整层 / 某业主
   const [scopeMode, setScopeMode] = useState<"room" | "floor" | "owner">("room");
 
-  const byRoomParams = { start_date: startDate, end_date: endDate };
+  const byRoomParams = { start_date: startDate, end_date: endDate, actual_only: true };
   const { data: byRoom, isLoading: byRoomLoading } = useQuery({
     queryKey: ["finance", "by-room", byRoomParams],
     queryFn: () => financeApi.summaryByRoom(byRoomParams).then((r) => r.data),
@@ -495,32 +493,7 @@ export default function FinancePage() {
           {monthly && (
             <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
               {/* Main metrics */}
-              <Row gutter={[16, 16]}>
-                <Col xs={12} sm={8} md={8}>
-                  <StatCard title="总房费收入" value={Number(monthly.total_actual_price ?? 0).toLocaleString("zh-CN")}
-                    prefix="¥" icon={<DollarOutlined />} tone="brand" />
-                </Col>
-                <Col xs={12} sm={8} md={8}>
-                  <StatCard title="平台佣金" value={Number(monthly.total_commission ?? 0).toLocaleString("zh-CN")}
-                    prefix="¥" icon={<FallOutlined />} tone="warn" />
-                </Col>
-                <Col xs={12} sm={8} md={8}>
-                  <StatCard title="净收入" value={Number(monthly.total_net_revenue ?? 0).toLocaleString("zh-CN")}
-                    prefix="¥" icon={<RiseOutlined />} tone="success" />
-                </Col>
-                <Col xs={12} sm={8} md={8}>
-                  <StatCard title="总支出" value={Number(monthly.total_expenses ?? 0).toLocaleString("zh-CN")}
-                    prefix="¥" icon={<FallOutlined />} tone="warn" />
-                </Col>
-                <Col xs={12} sm={8} md={8}>
-                  <StatCard title="毛利润" value={Number(monthly.gross_profit ?? 0).toLocaleString("zh-CN")}
-                    prefix="¥" icon={<DollarOutlined />} tone="success" />
-                </Col>
-                <Col xs={12} sm={8} md={8}>
-                  <StatCard title="订单数" value={monthly.order_count ?? 0}
-                    suffix="单" icon={<BarChartOutlined />} tone="info" />
-                </Col>
-              </Row>
+              <FinanceSummaryCards monthly={monthly} />
 
               {/* KPI metrics */}
               <Row gutter={[16, 16]}>
@@ -538,7 +511,7 @@ export default function FinancePage() {
                     <div style={{ fontSize: 12, color: tokens.color.text.secondary }}>入住率 OCC</div>
                     <div
                       className="tabular"
-                      style={{ fontSize: 28, fontWeight: 700, marginTop: 4, letterSpacing: "-.01em" }}
+                      style={{ fontSize: 28, fontWeight: 500, marginTop: 4, letterSpacing: 0 }}
                     >
                       {monthly.occ}%
                     </div>
@@ -558,7 +531,7 @@ export default function FinancePage() {
                     <div style={{ fontSize: 12, color: tokens.color.text.secondary }}>平均房价 ADR</div>
                     <div
                       className="tabular"
-                      style={{ fontSize: 28, fontWeight: 700, marginTop: 4, letterSpacing: "-.01em" }}
+                      style={{ fontSize: 28, fontWeight: 500, marginTop: 4, letterSpacing: 0 }}
                     >
                       ¥{monthly.adr}
                     </div>
@@ -578,7 +551,7 @@ export default function FinancePage() {
                     <div style={{ fontSize: 12, color: tokens.color.text.secondary }}>RevPAR</div>
                     <div
                       className="tabular"
-                      style={{ fontSize: 28, fontWeight: 700, marginTop: 4, letterSpacing: "-.01em" }}
+                      style={{ fontSize: 28, fontWeight: 500, marginTop: 4, letterSpacing: 0 }}
                     >
                       ¥{monthly.revpar}
                     </div>
@@ -588,7 +561,7 @@ export default function FinancePage() {
 
               {/* Channel breakdown */}
               {monthly.channel_breakdown && Object.keys(monthly.channel_breakdown).length > 0 && (
-                <Card bordered={false}
+                <Card variant="borderless"
                   style={{ borderRadius: 12, boxShadow: "0 2px 8px rgba(0,0,0,0.06)" }}
                   title={<Text strong>渠道分布</Text>}>
                   <Space wrap>
@@ -630,7 +603,7 @@ export default function FinancePage() {
             }}
           >
             <div>
-              <div style={{ fontWeight: 600 }}>
+              <div style={{ fontWeight: 500 }}>
                 {`${startDate} 至 ${endDate} · 每套房账单`}
               </div>
               <div style={{ fontSize: 12, color: tokens.color.text.tertiary, marginTop: 2 }}>
@@ -643,7 +616,7 @@ export default function FinancePage() {
             showIcon
             banner
             message="净收入已与正式结算统一口径"
-            description="本页已计入平台补贴，并按正式费用分摊规则计算。逐房『房间业主应得』不含无法归到单间的整层/业主级支出；最终打款仍以业主结算单为准。"
+            description="仅统计已实际退房订单；本页已计入平台补贴，并按正式费用分摊规则计算。逐房『房间业主应得』不含无法归到单间的整层/业主级支出；最终打款仍以业主结算单为准。"
             style={{ fontSize: 12 }}
           />
           <Table
@@ -661,7 +634,7 @@ export default function FinancePage() {
               const sum = (key: keyof typeof pageData[number]) =>
                 pageData.reduce((acc, r) => acc + Number(r[key] ?? 0), 0);
               return (
-                <Table.Summary.Row style={{ background: tokens.color.bg.subtle, fontWeight: 600 }}>
+                <Table.Summary.Row style={{ background: tokens.color.bg.subtle, fontWeight: 500 }}>
                   <Table.Summary.Cell index={0}>合计</Table.Summary.Cell>
                   <Table.Summary.Cell index={1}></Table.Summary.Cell>
                   <Table.Summary.Cell index={2} align="right">{sum("order_count")}</Table.Summary.Cell>
@@ -781,7 +754,7 @@ export default function FinancePage() {
                 ),
               },
               {
-                title: "公司净利（估）",
+                title: "公司结余",
                 dataIndex: "company_net",
                 key: "company_net",
                 width: 110,
@@ -833,7 +806,7 @@ export default function FinancePage() {
                 gap: 8,
               }}
             >
-              <div style={{ fontWeight: 600 }}>支出记录</div>
+              <div style={{ fontWeight: 500 }}>支出记录</div>
               <Space wrap>
                 <Button size="small" icon={<FileExcelOutlined />} onClick={handleDownloadTemplate}>
                   下载模板
@@ -922,10 +895,13 @@ export default function FinancePage() {
     <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
       <PageHeader
         title="财务管理"
-        subtitle={`${startDate} 至 ${endDate} · 收支汇总与明细`}
+        subtitle="收入与支出使用各自的业务发生日，汇总口径与月结一致"
         extra={
           <Space wrap>
-            <DatePicker.RangePicker
+            <ReturnToMonthlyClose />
+            <BusinessDateRangeField
+              label="统计区间"
+              help="收入按退房日，支出按发生日"
               value={range as any}
               onChange={(v) => {
                 if (v && v[0] && v[1]) setRange([v[0], v[1]] as [Dayjs, Dayjs]);
@@ -933,19 +909,14 @@ export default function FinancePage() {
               allowClear={false}
               placeholder={["起始日期", "结束日期"]}
               presets={rangePresets}
+              style={{ minWidth: 260 }}
             />
             <Button icon={<DownloadOutlined />} loading={exportLoading} onClick={handleExportFinance}>
               导出 Excel
             </Button>
-            <Button icon={<FileExcelOutlined />} onClick={() => router.push("/finance/reconciliation")}>
-              对账
-            </Button>
-            <Button icon={<FileExcelOutlined />} onClick={() => router.push("/finance/utility-recon")}>
-              水电费对账
-            </Button>
             {user?.role === "admin" && (
-              <Button onClick={() => router.push("/finance/billing-recon")}>
-                账单对账
+              <Button type="primary" icon={<FileExcelOutlined />} onClick={() => router.push("/finance/monthly-close")}>
+                进入月结中心
               </Button>
             )}
           </Space>
@@ -1127,17 +1098,17 @@ export default function FinancePage() {
               >
                 <div>
                   <div style={{ fontSize: 12, color: tokens.color.text.tertiary }}>总行数</div>
-                  <div style={{ fontSize: 20, fontWeight: 600 }}>{importResult.total_rows}</div>
+                  <div style={{ fontSize: 20, fontWeight: 500 }}>{importResult.total_rows}</div>
                 </div>
                 <div>
                   <div style={{ fontSize: 12, color: tokens.color.text.tertiary }}>成功</div>
-                  <div style={{ fontSize: 20, fontWeight: 600, color: "#10B981" }}>
+                  <div style={{ fontSize: 20, fontWeight: 500, color: "#10B981" }}>
                     {importResult.imported_count}
                   </div>
                 </div>
                 <div>
                   <div style={{ fontSize: 12, color: tokens.color.text.tertiary }}>失败</div>
-                  <div style={{ fontSize: 20, fontWeight: 600, color: "#EF4444" }}>
+                  <div style={{ fontSize: 20, fontWeight: 500, color: "#EF4444" }}>
                     {importResult.failed.length}
                   </div>
                 </div>

@@ -3,15 +3,15 @@
 import { useMemo, useState, useEffect } from "react";
 import { extractErrorMessage } from "@/lib/api-errors";
 import { useQuery } from "@tanstack/react-query";
-import { Card, Table, Typography, Tag, DatePicker, Space, message, Button } from "antd";
+import { Card, Table, Typography, Tag, Space, message } from "antd";
 import { CloseCircleOutlined } from "@ant-design/icons";
 import dayjs, { Dayjs } from "dayjs";
 import { auditApi, usersApi } from "@/lib/api";
 import { useAuthStore } from "@/lib/auth";
 import { useRouter, useSearchParams } from "next/navigation";
+import { BusinessDateRangeField } from "@/components/ui/BusinessDateRangeField";
 
 const { Title, Text } = Typography;
-const { RangePicker } = DatePicker;
 
 const ACTION_LABELS: Record<string, string> = {
   create_user: "创建账号",
@@ -68,6 +68,8 @@ export default function AuditPage() {
   const resourceType = searchParams.get("resource_type") ?? undefined;
   const resourceId = searchParams.get("resource_id") ?? undefined;
   const [range, setRange] = useState<[Dayjs | null, Dayjs | null] | null>(null);
+  const dateFrom = range?.[0]?.format("YYYY-MM-DD");
+  const dateTo = range?.[1]?.format("YYYY-MM-DD");
   const isAdmin = !!user && user.role === "admin";
 
   useEffect(() => {
@@ -77,11 +79,17 @@ export default function AuditPage() {
   }, [user, router]);
 
   const { data: logsData, isLoading } = useQuery({
-    queryKey: ["audit-logs", resourceType ?? null, resourceId ?? null],
+    queryKey: ["audit-logs", resourceType ?? null, resourceId ?? null, dateFrom, dateTo],
     enabled: isAdmin,
     queryFn: () =>
       auditApi
-        .list({ resource_type: resourceType, resource_id: resourceId, page_size: 200 })
+        .list({
+          resource_type: resourceType,
+          resource_id: resourceId,
+          date_from: dateFrom,
+          date_to: dateTo,
+          page_size: 200,
+        })
         .then((r) => r.data)
         .catch((err) => {
           message.error(extractErrorMessage(err, "获取审计日志失败，请稍后重试"));
@@ -109,17 +117,7 @@ export default function AuditPage() {
     return map;
   }, [usersData]);
 
-  const logs = useMemo(() => {
-    if (!Array.isArray(logsData)) return [];
-    if (!range || (!range[0] && !range[1])) return logsData;
-    const [start, end] = range;
-    return logsData.filter((log: any) => {
-      const t = dayjs(log.created_at);
-      if (start && t.isBefore(start, "minute")) return false;
-      if (end && t.isAfter(end, "minute")) return false;
-      return true;
-    });
-  }, [logsData, range]);
+  const logs = Array.isArray(logsData) ? logsData : [];
 
   if (!isAdmin) return null;
 
@@ -143,12 +141,14 @@ export default function AuditPage() {
       </div>
 
       <Card
-        bordered={false}
+        variant="borderless"
         style={{ borderRadius: 12, boxShadow: "0 2px 8px rgba(0,0,0,0.06)" }}
       >
         <Space wrap style={{ marginBottom: 16 }}>
-          <Text type="secondary">时间范围：</Text>
-          <RangePicker
+          <BusinessDateRangeField
+            label="操作发生日（北京时间）"
+            help="先在全部日志中筛选，再返回最近 200 条匹配结果"
+            aria-label="操作发生日期范围"
             value={range as any}
             onChange={(v) => setRange(v as any)}
             allowClear
@@ -246,4 +246,3 @@ export default function AuditPage() {
     </div>
   );
 }
-

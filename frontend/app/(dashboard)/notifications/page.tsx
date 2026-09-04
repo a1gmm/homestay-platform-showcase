@@ -24,6 +24,7 @@ import { notificationsApi } from "@/lib/api";
 import type { NotificationOut } from "@/lib/types";
 import dayjs from "dayjs";
 import relativeTime from "dayjs/plugin/relativeTime";
+import Link from "next/link";
 
 // 全局 zh-cn locale 已在 app/providers.tsx 设置，本页只需扩展 relativeTime 插件。
 dayjs.extend(relativeTime);
@@ -40,6 +41,10 @@ const TYPE_LABELS: Record<string, { label: string; color: string }> = {
 };
 
 type FilterType = "all" | "unread" | "read";
+
+export function safeActionUrl(value: string | null | undefined) {
+  return value && value.startsWith("/") && !value.startsWith("//") && !value.includes("\\") ? value : null;
+}
 
 export default function NotificationsPage() {
   const [filter, setFilter] = useState<FilterType>("all");
@@ -123,6 +128,18 @@ export default function NotificationsPage() {
                 label: item.type,
                 color: "default",
               };
+              const actionUrl = safeActionUrl(item.action_url);
+              const actions = [];
+              if (actionUrl) actions.push(
+                <Link key="action" href={actionUrl} onClick={() => { if (!item.is_read) markReadMutation.mutate(item.notification_id); }}>
+                  去处理 →
+                </Link>,
+              );
+              if (!item.is_read) actions.push(
+                <Button key="read" type="link" size="small" icon={<ReadOutlined />} onClick={() => markReadMutation.mutate(item.notification_id)} loading={markReadMutation.isPending}>
+                  标记已读
+                </Button>,
+              );
               return (
                 <List.Item
                   key={item.notification_id}
@@ -134,24 +151,7 @@ export default function NotificationsPage() {
                     borderRadius: 8,
                     marginBottom: 4,
                   }}
-                  actions={
-                    !item.is_read
-                      ? [
-                          <Button
-                            key="read"
-                            type="link"
-                            size="small"
-                            icon={<ReadOutlined />}
-                            onClick={() =>
-                              markReadMutation.mutate(item.notification_id)
-                            }
-                            loading={markReadMutation.isPending}
-                          >
-                            标记已读
-                          </Button>,
-                        ]
-                      : undefined
-                  }
+                  actions={actions.length ? actions : undefined}
                 >
                   <List.Item.Meta
                     title={

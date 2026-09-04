@@ -196,7 +196,7 @@ export default function TasksPage() {
                   <div style={{ fontSize: 12, color: tokens.color.text.secondary }}>{v.label}</div>
                   <div
                     className="tabular"
-                    style={{ fontSize: 24, fontWeight: 700, marginTop: 2, letterSpacing: "-.01em" }}
+                    style={{ fontSize: 24, fontWeight: 500, marginTop: 2, letterSpacing: 0 }}
                   >
                     {count}
                   </div>
@@ -273,7 +273,7 @@ export default function TasksPage() {
               return (
                 <Card
                   key={task.task_id || task.id}
-                  bordered={false}
+                  variant="borderless"
                   style={{
                     borderRadius: tokens.radius.lg,
                     boxShadow: tokens.shadow.sm,

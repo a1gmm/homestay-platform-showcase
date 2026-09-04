@@ -233,6 +233,113 @@ async def add_checkout_cleaning_charge(
     return True
 
 
+async def ensure_checkout_service_expenses(
+    db: AsyncSession,
+    *,
+    order: Order,
+    room_ids: list[str] | None = None,
+) -> None:
+    """Recognize incurred checkout service expenses for every target room.
+
+    This is the strict checkout write path.  It validates the complete target
+    set before delegating to the existing idempotent per-room ledger writer and
+    deliberately does not commit; checkout status, tasks, audit, and expenses
+    remain one caller-owned transaction.
+    """
+    order_id = getattr(order, "order_id", None)
+    if not order_id or await db.scalar(
+        select(Order.order_id).where(Order.order_id == order_id)
+    ) is None:
+        raise service_fee_ledger.CheckoutExpenseRecognitionError(
+            reason="missing_order",
+            order_id=order_id,
+        )
+
+    assigned_ids = list(dict.fromkeys(
+        rid
+        for rid in (
+            await db.execute(
+                select(OrderRoom.room_id).where(
+                    OrderRoom.order_id == order_id,
+                    OrderRoom.room_id.isnot(None),
+                )
+            )
+        ).scalars().all()
+        if rid
+    ))
+    if not assigned_ids and order.room_id:
+        assigned_ids = [order.room_id]
+
+    target_ids = list(dict.fromkeys(room_ids if room_ids is not None else assigned_ids))
+    if not target_ids:
+        raise service_fee_ledger.CheckoutExpenseRecognitionError(
+            reason="no_rooms",
+            order_id=order_id,
+        )
+
+    assigned_set = set(assigned_ids)
+    unrelated = tuple(rid for rid in target_ids if rid not in assigned_set)
+    if unrelated:
+        raise service_fee_ledger.CheckoutExpenseRecognitionError(
+            reason="room_not_in_order",
+            order_id=order_id,
+            room_ids=unrelated,
+        )
+
+    rooms = (
+        await db.execute(select(Room).where(Room.room_id.in_(target_ids)))
+    ).scalars().all()
+    rooms_by_id = {room.room_id: room for room in rooms}
+    missing_rooms = tuple(rid for rid in target_ids if rid not in rooms_by_id)
+    if missing_rooms:
+        raise service_fee_ledger.CheckoutExpenseRecognitionError(
+            reason="missing_room",
+            order_id=order_id,
+            room_ids=missing_rooms,
+        )
+
+    # 故障换房留下的旧房会保持 maintenance/locked，退房流程明确不派清扫任务；
+    # 这类房没有发生本次退房保洁/洗涤/日耗，不能因为仍挂在 OrderRoom 上而误收费。
+    target_ids = [
+        rid
+        for rid in target_ids
+        if rooms_by_id[rid].room_status not in (
+            RoomStatus.maintenance,
+            RoomStatus.locked,
+        )
+    ]
+    if not target_ids:
+        return
+
+    missing_owners = tuple(
+        rid for rid in target_ids if not rooms_by_id[rid].owner_id
+    )
+    if missing_owners:
+        raise service_fee_ledger.CheckoutExpenseRecognitionError(
+            reason="missing_owner",
+            order_id=order_id,
+            room_ids=missing_owners,
+        )
+
+    missing_dates: list[str] = []
+    for room_id in target_ids:
+        if await _final_checkout_date(db, order_id, room_id) is None:
+            missing_dates.append(room_id)
+    if missing_dates:
+        raise service_fee_ledger.CheckoutExpenseRecognitionError(
+            reason="missing_checkout_date",
+            order_id=order_id,
+            room_ids=tuple(missing_dates),
+        )
+
+    for room_id in target_ids:
+        await add_checkout_cleaning_charge(
+            db,
+            room=rooms_by_id[room_id],
+            order_id=order_id,
+        )
+
+
 async def _revoke_cleaning_code_bg(room_id: str, order_id: str | None) -> None:
     """应答后撤保洁码：请求会话在后台任务执行前已被 FastAPI 关闭，须新开会话。
 

@@ -54,13 +54,21 @@ def _role(columns: dict[str, int]) -> str | None:
     return None
 
 
-def _month(value: object) -> str | None:
+def _month(value: object, target_month: str | None = None) -> str | None:
     if isinstance(value, (date, datetime)):
         return f"{value.year:04d}-{value.month:02d}"
     text = str(value or "").strip()
     match = re.search(r"(?P<year>20\d{2})\D{0,3}(?P<month>1[0-2]|0?[1-9])", text)
     if match:
         return f"{int(match.group('year')):04d}-{int(match.group('month')):02d}"
+    short = re.fullmatch(
+        r"\s*(?P<month>1[0-2]|0?[1-9])(?:[/.-]|月)(?P<day>3[01]|[12]?\d)(?:日)?\s*",
+        text,
+    )
+    if short and target_month:
+        parsed_month = int(short.group("month"))
+        if parsed_month == int(target_month[-2:]):
+            return target_month
     return None
 
 
@@ -106,7 +114,9 @@ def _xls_rows(item: WorkbookInput) -> list[tuple[str, list[tuple]]]:
     return output
 
 
-def _inspect_file(item: WorkbookInput) -> InspectedFile:
+def _inspect_file(
+    item: WorkbookInput, target_month: str | None = None
+) -> InspectedFile:
     _validate_input(item)
     source_sheets = _xlsx_rows(item) if item.filename.lower().endswith(".xlsx") else _xls_rows(item)
     tables: list[DetectedTable] = []
@@ -124,7 +134,7 @@ def _inspect_file(item: WorkbookInput) -> InspectedFile:
             continue
         header_row, columns, role = found
         data_rows = rows[header_row:]
-        months = sorted({month for row in data_rows if (month := _month(row[columns["date"]]))})
+        months = sorted({month for row in data_rows if (month := _month(row[columns["date"]], target_month))})
         all_months.update(months)
         detected_roles.add(role)
         tables.append(DetectedTable(role, item.filename, sheet_name, header_row, columns, data_rows, months))
@@ -134,10 +144,12 @@ def _inspect_file(item: WorkbookInput) -> InspectedFile:
     return InspectedFile(item.filename, role, tables, sorted(all_months))
 
 
-def inspect_workbooks(files: list[WorkbookInput]) -> PreflightResult:
+def inspect_workbooks(
+    files: list[WorkbookInput], target_month: str | None = None
+) -> PreflightResult:
     if len(files) != 2:
         raise WorkbookInspectionError("必须同时上传两份 Excel 文件")
-    inspected = [_inspect_file(item) for item in files]
+    inspected = [_inspect_file(item, target_month) for item in files]
     by_role = {item.role: item for item in inspected}
     if set(by_role) != {"receipt", "expense"}:
         raise WorkbookInspectionError("必须提供一份已收流水和一份费用流水")
@@ -151,33 +163,84 @@ def inspect_workbooks(files: list[WorkbookInput]) -> PreflightResult:
     )
 
 
-async def inspect_workbooks_with_ai(files: list[WorkbookInput]) -> PreflightResult:
+def _inspect_with_mapping(
+    item: WorkbookInput,
+    mapping,
+    status: str,
+    target_month: str | None = None,
+) -> InspectedFile:
+    _validate_input(item)
+    source_sheets = _xlsx_rows(item) if item.filename.lower().endswith(".xlsx") else _xls_rows(item)
+    sheets = dict(source_sheets)
+    if mapping.sheet not in sheets:
+        raise WorkbookInspectionError("确认的工作表不存在")
+    required = {"date", "receipt_amount" if mapping.role == "receipt" else "expense_amount"}
+    if not required <= set(mapping.columns):
+        raise WorkbookInspectionError("字段映射缺少日期或金额列")
+    rows = sheets[mapping.sheet]
+    if mapping.header_row >= len(rows):
+        raise WorkbookInspectionError("确认的表头行超出工作表范围")
+    if mapping.columns and max(mapping.columns.values()) >= len(rows[mapping.header_row]):
+        raise WorkbookInspectionError("确认的列号超出表头范围")
+    data_rows = rows[mapping.header_row + 1:]
+    months = sorted({
+        month
+        for row in data_rows
+        if mapping.columns["date"] < len(row)
+        and (month := _month(row[mapping.columns["date"]], target_month))
+    })
+    table = DetectedTable(
+        mapping.role,
+        item.filename,
+        mapping.sheet,
+        mapping.header_row + 1,
+        mapping.columns,
+        data_rows,
+        months,
+    )
+    return InspectedFile(item.filename, mapping.role, [table], months, status)
+
+
+async def inspect_workbook_with_ai(
+    item: WorkbookInput,
+    mapping=None,
+    *,
+    target_month: str | None = None,
+) -> InspectedFile:
+    """Inspect one workbook; an explicit mapping is always locally revalidated."""
+    if mapping is not None:
+        return _inspect_with_mapping(item, mapping, "confirmed", target_month)
+    try:
+        return _inspect_file(item, target_month)
+    except WorkbookInspectionError as deterministic_error:
+        _validate_input(item)
+        source_sheets = _xlsx_rows(item) if item.filename.lower().endswith(".xlsx") else _xls_rows(item)
+        from .ai_mapping import UtilityMappingError, ai_column_mapping
+        try:
+            suggested = await ai_column_mapping(item.filename, dict(source_sheets))
+        except UtilityMappingError as exc:
+            raise WorkbookInspectionError(str(exc)) from deterministic_error
+        return _inspect_with_mapping(item, suggested, "mapped_by_ai", target_month)
+
+
+async def inspect_workbooks_with_ai(
+    files: list[WorkbookInput],
+    mappings: list | None = None,
+    target_month: str | None = None,
+) -> PreflightResult:
     """确定性识别优先；仅对无法识别的文件调用匿名 DeepSeek 列映射。"""
     if len(files) != 2:
         raise WorkbookInspectionError("必须同时上传两份 Excel 文件")
-    inspected: list[InspectedFile] = []
-    for item in files:
-        try:
-            inspected.append(_inspect_file(item))
-            continue
-        except WorkbookInspectionError as deterministic_error:
-            _validate_input(item)
-            source_sheets = _xlsx_rows(item) if item.filename.lower().endswith(".xlsx") else _xls_rows(item)
-            from .ai_mapping import UtilityMappingError, ai_column_mapping
-            try:
-                mapping = await ai_column_mapping(item.filename, dict(source_sheets))
-            except UtilityMappingError as exc:
-                raise WorkbookInspectionError(str(exc)) from deterministic_error
-            required = {"date", "receipt_amount" if mapping.role == "receipt" else "expense_amount"}
-            if not required <= set(mapping.columns):
-                raise WorkbookInspectionError("AI 认列缺少日期或金额列")
-            rows = dict(source_sheets)[mapping.sheet]
-            if mapping.header_row >= len(rows):
-                raise WorkbookInspectionError("AI 返回的表头行超出工作表范围")
-            data_rows = rows[mapping.header_row + 1:]
-            months = sorted({month for row in data_rows if mapping.columns["date"] < len(row) and (month := _month(row[mapping.columns["date"]]))})
-            table = DetectedTable(mapping.role, item.filename, mapping.sheet, mapping.header_row + 1, mapping.columns, data_rows, months)
-            inspected.append(InspectedFile(item.filename, mapping.role, [table], months, "mapped_by_ai"))
+    if mappings is not None and len(mappings) != len(files):
+        raise WorkbookInspectionError("文件与字段映射数量不一致")
+    inspected = [
+        await inspect_workbook_with_ai(
+            item,
+            mappings[index] if mappings is not None else None,
+            target_month=target_month,
+        )
+        for index, item in enumerate(files)
+    ]
     by_role = {item.role: item for item in inspected}
     if set(by_role) != {"receipt", "expense"}:
         raise WorkbookInspectionError("必须提供一份已收流水和一份费用流水")

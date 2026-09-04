@@ -1,5 +1,6 @@
 from sqlalchemy import (
     String, Text, Date, Enum as PgEnum, DateTime, ForeignKey, func, Index, UniqueConstraint,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 from datetime import date, datetime
@@ -15,7 +16,7 @@ class CleaningRequestStatus(str, enum.Enum):
 
 
 class CleaningApprovalStatus(str, enum.Enum):
-    """审批：待通过 → 前台/管家通过（计费）/ 驳回。"""
+    """审批：待通过 → 前台/管家授权 / 驳回。"""
     pending = "pending"
     approved = "approved"
     rejected = "rejected"
@@ -27,12 +28,20 @@ class CleaningRequest(Base):
     独立于 Task —— 刻意不复用 cleaning Task，避开退房打扫链路的房态联动
     （房里还住着人，绝不能把房态改成 available/cleaning）。
     生命周期两条正交轴：保洁进度(status) 与 审批(approval_status)，可任意先后。
-    计费只认 approval_status=approved，与「打扫完了」互不阻塞。
+    status=cleaned 是实际发生事实，立即记支出；approval_status 单独控制月结授权。
     """
     __tablename__ = "cleaning_requests"
     __table_args__ = (
         # 同房同日只一条打扫申请 —— DB 级去重键，挡并发/飞书重试双插（服务层靠它幂等）。
         UniqueConstraint("room_id", "request_date", name="uq_cleaning_requests_room_date"),
+        # 用户要求保留 7 月旧账；从 8 月起数据库层禁止多个申请共用费用。
+        Index(
+            "uq_cleaning_requests_expense_id_from_202608",
+            "expense_id",
+            unique=True,
+            postgresql_where=text("request_date >= DATE '2026-08-01'"),
+            sqlite_where=text("request_date >= '2026-08-01'"),
+        ),
         Index("ix_cleaning_requests_order", "order_id"),
     )
 
@@ -51,7 +60,7 @@ class CleaningRequest(Base):
     )
     requester_open_id: Mapped[str | None] = mapped_column(String(64))
     approver_open_id: Mapped[str | None] = mapped_column(String(64))
-    # 通过后生成的保洁费用（30）。作废/复核时溯源，同房同日只应有一条计费。
+    # 打扫完成后生成的保洁费用。作废/审批/月结复核时溯源，一申请一条计费。
     expense_id: Mapped[str | None] = mapped_column(String(20), ForeignKey("expenses.expense_id"))
     notes: Mapped[str | None] = mapped_column(Text)
     cleaned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

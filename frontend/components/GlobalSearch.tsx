@@ -12,6 +12,7 @@ import { useRouter } from "next/navigation";
 import { searchApi } from "@/lib/api";
 import type { SearchResult } from "@/lib/types";
 import { orderStatusTagColor, ORDER_STATUS_LABEL } from "@/lib/status-display";
+import { requestAppNavigation } from "@/lib/app-navigation";
 
 const { Text } = Typography;
 
@@ -106,7 +107,7 @@ export default function GlobalSearch() {
                         style={{ cursor: "pointer", padding: "8px 12px" }}
                         onClick={() => {
                           handleClose();
-                          router.push("/orders");
+                          requestAppNavigation("/orders", () => router.push("/orders"));
                         }}
                       >
                         <Space
@@ -150,7 +151,7 @@ export default function GlobalSearch() {
                       style={{ cursor: "pointer", padding: "8px 12px" }}
                       onClick={() => {
                         handleClose();
-                        router.push("/guests");
+                        requestAppNavigation("/guests", () => router.push("/guests"));
                       }}
                     >
                       <Space>
@@ -183,7 +184,7 @@ export default function GlobalSearch() {
                         style={{ cursor: "pointer", padding: "8px 12px" }}
                         onClick={() => {
                           handleClose();
-                          router.push("/rooms");
+                          requestAppNavigation("/rooms", () => router.push("/rooms"));
                         }}
                       >
                         <Space>

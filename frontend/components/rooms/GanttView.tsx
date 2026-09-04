@@ -460,7 +460,7 @@ export function GanttView({
           <span
             style={{
               fontSize: 13,
-              fontWeight: 600,
+              fontWeight: 500,
               color: tokens.color.text.secondary,
               minWidth: 96,
               textAlign: "center",
@@ -789,7 +789,7 @@ export function GanttView({
                     {total > 0 ? (
                       <Tooltip title={`入住率 = 当天有订单的房间占比（含「已预订·未入住」，故会高于页头「在住」数）。当天占用 ${total - free} 间 / 共 ${total} 间，空 ${free} 间。`}>
                         <div style={{ lineHeight: 1.3, cursor: "help" }}>
-                          <div className="tabular" style={{ color: rateColor, fontWeight: 600 }}>
+                          <div className="tabular" style={{ color: rateColor, fontWeight: 500 }}>
                             {rate}%
                           </div>
                           <div className="tabular" style={{ color: tokens.color.text.tertiary }}>
@@ -851,7 +851,7 @@ export function GanttView({
                                   key: "__restore__",
                                   icon: <RollbackOutlined style={{ color: tokens.color.brand.primary }} />,
                                   label: (
-                                    <span style={{ fontWeight: 600, color: tokens.color.brand.primary }}>
+                                    <span style={{ fontWeight: 500, color: tokens.color.brand.primary }}>
                                       结束{statusMeta.label} · 恢复为
                                       {ROOM_STATUS[restoreTarget(prevStatus)]?.label ?? "空置"}
                                     </span>
@@ -945,7 +945,7 @@ export function GanttView({
                                 top: theadH,
                                 padding: "10px 10px",
                                 fontSize: 12,
-                                fontWeight: 700,
+                                fontWeight: 500,
                                 color: groupFg,
                                 lineHeight: 1.4,
                                 wordBreak: "break-all",
@@ -995,7 +995,7 @@ export function GanttView({
                                   display: "flex",
                                   alignItems: "center",
                                   gap: 4,
-                                  fontWeight: 600,
+                                  fontWeight: 500,
                                   fontSize: 13,
                                   color: tokens.color.text.primary,
                                   lineHeight: 1.3,
@@ -1334,7 +1334,7 @@ export function GanttView({
                                       <div
                                         style={{
                                           fontSize: 13,
-                                          fontWeight: 600,
+                                          fontWeight: 500,
                                           lineHeight: 1.2,
                                           overflow: "hidden",
                                           textOverflow: "ellipsis",
@@ -1385,7 +1385,7 @@ export function GanttView({
                                                 flex: "0 0 auto",
                                                 padding: "1px 5px",
                                                 fontSize: 10,
-                                                fontWeight: 700,
+                                                fontWeight: 500,
                                                 color: TRIAL_BADGE.fg,
                                                 background: TRIAL_BADGE.bg,
                                                 borderRadius: 3,
@@ -1429,7 +1429,7 @@ export function GanttView({
                                                 flex: "0 0 auto",
                                                 padding: "1px 5px",
                                                 fontSize: 10,
-                                                fontWeight: 600,
+                                                fontWeight: 500,
                                                 color: barFg,
                                                 background: tagScrim,
                                                 borderRadius: 3,
@@ -1446,7 +1446,7 @@ export function GanttView({
                                                 flex: "0 0 auto",
                                                 padding: "1px 5px",
                                                 fontSize: 10,
-                                                fontWeight: 600,
+                                                fontWeight: 500,
                                                 color: barFg,
                                                 background: tagScrim,
                                                 borderRadius: 3,
@@ -1465,7 +1465,7 @@ export function GanttView({
                                                 flex: "0 0 auto",
                                                 padding: "1px 5px",
                                                 fontSize: 10,
-                                                fontWeight: 600,
+                                                fontWeight: 500,
                                                 color: channelMeta.color,
                                                 background: channelMeta.bgColor,
                                                 borderRadius: 3,
@@ -1482,7 +1482,7 @@ export function GanttView({
                                               style={{
                                                 flex: "0 0 auto",
                                                 fontSize: 11,
-                                                fontWeight: 600,
+                                                fontWeight: 500,
                                                 color: barFg,
                                                 lineHeight: 1.4,
                                                 whiteSpace: "nowrap",
@@ -1570,7 +1570,7 @@ export function GanttView({
                                     alignItems: "center",
                                     justifyContent: "center",
                                     fontSize: 11,
-                                    fontWeight: 600,
+                                    fontWeight: 500,
                                     lineHeight: 1.2,
                                     overflow: "hidden",
                                     whiteSpace: "nowrap",
@@ -1600,7 +1600,7 @@ export function GanttView({
                                     maxWidth: "calc(100% - 6px)",
                                     padding: "1px 5px",
                                     fontSize: 9,
-                                    fontWeight: 700,
+                                    fontWeight: 500,
                                     lineHeight: 1.3,
                                     color: CLEANING_CELL.fg,
                                     background: CLEANING_CELL.bg,

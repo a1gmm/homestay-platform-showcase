@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import Link from "next/link";
 import { Layout, Menu, Avatar, Dropdown, Space, Skeleton } from "antd";
@@ -16,26 +16,45 @@ import {
   NotificationOutlined,
 } from "@ant-design/icons";
 import { ChangePasswordModal } from "@/components/auth/ChangePasswordModal";
-import { useAuthStore } from "@/lib/auth";
+import { getAuthSessionAccessToken, getPersistedAuthSessionId, useAuthStore } from "@/lib/auth";
 import { useStaffStore } from "@/lib/staff-store";
 import { useOwnerStore } from "@/lib/owner-store";
 import { useCustomerStore } from "@/lib/customer-store";
-import { authApi } from "@/lib/api";
+import { authApi, dashboardReleaseAnnouncementClient } from "@/lib/api";
 import GlobalSearch from "@/components/GlobalSearch";
 import { BottomNav } from "@/components/layout/BottomNav";
+import { PrivacyModeBanner, PrivacyModeToggle } from "@/components/layout/PrivacyModeToggle";
 import NewOrderWatcher from "@/components/orders/NewOrderWatcher";
 import { useNewOrderStore } from "@/lib/new-order-store";
 import { useIsMobile } from "@/lib/responsive";
 import { useFocusStore, shouldHideChrome } from "@/lib/focus-store";
 import { tokens } from "@/lib/design-tokens";
-import { NAV_ENTRIES, ROLE_LABEL, navForRole } from "@/lib/nav-config";
+import { ROLE_LABEL, activeNavPath, groupedDesktopNav } from "@/lib/nav-config";
+import { requestAppNavigation } from "@/lib/app-navigation";
+import { ReleaseAnnouncementGate } from "@/components/release-announcements/ReleaseAnnouncementGate";
+import { NotificationBell } from "@/components/NotificationBell";
+import {
+  clearPrivacyMode,
+  readPrivacyMode,
+  reloadPrivacyModePage,
+  writePrivacyMode,
+} from "@/lib/privacy-mode";
 
 const { Sider, Header, Content } = Layout;
+
+function currentSessionIdentity(
+  userId: string | undefined,
+  sessionId: string | null | undefined,
+  legacySessionId: string,
+): string {
+  if (sessionId) return sessionId;
+  return userId ? `legacy:${userId}:${legacySessionId}` : "anonymous";
+}
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
-  const { user, clearAuth } = useAuthStore();
+  const { user, session_id: sessionId, clearAuth } = useAuthStore();
   const clearStaff = useStaffStore((s) => s.clearAuth);
   const clearOwner = useOwnerStore((s) => s.clearAuth);
   const clearCustomer = useCustomerStore((s) => s.clearAuth);
@@ -47,6 +66,14 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const [collapsed, setCollapsed] = useState(false);
   const [checkedAuth, setCheckedAuth] = useState(false);
   const [pwModalOpen, setPwModalOpen] = useState(false);
+  const [legacySessionId] = useState(
+    () => `mounted-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`,
+  );
+  const logoutAttemptRef = useRef<{ id: number; sessionKey: string; promise: Promise<void> } | null>(null);
+  const logoutAttemptSequenceRef = useRef(0);
+  // 同步读取，避免刷新后的首帧先把本地 auth store 里的真实姓名画出来，随后才由
+  // effect 隐藏。服务端没有 sessionStorage，readPrivacyMode() 会安全返回 false。
+  const [privacyMode, setPrivacyMode] = useState(readPrivacyMode);
   const isMobile = useIsMobile();
   // 全屏专注模式：在 /rooms 桌面端隐藏侧栏+顶栏，把最大空间让给甘特图
   const focusMode = useFocusStore((s) => s.focusMode);
@@ -59,15 +86,26 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   }, [hydrateMuted]);
 
   useEffect(() => {
+    if (!user) return;
+    if (user.role === "admin") {
+      setPrivacyMode(readPrivacyMode());
+      return;
+    }
+    clearPrivacyMode();
+    setPrivacyMode(false);
+  }, [user]);
+
+  useEffect(() => {
     if (typeof window === "undefined") return;
-    const accessToken = localStorage.getItem("access_token");
+    const expectedSessionId = sessionId ?? getPersistedAuthSessionId();
+    const accessToken = getAuthSessionAccessToken(expectedSessionId);
     if (!accessToken) {
-      clearAuth();
+      clearAuth(expectedSessionId ?? undefined);
       router.push("/login");
       return;
     }
     setCheckedAuth(true);
-  }, [clearAuth, router]);
+  }, [clearAuth, router, sessionId]);
 
   // 纵深防御:保洁/管家是现场角色,有各自的 staff 端口(/staff/cleaner、/staff/keeper)。
   // 即便他们用旧 session 或书签直接打开管理后台 /dashboard,也立即弹回对应端口,
@@ -79,22 +117,68 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     }
   }, [user, router]);
 
-  const handleLogout = async () => {
-    await authApi.logout().catch(() => {});
-    // 清掉所有可能残留的认证态：admin / staff / owner / customer + react-query 缓存。
-    // 不清 queryClient.cache 时，之前 dashboard 页面拉过的 query 会留在内存（gcTime 30min），
-    // 下次再访问时可能用旧 token / 已失效的认证态触发后台 401，进而触发 axios 拦截器的硬跳转
-    // (window.location.href = '/login')，把用户在登录页的操作（如点 tab）打断。
-    clearAuth();
-    clearStaff();
-    clearOwner();
-    clearCustomer();
+  const performLogout = () => {
+    const authAtStart = useAuthStore.getState();
+    const sessionKey = currentSessionIdentity(
+      authAtStart.user?.user_id,
+      authAtStart.session_id,
+      legacySessionId,
+    );
+    const activeAttempt = logoutAttemptRef.current;
+    if (activeAttempt?.sessionKey === sessionKey) return activeAttempt.promise;
+
+    const id = ++logoutAttemptSequenceRef.current;
+    const promise = (async () => {
+      await authApi.logout().catch(() => {});
+      const currentAttempt = logoutAttemptRef.current;
+      const currentAuth = useAuthStore.getState();
+      const currentSessionKey = currentSessionIdentity(
+        currentAuth.user?.user_id,
+        currentAuth.session_id,
+        legacySessionId,
+      );
+      if (
+        currentAttempt?.id !== id
+        || currentSessionKey !== sessionKey
+      ) return;
+      const persistedSessionId = getPersistedAuthSessionId();
+      if (persistedSessionId && persistedSessionId !== sessionKey) return;
+      // 清掉所有可能残留的认证态：admin / staff / owner / customer + react-query 缓存。
+      // 不清 queryClient.cache 时，之前 dashboard 页面拉过的 query 会留在内存（gcTime 30min），
+      // 下次再访问时可能用旧 token / 已失效的认证态触发后台 401，进而触发 axios 拦截器的硬跳转
+      // (window.location.href = '/login')，把用户在登录页的操作（如点 tab）打断。
+      if (clearAuth(sessionKey) === false) return;
+      clearStaff();
+      clearOwner();
+      clearCustomer();
+      queryClient.clear();
+      // 新订单提示状态也要清：admin.* 上「登出→登录」全程是 router.push 软跳转，不刷页面，
+      // 模块级 store 会原封不动带给下一个登录的人。前台换班就是这个场景——上一班关了
+      // 提示音，下一班会静音上岗且毫不知情（系统里没有取消静音的入口）。
+      resetNewOrder();
+      router.push("/login");
+    })();
+    logoutAttemptRef.current = { id, sessionKey, promise };
+    void promise.finally(() => {
+      if (logoutAttemptRef.current?.id === id) logoutAttemptRef.current = null;
+    });
+    return promise;
+  };
+
+  const handleLogout = () => {
+    requestAppNavigation("/login", () => {
+      void performLogout();
+    });
+  };
+
+  const handlePrivacyModeToggle = () => {
+    const next = !privacyMode;
+    writePrivacyMode(next);
+    setPrivacyMode(next);
+    // 旧 query 里可能仍带真实姓名/电话；先同步清空，再整页刷新，确保下一批 GET
+    // 全部带 X-Privacy-Mode，而不是让录屏画面短暂残留真实数据。
     queryClient.clear();
-    // 新订单提示状态也要清：admin.* 上「登出→登录」全程是 router.push 软跳转，不刷页面，
-    // 模块级 store 会原封不动带给下一个登录的人。前台换班就是这个场景——上一班关了
-    // 提示音，下一班会静音上岗且毫不知情（系统里没有取消静音的入口）。
-    resetNewOrder();
-    router.push("/login");
+    reloadPrivacyModePage();
   };
 
   if (!checkedAuth || !user) {
@@ -105,20 +189,18 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     );
   }
 
-  // 角色→菜单单一来源见 lib/nav-config（桌面顺序 = navForRole，与移动底栏集合由测试守卫一致）。
-  const navItems = navForRole(user.role).map((k) => NAV_ENTRIES[k]);
-
-  const selectedKey =
-    navItems.find((item) => pathname === item.key || pathname.startsWith(item.key + "/"))?.key ||
-    "/dashboard";
+  // 角色、任务分组与二级路由归属均由 nav-config 统一提供。
+  const navGroups = groupedDesktopNav(user.role);
+  const selectedKey = activeNavPath(pathname);
+  const visibleUserName = privacyMode && user.role === "admin" ? "管理员" : user.display_name;
 
   const userMenuItems = [
     {
       key: "user-info",
       label: (
         <div style={{ padding: "4px 4px", lineHeight: 1.4, minWidth: 160 }}>
-          <div style={{ fontSize: 13, fontWeight: 600, color: tokens.color.text.primary }}>
-            {user.display_name}
+          <div style={{ fontSize: 13, fontWeight: 500, color: tokens.color.text.primary }}>
+            {visibleUserName}
           </div>
           <div style={{ fontSize: 11, color: tokens.color.text.tertiary }}>
             {ROLE_LABEL[user.role] ?? user.role}
@@ -146,6 +228,10 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         必须渲染在上面 `if (!checkedAuth || !user)` 鉴权闸之后：做成子组件而非
         在本函数体内起 hook，否则要么 hooks 顺序违规，要么未登录时起 30s 打 401 的死循环。 */}
     <NewOrderWatcher />
+    <ReleaseAnnouncementGate
+      userId={user.user_id}
+      client={dashboardReleaseAnnouncementClient}
+    />
     <Layout style={{ minHeight: "100dvh", background: tokens.color.bg.page }}>
       {/* 侧边栏桌面专属。移动端导航完全交给底部 BottomNav + 顶栏，
           避免「汉堡抽屉侧边栏」与「底部导航」两套并行入口的冗余。 */}
@@ -222,10 +308,16 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             mode="inline"
             selectedKeys={[selectedKey]}
             style={{ borderRight: 0, background: "transparent" }}
-            items={navItems.map((item) => ({
-              key: item.key,
-              icon: item.icon,
-              label: <Link href={item.key}>{item.full}</Link>,
+            items={navGroups.map((group) => ({
+              type: "group" as const,
+              key: `group-${group.key}`,
+              label: collapsed ? null : group.label,
+              children: group.entries.map((item) => ({
+                key: item.key,
+                icon: item.icon,
+                label: <Link href={item.key}>{item.full}</Link>,
+                title: item.description,
+              })),
             }))}
           />
         </nav>
@@ -327,10 +419,18 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           </div>
 
           <Space size={isMobile ? 8 : 12}>
+            {user.role === "admin" && (
+              <PrivacyModeToggle
+                active={privacyMode}
+                compact={isMobile}
+                onToggle={handlePrivacyModeToggle}
+              />
+            )}
             <div
               role="button"
               tabIndex={0}
               aria-label="使用说明"
+              data-navigation-href="/help"
               style={{
                 width: isMobile ? 40 : 32,
                 height: isMobile ? 40 : 32,
@@ -343,7 +443,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               }}
               onMouseEnter={(e) => ((e.currentTarget as HTMLDivElement).style.background = tokens.color.bg.hover)}
               onMouseLeave={(e) => ((e.currentTarget as HTMLDivElement).style.background = "transparent")}
-              onClick={() => router.push("/help")}
+              onClick={() => requestAppNavigation("/help", () => router.push("/help"))}
             >
               <QuestionCircleOutlined style={{ fontSize: 16 }} />
             </div>
@@ -378,29 +478,28 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 )}
               </div>
             )}
-            {/* 顶栏通知铃铛隐藏(2026-07-07 拍板):后端没有站内通知生产者,通知中心永远空列表,
-                告警实际走飞书。/notifications 路由保留,日后接生产者时恢复铃铛 + more 页入口即可。 */}
+            {user.role === "admin" && <NotificationBell />}
             <Dropdown menu={{ items: userMenuItems }} placement="bottomRight">
               <Space style={{ cursor: "pointer", padding: "4px 8px", borderRadius: tokens.radius.md }}>
                 <Avatar
                   style={{
                     backgroundColor: tokens.color.brand.primary,
-                    fontWeight: 600,
+                    fontWeight: 500,
                     fontSize: 13,
                   }}
                   size={30}
                 >
-                  {user.display_name?.charAt(0) ?? <UserOutlined />}
+                  {visibleUserName?.charAt(0) ?? <UserOutlined />}
                 </Avatar>
                 <div className="user-info-text" style={{ lineHeight: 1.25, textAlign: "left" }}>
                   <div
                     style={{
                       fontSize: 13,
-                      fontWeight: 600,
+                      fontWeight: 500,
                       color: tokens.color.text.primary,
                     }}
                   >
-                    {user.display_name}
+                    {visibleUserName}
                   </div>
                   <div
                     style={{
@@ -424,6 +523,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             paddingBottom: isMobile ? 88 : 0,
           }}
         >
+          <PrivacyModeBanner active={user.role === "admin" && privacyMode} />
           <div className="fade-in">{children}</div>
         </Content>
         <BottomNav />

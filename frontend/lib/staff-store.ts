@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { STAFF_TOKEN_KEY } from "./staff-api";
+import { clearAnnouncementSnooze } from "./release-announcement-snooze";
 
 export interface StaffUser {
   user_id: string;
@@ -22,12 +23,15 @@ export const useStaffStore = create<StaffState>()(
       user: null,
       access_token: null,
       setAuth: (user, access_token) => {
+        clearAnnouncementSnooze(user.user_id);
         if (typeof window !== "undefined") {
           localStorage.setItem(STAFF_TOKEN_KEY, access_token);
         }
         set({ user, access_token });
       },
       clearAuth: () => {
+        const userId = get().user?.user_id;
+        if (userId) clearAnnouncementSnooze(userId);
         if (typeof window !== "undefined") {
           localStorage.removeItem(STAFF_TOKEN_KEY);
         }

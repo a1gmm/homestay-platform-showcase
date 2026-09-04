@@ -9,6 +9,93 @@ export type ReconDiffStatus =
   | "pending" | "adopted" | "already_consistent" | "dismissed"
   | "appeal_pending" | "appeal_settled" | "acknowledged";
 
+/** Backend `PlatformScope` values. `other` is advisory only and is never confirmed. */
+export type PlatformScope = "ctrip_family" | "meituan" | "fliggy" | "douyin" | "tujia" | "all_ota";
+export type PlatformSuggestion = Exclude<PlatformScope, "all_ota"> | "other";
+export type RowTypeName = "normal" | "refund" | "compensation";
+
+/** Zero-based Excel cell coordinates, matching the backend snake_case JSON contract. */
+export interface CellRef {
+  sheet: string;
+  row: number;
+  col: number;
+}
+
+export interface MappingCoordinates {
+  sheet: string;
+  header_row: number;
+  col_order_no: number;
+  col_guest: number;
+  col_checkin: number;
+  col_checkout: number;
+  col_amount: number;
+  col_row_type: number | null;
+  row_type_map: Record<string, RowTypeName>;
+  summary_cell: CellRef | null;
+}
+
+export interface MappingQuality {
+  parsed_row_count: number;
+  order_no_parse_ratio: number;
+  amount_parse_ratio: number;
+  checkout_parse_ratio: number;
+  computed_total: number;
+  independent_total_verified: boolean;
+}
+
+export type MappingIssueCode =
+  | "MAPPING_INCOMPLETE"
+  | "MAPPING_OUT_OF_RANGE"
+  | "PARSE_QUALITY_LOW"
+  | "TOTAL_MISMATCH";
+
+export interface MappingIssue {
+  code: MappingIssueCode;
+  message: string;
+  field: string | null;
+}
+
+/** These values are already masked by the backend; the UI must render no workbook data outside them. */
+export interface MaskedPreviewRow {
+  order_no: string | null;
+  guest: string | null;
+  checkin: string | null;
+  checkout: string | null;
+  amount: number | null;
+  row_type: string | null;
+}
+
+/** Exact `WorkbookAnalysisOut` JSON returned by `/billing-recon/analyze`. */
+export interface WorkbookAnalysis {
+  file_fingerprint: string;
+  layout_signature: string;
+  coordinates: MappingCoordinates;
+  field_confidence: Record<string, number>;
+  platform_suggestion: PlatformSuggestion;
+  platform_scope: PlatformScope;
+  quality: MappingQuality;
+  warnings: string[];
+  errors: MappingIssue[];
+  preview: MaskedPreviewRow[];
+  template_hit: boolean;
+  needs_confirmation: boolean;
+}
+
+/** Frontend boundary type; the API explicitly serializes it to the multipart backend contract. */
+export interface BillingReconConfirmInput {
+  file: File;
+  file_fingerprint: string;
+  coordinates: MappingCoordinates;
+  platform_scope: PlatformScope;
+  remember_layout: boolean;
+}
+
+export interface BillingReconFieldError {
+  code: MappingIssueCode | "FILE_CHANGED" | "FILE_INVALID" | "AI_UNAVAILABLE";
+  message: string;
+  field?: string | null;
+}
+
 export interface ReconBatchStats {
   out_of_window: number;
   in_window_ratio: number;

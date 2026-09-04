@@ -26,7 +26,7 @@ export function PricingDetailModal({ open, onClose, roomId, date, detail }: Pric
           <div>
             <Text type="secondary" style={{ fontSize: 12 }}>推荐价</Text>
             <div>
-              <Text style={{ fontSize: 18, fontWeight: 600 }}>
+              <Text style={{ fontSize: 18, fontWeight: 500 }}>
                 ¥{detail.recommended_price.toFixed(2)}
               </Text>
               {detail.base_price != null && (

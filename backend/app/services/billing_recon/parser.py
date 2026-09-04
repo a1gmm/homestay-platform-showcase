@@ -53,7 +53,8 @@ class BillMapping(BaseModel):
     # 只认引擎认识的三种行类型；AI 编出别的值（如 "cancel"）直接 ValidationError，
     # 不能让它悄悄落成一个下游谁也不处理的 row_type。
     row_type_map: dict[str, RowTypeName] = {}
-    summary_total: float = Field(allow_inf_nan=False)
+    # 独立汇总金额不存在时允许为 None；不能把同一金额列的重新求和伪装成独立校验。
+    summary_total: float | None = Field(default=None, allow_inf_nan=False)
     platform_guess: str = "ctrip"
 
 
@@ -199,9 +200,11 @@ def extract_bill_rows(rows: list[list], m: BillMapping, datemode: int = 0) -> li
         no = _order_no(raw_no)
         if no is None:
             # 丢行可见性：账单里的标题/表头/合计行本来就该丢，但 AI 认错 col_order_no 时
-            # 也长这样——服务端留痕行号+原文，排查时一眼看出是"整表都在丢"还是只丢了几行。
+            # 也长这样——留安全的行号和原因即可，不能把客人/订单等单元格原文写进日志。
             if str(raw_no).strip():
-                logger.warning("billing_recon 跳过非订单行 row=%d cell=%r", i, raw_no)
+                logger.warning(
+                    "billing_recon 跳过非订单行 row=%d reason=invalid_order_identifier", i,
+                )
             continue
         row_type = "normal"
         if m.col_row_type is not None:
@@ -256,7 +259,13 @@ def _month_window(bill_month: str) -> tuple[date, date]:
 def validate_bill(rows: list[BillRow], m: BillMapping) -> tuple[list[str], dict]:
     """两类硬闸；软闸只落 stats 不拦。errors 非空 = 整批拒收。"""
     errors: list[str] = []
-    stats: dict = {"out_of_window": 0, "in_window_ratio": 1.0, "unparsed_amounts": 0}
+    stats: dict = {
+        "out_of_window": 0,
+        "in_window_ratio": 1.0,
+        "unparsed_amounts": 0,
+        "computed_total": 0.0,
+        "independent_total_verified": False,
+    }
     if not rows:
         return ["没有解析出任何明细行（AI 可能认错了表/列，请检查文件后重传）"], stats
 
@@ -264,22 +273,26 @@ def validate_bill(rows: list[BillRow], m: BillMapping) -> tuple[list[str], dict]
     stats["unparsed_amounts"] = unparsed
 
     total = sum((r.amount for r in rows), Decimal("0")).quantize(_D01)
-    try:
-        expect = Decimal(str(m.summary_total)).quantize(_D01)
-    except InvalidOperation:
-        expect = None
-    # nan/inf 进得了 Decimal 但比不出大小（NaN > 0.01 恒为 False），会让总额闸静默放行——
-    # 必须显式判死。BillMapping 的 allow_inf_nan=False 是第一道，这里是绕过模型时的第二道。
-    if expect is None or not expect.is_finite():
-        # AI 吐出的汇总值不是个能比大小的数：整批拒收，不是 500，也不是静默通过
-        errors.append(f"账单汇总金额不是合法数字：{m.summary_total!r}，整批拒收")
-        expect = None
-    if expect is not None and abs(total - expect) > _D01:
-        msg = f"逐行加总 {total} ≠ 账单汇总 {expect}，整批拒收"
-        if unparsed:
-            # 总额对不上时最常见的根因就是有金额格没解析成功（AI 认错列/表里混了文字）
-            msg += f"；另有 {unparsed} 个金额单元格无法解析"
-        errors.append(msg)
+    stats["computed_total"] = float(total)
+    if m.summary_total is not None:
+        try:
+            expect = Decimal(str(m.summary_total)).quantize(_D01)
+        except InvalidOperation:
+            expect = None
+        # nan/inf 进得了 Decimal 但比不出大小（NaN > 0.01 恒为 False），会让总额闸静默放行——
+        # 必须显式判死。BillMapping 的 allow_inf_nan=False 是第一道，这里是绕过模型时的第二道。
+        if expect is None or not expect.is_finite():
+            # AI 吐出的汇总值不是个能比大小的数：整批拒收，不是 500，也不是静默通过
+            errors.append(f"账单汇总金额不是合法数字：{m.summary_total!r}，整批拒收")
+            expect = None
+        elif abs(total - expect) > _D01:
+            msg = f"逐行加总 {total} ≠ 账单汇总 {expect}，整批拒收"
+            if unparsed:
+                # 总额对不上时最常见的根因就是有金额格没解析成功（AI 认错列/表里混了文字）
+                msg += f"；另有 {unparsed} 个金额单元格无法解析"
+            errors.append(msg)
+        else:
+            stats["independent_total_verified"] = True
 
     try:
         bill_month = infer_bill_month(rows)

@@ -1,6 +1,18 @@
 from celery import Celery
 from celery.schedules import crontab
+from datetime import timedelta
+import os
+import sys
 from app.core.config import settings
+
+
+_video_cleanup_interval_seconds = 60
+if settings.APP_ENV == "test" and os.environ.get(
+    "MINIAPP_CONTENT_PROCESS_TEST_CLEANUP_INTERVAL_SECONDS"
+):
+    _video_cleanup_interval_seconds = int(
+        os.environ["MINIAPP_CONTENT_PROCESS_TEST_CLEANUP_INTERVAL_SECONDS"]
+    )
 
 celery_app = Celery(
     "homestay",
@@ -13,6 +25,8 @@ celery_app = Celery(
         "app.workers.housekeeping_tasks",
         "app.workers.lock_tasks",
         "app.workers.sync_watchdog",
+        "app.workers.miniapp_content_publish",
+        "app.workers.monthly_close_tasks",
     ],
 )
 
@@ -24,6 +38,18 @@ celery_app.conf.update(
     enable_utc=False,  # Interpret crontab in Asia/Shanghai timezone
     task_soft_time_limit=300,  # 5 min soft limit per task
     task_time_limit=600,  # 10 min hard limit
+    broker_transport_options={"visibility_timeout": 3600},
+    task_routes={
+        "app.workers.miniapp_content_publish.*": {"queue": "content_publish"},
+    },
+    task_annotations={
+        "app.workers.miniapp_content_publish.run_miniapp_publish": {
+            "acks_late": True,
+            "reject_on_worker_lost": True,
+            "soft_time_limit": 840,
+            "time_limit": 900,
+        }
+    },
     beat_schedule={
         "daily-overdue-check": {
             "task": "app.workers.reminder_tasks.check_overdue_tasks",
@@ -43,11 +69,22 @@ celery_app.conf.update(
             "task": "app.workers.reminder_tasks.run_daily_pricing",
             "schedule": crontab(hour=6, minute=0),  # 6:00 AM Shanghai
         },
+        "daily-monthly-close-alerts": {
+            "task": "app.workers.monthly_close_tasks.scan_monthly_close_alerts",
+            "schedule": crontab(hour=9, minute=15),
+        },
         # 每天 8:00 Shanghai 发「今日续住房打扫申请」卡到打扫申请群，保洁自助拿门锁码
         # （PRD 打扫申请群-飞书自助）。daily_guard 防 beat 重启刷屏。
         "daily-cleaning-request-card": {
             "task": "app.workers.reminder_tasks.send_cleaning_request_card",
             "schedule": crontab(hour=8, minute=0),
+        },
+        # 每天 2:30 Shanghai 用共享对账真相源补齐“已发生但漏记”的退房服务费。
+        # 同时扫当前月与上月，覆盖月末最后一天；当前月强制 cutoff=北京当天，绝不记未来预计。
+        # 放在每月 1 日 3:00 结算快照之前，确保结算读取的是完整支出账本。
+        "daily-repair-incurred-service-fees": {
+            "task": "app.workers.monthly_close_tasks.repair_incurred_service_fees",
+            "schedule": crontab(hour=2, minute=30),
         },
         # 每月 1 号凌晨 3 点自动生成上月业主结算
         "monthly-owner-settlements": {
@@ -120,5 +157,62 @@ celery_app.conf.update(
             "task": "app.workers.housekeeping_tasks.selfheal_single_room_prices",
             "schedule": crontab(hour=3, minute=30),
         },
+        "miniapp-content-outbox-dispatch": {
+            "task": "app.workers.miniapp_content_publish.dispatch_miniapp_publish_outbox",
+            "schedule": timedelta(seconds=10),
+        },
+        "miniapp-content-publish-watchdog": {
+            "task": "app.workers.miniapp_content_publish.watchdog_miniapp_publish_jobs",
+            "schedule": timedelta(minutes=1),
+        },
+        "miniapp-content-video-quarantine-cleanup": {
+            "task": "app.workers.miniapp_content_publish.reconcile_video_quarantine_cleanup",
+            "schedule": timedelta(seconds=_video_cleanup_interval_seconds),
+        },
+        "miniapp-content-image-pair-cleanup": {
+            "task": "app.workers.miniapp_content_publish.reconcile_image_pair_cleanup",
+            "schedule": timedelta(seconds=_video_cleanup_interval_seconds),
+        },
+        "miniapp-content-private-media-cleanup": {
+            "task": "app.workers.miniapp_content_publish.reconcile_private_media_cleanup",
+            "schedule": timedelta(seconds=_video_cleanup_interval_seconds),
+        },
     },
 )
+
+
+# Immutable schedule snapshot used by the independent-Beat migration gate. Build
+# a fresh dict when enabling so tests and runtime code cannot mutate the snapshot.
+FULL_BEAT_SCHEDULE = dict(celery_app.conf.beat_schedule)
+
+
+def build_beat_schedule(*, enabled: bool) -> dict:
+    return dict(FULL_BEAT_SCHEDULE) if enabled else {}
+
+
+celery_app.conf.beat_schedule = build_beat_schedule(
+    enabled=settings.CELERY_BEAT_SCHEDULE_ENABLED
+)
+
+
+def _fail_if_embedded_beat_has_no_schedule(argv: list[str]) -> None:
+    starts_worker = "worker" in argv
+    embeds_beat = any(
+        arg in {"-B", "--beat"}
+        or arg.startswith("--beat=")
+        or (
+            arg.startswith("-")
+            and not arg.startswith("--")
+            and "B" in arg[1:]
+            and set(arg[1:]).issubset({"B", "D", "E"})
+        )
+        for arg in argv
+    )
+    if starts_worker and embeds_beat and not celery_app.conf.beat_schedule:
+        raise RuntimeError(
+            "embedded Celery Beat cannot start with an empty schedule; "
+            "set CELERY_BEAT_SCHEDULE_ENABLED=true or remove -B/--beat"
+        )
+
+
+_fail_if_embedded_beat_has_no_schedule(sys.argv)

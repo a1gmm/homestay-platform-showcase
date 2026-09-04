@@ -8,11 +8,77 @@
 from __future__ import annotations
 
 import secrets
+from dataclasses import dataclass
 from datetime import date, timedelta
+from decimal import Decimal
 
 from sqlalchemy import select
 
-from app.models.order import Order
+from app.models.order import Order, OrderStatus
+
+
+@dataclass(frozen=True)
+class GroupMemberSummary:
+    """只依赖已加载订单成员的整段展示口径。"""
+
+    anchor: Order
+    last: Order
+    active_segments: list[Order]
+    status: OrderStatus
+    total_amount: Decimal
+    channels: list[str]
+    nights: int
+
+
+def summarize_group_members(segments: list[Order]) -> GroupMemberSummary:
+    """计算列表、详情和导出共用的整段字段，不触发数据库查询。"""
+    if not segments:
+        raise ValueError("续住组至少需要一张订单")
+
+    active_segments = [
+        segment for segment in segments if segment.order_status != OrderStatus.cancelled
+    ]
+    display_segments = active_segments or segments
+    anchor = min(display_segments, key=lambda item: (item.check_in_date, item.order_id))
+    last = max(display_segments, key=lambda item: (item.check_out_date, item.order_id))
+
+    if any(
+        segment.order_status == OrderStatus.pending_checkout
+        for segment in active_segments
+    ):
+        status = OrderStatus.pending_checkout
+    elif any(segment.order_status == OrderStatus.checked_in for segment in active_segments):
+        status = OrderStatus.checked_in
+    else:
+        status = anchor.order_status
+
+    channels: list[str] = []
+    for segment in active_segments:
+        value = (
+            segment.channel.value
+            if hasattr(segment.channel, "value")
+            else segment.channel
+        )
+        if value not in channels:
+            channels.append(value)
+
+    calendar_nights = {
+        segment.check_in_date + timedelta(days=offset)
+        for segment in active_segments
+        for offset in range((segment.check_out_date - segment.check_in_date).days)
+    }
+    return GroupMemberSummary(
+        anchor=anchor,
+        last=last,
+        active_segments=active_segments,
+        status=status,
+        total_amount=sum(
+            ((segment.actual_price or Decimal("0")) for segment in active_segments),
+            Decimal("0"),
+        ),
+        channels=channels,
+        nights=len(calendar_nights) or (last.check_out_date - anchor.check_in_date).days,
+    )
 
 
 class SettledStayMutationError(RuntimeError):
@@ -509,50 +575,27 @@ async def group_view(db, order: Order) -> dict:
     付费夜会渲染成「2 晚 ¥300」，而 last_order_id 指向取消段还会让前台在 UI 上
     退不了房。摘除取消成员本身是 selfheal_stay_groups 的活，此处不重复实现。
     """
-    from decimal import Decimal
-
     from sqlalchemy import select as _select
 
-    from app.models.order import DepositStatus, OrderStatus
+    from app.models.order import DepositStatus
     from app.models.order_room import OrderRoom
 
     gid = order.stay_group_id
     aggregate = await managed_group(db, gid)
     if not gid:
         segments = [order]
-        anchor = order
-        last_id = order.order_id
-        final_co = order.check_out_date
     else:
         segments = await get_group_orders(db, gid)
-        # alive_only=True：已取消段不参与日期与末段判定。
-        # 若整组都取消了，三个函数都返回 None，回退到 order 自身 —— 页面还能开。
-        anchor = await group_anchor(db, gid, alive_only=True) or order
-        last_id = await group_last_order_id(db, gid, alive_only=True) or order.order_id
-        final_co = await group_final_checkout_date(db, gid, alive_only=True) or order.check_out_date
+
+    summary = summarize_group_members(segments)
+    anchor = summary.anchor
+    final_co = summary.last.check_out_date
 
     seg_ids = [s.order_id for s in segments]
-    alive = [s for s in segments if s.order_status != OrderStatus.cancelled]
+    alive = summary.active_segments
 
     from app.core.free_room import free_room_kind
     free_kind = free_room_kind(alive if gid else segments)
-
-    # 整段状态（口径 1）
-    if any(s.order_status == OrderStatus.pending_checkout for s in alive):
-        status = OrderStatus.pending_checkout
-    elif any(s.order_status == OrderStatus.checked_in for s in alive):
-        status = OrderStatus.checked_in
-    else:
-        status = anchor.order_status
-
-    total = sum((s.actual_price or Decimal("0")) for s in alive) or Decimal("0")
-
-    # 渠道只取活段：取消的携程段会把整段误标成「携程」，误导对账归因。
-    channels: list[str] = []
-    for s in alive:
-        c = s.channel.value if hasattr(s.channel, "value") else s.channel
-        if c not in channels:
-            channels.append(c)
 
     # 押金：与收退押金的操作口径同一个函数，不留两份（口径 2）
     dep_seg = await deposit_holder(db, order)
@@ -575,21 +618,17 @@ async def group_view(db, order: Order) -> dict:
         "stay_group_id": gid,
         "group_kind": aggregate.kind.value if aggregate is not None else None,
         "anchor_order_id": anchor.order_id,
-        "last_order_id": last_id,
+        "last_order_id": summary.last.order_id,
         "check_in_date": anchor.check_in_date,
         "check_out_date": final_co,
         # 晚数 = 活段覆盖的**去重日历夜**（区间并集），不用「首段入住→末段退房」的
         # 跨度，也不逐段求和：跨度会把取消的中间段那一夜算进来而金额没算（「3 晚
         # ¥300」）；求和在多房组里会把时间并行的段重复计数（程鹏 1608+1609：
         # 1+2+2=5 晚，实住 3 个日历夜）。并集两个坑都避开。
-        "nights": len({
-            s.check_in_date + timedelta(days=i)
-            for s in alive
-            for i in range((s.check_out_date - s.check_in_date).days)
-        }) or (final_co - anchor.check_in_date).days,
-        "total_amount": total,
-        "group_status": status,
-        "channels": channels,
+        "nights": summary.nights,
+        "total_amount": summary.total_amount,
+        "group_status": summary.status,
+        "channels": summary.channels,
         "rooms": rooms,
         "free_room_kind": free_kind,
         "deposit": dep_seg.deposit or Decimal("0"),

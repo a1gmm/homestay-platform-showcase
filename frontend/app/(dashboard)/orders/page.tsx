@@ -1,8 +1,12 @@
 "use client";
 
 import React, { useState } from "react";
+import dynamic from "next/dynamic";
 import { ordersApi, exportApi, batchApi } from "@/lib/api";
-import { filtersFromSearchParams } from "@/lib/orders-url-filters";
+import {
+  filtersToSearchParams,
+  tryFiltersFromSearchParams,
+} from "@/lib/orders-url-filters";
 import { downloadBlob, todayCNString } from "@/lib/utils";
 import {
   Table,
@@ -14,6 +18,7 @@ import {
   Dropdown,
   Tag,
   Modal,
+  Alert,
 } from "antd";
 import { extractErrorMessage } from "@/lib/api-errors";
 import {
@@ -30,11 +35,7 @@ import type { ColumnsType } from "antd/es/table";
 import type { StayGroup, StaySegment } from "@/lib/types";
 import { useOrders, type OrderFilters } from "@/hooks/useOrders";
 import { useRouter, useSearchParams } from "next/navigation";
-import {
-  OrderDetailModal,
-  PaymentModal,
-  OrderFilters as OrderFiltersBar,
-} from "@/components/orders";
+import OrderFiltersBar from "@/components/orders/OrderFilters";
 import { useIsMobile } from "@/lib/responsive";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { StatusBadge } from "@/components/ui/StatusBadge";
@@ -49,6 +50,10 @@ import {
   hasStaySettlementLabels,
   StayGroupSettlementLabels,
 } from "@/components/orders/StayGroupSettlementLabels";
+import { ReturnToMonthlyClose } from "@/components/monthly-close/ReturnToMonthlyClose";
+
+const OrderDetailModal = dynamic(() => import("@/components/orders/OrderDetailModal").then((module) => module.default), { ssr: false });
+const PaymentModal = dynamic(() => import("@/components/orders/PaymentModal").then((module) => module.default), { ssr: false });
 
 // 段行的展示助手。**不含任何口径**：合计/晚数/状态/房间序列全由后端 group_view 算好，
 // 这里只是从段里挑出「代表那张单」用来显示客人名、以及数一数有几段。
@@ -69,8 +74,12 @@ export default function OrdersPage() {
   const [detailOpen, setDetailOpen] = useState(false);
   const [paymentOpen, setPaymentOpen] = useState(false);
   // 支持 URL 参数预填筛选(从 dashboard KPI 卡片、新订单提示 toast 或外部链接跳转过来时)。
-  const [filters, setFilters] = useState<OrderFilters>(() =>
-    filtersFromSearchParams(new URLSearchParams(searchParams.toString())),
+  const initialUrlFilters = tryFiltersFromSearchParams(
+    new URLSearchParams(searchParams.toString()),
+  );
+  const [filters, setFilters] = useState<OrderFilters>(() => initialUrlFilters.filters);
+  const [urlFilterError, setUrlFilterError] = useState<string | null>(
+    () => initialUrlFilters.error ?? null,
   );
   // 从概览卡片跳来时携带的可读筛选标签(如「今日待入住」),用于顶部提示条。
   // 存 state 而非每次读 URL——清除后要能立即消失。
@@ -81,10 +90,8 @@ export default function OrdersPage() {
     filters.status ||
       filters.channel ||
       filters.keyword ||
-      filters.check_in_from ||
-      filters.check_in_to ||
-      filters.check_out_from ||
-      filters.check_out_to
+      filters.date_from ||
+      filters.date_to
   );
 
   const clearFilters = () => {
@@ -105,7 +112,9 @@ export default function OrdersPage() {
   React.useEffect(() => {
     if (!spString) return; // 无参数(如点「清空筛选」后)不覆盖用户当前的手动筛选
     const sp = new URLSearchParams(spString);
-    setFilters(filtersFromSearchParams(sp));
+    const parsed = tryFiltersFromSearchParams(sp);
+    setFilters(parsed.filters);
+    setUrlFilterError(parsed.error ?? null);
     // 必须重置页码：换了筛选还停在第 2 页 → 空表格 → 又是「点了等于没点」。
     setPage(1);
     // 必须同步横幅标签：只换 filters 不换 label，横幅会继续宣称「今日待入住」，
@@ -249,7 +258,7 @@ export default function OrdersPage() {
               alignItems: "center",
               justifyContent: "center",
               fontSize: 12,
-              fontWeight: 600,
+              fontWeight: 500,
               flex: "0 0 28px",
             }}
           >
@@ -341,11 +350,11 @@ export default function OrdersPage() {
       render: (_v, r: StayGroup) => {
         // 整段房费：后端算好（已排除取消段）。前端不累加。
         return segPricePending(r) ? (
-          <span style={{ color: tokens.color.text.tertiary, fontWeight: 600, fontSize: 13 }}>
+          <span style={{ color: tokens.color.text.tertiary, fontWeight: 500, fontSize: 13 }}>
             同步中…
           </span>
         ) : Number(r.total_amount ?? 0) > 0 ? (
-          <span className="tabular" style={{ fontWeight: 600, color: tokens.color.text.primary }}>
+          <span className="tabular" style={{ fontWeight: 500, color: tokens.color.text.primary }}>
             ¥{Number(r.total_amount).toLocaleString()}
           </span>
         ) : (
@@ -363,7 +372,7 @@ export default function OrdersPage() {
         // 且必然漏掉「取消段不计入」。续住组显示「—」，要看得进详情页展开分段明细。
         const s = segCount(r) === 1 ? formatExpectedRevenue(anchorSeg(r)?.expected_revenue) : null;
         return s ? (
-          <span className="tabular" style={{ fontWeight: 600, color: tokens.color.brand.primary }}>{s}</span>
+          <span className="tabular" style={{ fontWeight: 500, color: tokens.color.brand.primary }}>{s}</span>
         ) : (
           <span style={{ color: tokens.color.text.tertiary }}>—</span>
         );
@@ -434,6 +443,7 @@ export default function OrdersPage() {
         subtitle={`共 ${total} 笔订单`}
         extra={
           <Space>
+            <ReturnToMonthlyClose />
             <Button icon={<DownloadOutlined />} loading={exporting} onClick={handleExport}>
               导出
             </Button>
@@ -450,15 +460,30 @@ export default function OrdersPage() {
 
       <OrderFiltersBar
         filters={filters}
-        onFiltersChange={(f) => {
+        onFiltersChange={(nextFilters) => {
           // 用户手动动了筛选,预设标签(今日待入住等)不再准确,撤掉
-          setFilters(f);
+          setFilters(nextFilters);
           setFilterLabel(null);
+          setUrlFilterError(null);
+          setPage(1);
           // 筛选变更 → 勾选残留失效，清空（防批量静默漏单）
           setSelectedRowKeys([]);
+          const nextQuery = filtersToSearchParams(nextFilters).toString();
+          router.replace(nextQuery ? `/orders?${nextQuery}` : "/orders");
         }}
         onRefresh={() => refetch()}
       />
+
+      {urlFilterError && (
+        <Alert
+          type="warning"
+          showIcon
+          message="日期筛选链接无效"
+          description={`${urlFilterError}。已取消这组筛选，请重新选择日期。`}
+          closable
+          onClose={() => setUrlFilterError(null)}
+        />
+      )}
 
       {hasActiveFilter && (
         <div
@@ -577,7 +602,7 @@ export default function OrdersPage() {
                       gap: 8,
                     }}
                   >
-                    <div style={{ fontWeight: 600, fontSize: 14 }}>
+                    <div style={{ fontWeight: 500, fontSize: 14 }}>
                       {seg?.guest_name}
                       <span style={{ display: "inline-flex", marginLeft: 6, verticalAlign: "middle" }}>
                         {!hasStaySettlementLabels(order) ? (
@@ -631,13 +656,13 @@ export default function OrdersPage() {
                     <span>{order.nights}晚</span>
                   </div>
                   {segPricePending(order) ? (
-                    <div style={{ color: tokens.color.text.tertiary, fontSize: 13, fontWeight: 600 }}>
+                    <div style={{ color: tokens.color.text.tertiary, fontSize: 13, fontWeight: 500 }}>
                       价格同步中…
                     </div>
                   ) : Number(order.total_amount ?? 0) > 0 ? (
                     <div
                       className="tabular"
-                      style={{ color: tokens.color.text.primary, fontSize: 15, fontWeight: 600 }}
+                      style={{ color: tokens.color.text.primary, fontSize: 15, fontWeight: 500 }}
                     >
                       ¥{Number(order.total_amount).toLocaleString()}
                     </div>
@@ -646,7 +671,7 @@ export default function OrdersPage() {
                   {segCount(order) === 1 && formatExpectedRevenue(seg?.expected_revenue) && (
                     <div
                       className="tabular"
-                      style={{ color: tokens.color.brand.primary, fontSize: 13, fontWeight: 600, marginTop: 2 }}
+                      style={{ color: tokens.color.brand.primary, fontSize: 13, fontWeight: 500, marginTop: 2 }}
                     >
                       净房费 {formatExpectedRevenue(seg?.expected_revenue)}
                     </div>
@@ -657,7 +682,7 @@ export default function OrdersPage() {
           })}
           {!hasData && !isLoading && (
             <Card
-              bordered={false}
+              variant="borderless"
               style={{
                 borderRadius: tokens.radius.lg,
                 border: `1px solid ${tokens.color.bg.border}`,

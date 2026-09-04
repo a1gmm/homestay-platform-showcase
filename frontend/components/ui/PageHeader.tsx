@@ -26,6 +26,7 @@ export function PageHeader({
   const isMobile = useIsMobile();
   return (
     <div
+      className="page-header"
       style={{
         display: "flex",
         flexDirection: "column",
@@ -51,6 +52,7 @@ export function PageHeader({
         桌面端：标题与操作左右分列。根因详见 lib/text.ts。
       */}
       <div
+        className="page-header-main"
         style={{
           display: "flex",
           flexDirection: isMobile ? "column" : "row",
@@ -59,14 +61,15 @@ export function PageHeader({
           gap: isMobile ? 12 : 16,
         }}
       >
-        <div style={{ flex: 1, minWidth: 0 }}>
+        <div className="page-header-copy" style={{ flex: 1, minWidth: 0 }}>
           <h1
+            className="serif"
             style={{
               margin: 0,
               fontSize: tokens.font.size["2xl"],
-              fontWeight: tokens.font.weight.semibold,
+              fontWeight: tokens.font.weight.medium,
               color: tokens.color.text.primary,
-              letterSpacing: "-.01em",
+              letterSpacing: 0,
               lineHeight: 1.2,
               // 标题永不竖排：内容超宽时正常换行，而不是被压成一列单字
               overflowWrap: "anywhere",
@@ -90,6 +93,7 @@ export function PageHeader({
         </div>
         {extra && (
           <div
+            className="page-header-extra"
             style={{
               display: "flex",
               alignItems: "center",

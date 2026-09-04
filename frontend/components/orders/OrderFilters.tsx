@@ -6,6 +6,7 @@ import { SearchOutlined, ReloadOutlined, FilterOutlined } from "@ant-design/icon
 import type { OrderFilters as OrderFiltersType } from "@/hooks/useOrders";
 import { tokens } from "@/lib/design-tokens";
 import { ACTIVE_CHANNELS } from "@/lib/channels";
+import dayjs from "dayjs";
 
 const { RangePicker } = DatePicker;
 
@@ -28,12 +29,22 @@ const STATUS_TABS = [
 
 interface Props {
   filters: OrderFiltersType;
-  onFiltersChange: React.Dispatch<React.SetStateAction<OrderFiltersType>>;
+  onFiltersChange: (filters: OrderFiltersType) => void;
   onRefresh: () => void;
 }
 
 export default function OrderFilters({ filters, onFiltersChange, onRefresh }: Props) {
   const currentStatus = filters.status ?? "";
+  const [selectedDateBasis, setSelectedDateBasis] = React.useState<
+    "final_checkout" | "first_checkin"
+  >(filters.date_basis ?? "final_checkout");
+
+  React.useEffect(() => {
+    if (filters.date_basis) setSelectedDateBasis(filters.date_basis);
+  }, [filters.date_basis]);
+
+  const update = (patch: Partial<OrderFiltersType>) =>
+    onFiltersChange({ ...filters, ...patch });
 
   return (
     <div
@@ -52,15 +63,13 @@ export default function OrderFilters({ filters, onFiltersChange, onRefresh }: Pr
           value={currentStatus}
           size="middle"
           options={STATUS_TABS}
-          onChange={(v) =>
-            onFiltersChange((f) => ({ ...f, status: (v as string) || undefined }))
-          }
+          onChange={(v) => update({ status: (v as string) || undefined })}
         />
       </div>
       <div
         style={{
           display: "grid",
-          gridTemplateColumns: "minmax(220px, 1fr) 180px 240px auto",
+          gridTemplateColumns: "minmax(220px, 1fr) 180px minmax(360px, 1.35fr) auto",
           gap: 10,
           alignItems: "center",
         }}
@@ -70,33 +79,58 @@ export default function OrderFilters({ filters, onFiltersChange, onRefresh }: Pr
           prefix={<SearchOutlined style={{ color: tokens.color.text.tertiary }} />}
           allowClear
           value={filters.keyword ?? ""}
-          onChange={(e) => onFiltersChange((f) => ({ ...f, keyword: e.target.value || undefined }))}
+          onChange={(e) => update({ keyword: e.target.value || undefined })}
         />
         <Select
           placeholder="渠道"
           allowClear
           value={filters.channel as any}
-          onChange={(v) => onFiltersChange((f) => ({ ...f, channel: v }))}
+          onChange={(v) => update({ channel: v })}
           options={CHANNEL_OPTIONS}
           suffixIcon={<FilterOutlined />}
         />
-        <RangePicker
-          placeholder={["入住起", "入住止"]}
-          onChange={(dates) => {
-            if (dates) {
-              onFiltersChange((f) => ({
-                ...f,
-                check_in_from: dates[0]?.format("YYYY-MM-DD"),
-                check_in_to: dates[1]?.format("YYYY-MM-DD"),
-              }));
-            } else {
-              onFiltersChange((f) => {
-                const { check_in_from, check_in_to, ...rest } = f;
-                return rest;
-              });
-            }
-          }}
-        />
+        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+          <div style={{ display: "flex", gap: 6 }}>
+            <Select
+              aria-label="日期口径"
+              value={selectedDateBasis}
+              style={{ width: 116 }}
+              options={[
+                { value: "final_checkout", label: "最终退房日" },
+                { value: "first_checkin", label: "首次入住日" },
+              ]}
+              onChange={(value) => {
+                setSelectedDateBasis(value);
+                if (filters.date_from && filters.date_to) update({ date_basis: value });
+              }}
+            />
+            <RangePicker
+              aria-label="订单日期范围"
+              value={
+                filters.date_from && filters.date_to
+                  ? [dayjs(filters.date_from), dayjs(filters.date_to)]
+                  : null
+              }
+              placeholder={["开始日期", "结束日期"]}
+              onChange={(dates) => {
+                if (dates?.[0] && dates?.[1]) {
+                  update({
+                    date_basis: selectedDateBasis,
+                    date_from: dates[0].format("YYYY-MM-DD"),
+                    date_to: dates[1].format("YYYY-MM-DD"),
+                  });
+                } else {
+                  const { date_basis, date_from, date_to, ...rest } = filters;
+                  onFiltersChange(rest);
+                }
+              }}
+              style={{ flex: 1, minWidth: 0 }}
+            />
+          </div>
+          <span style={{ color: tokens.color.text.tertiary, fontSize: 11, lineHeight: 1.3 }}>
+            默认按整段订单的最终退房日筛选
+          </span>
+        </div>
         <Button icon={<ReloadOutlined />} onClick={onRefresh} />
       </div>
       <style jsx>{`

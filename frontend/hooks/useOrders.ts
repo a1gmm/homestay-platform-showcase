@@ -8,10 +8,9 @@ export interface OrderFilters {
   status?: string; // 单值或逗号分隔多值(今日清单卡跳转用)，后端 in_ 过滤
   channel?: string;
   keyword?: string;
-  check_in_from?: string;
-  check_in_to?: string;
-  check_out_from?: string;
-  check_out_to?: string;
+  date_basis?: "final_checkout" | "first_checkin";
+  date_from?: string;
+  date_to?: string;
 }
 
 export function useOrders(filters: OrderFilters = {}, page: number = 1) {
@@ -80,4 +79,3 @@ export function useOrders(filters: OrderFilters = {}, page: number = 1) {
     createPaymentMutation,
   };
 }
-

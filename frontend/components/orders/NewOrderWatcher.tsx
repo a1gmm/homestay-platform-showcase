@@ -16,6 +16,7 @@ import {
   MERGE_THRESHOLD,
 } from "@/lib/new-order-alert";
 import type { OrderListItem } from "@/lib/types";
+import { requestAppNavigation } from "@/lib/app-navigation";
 
 /**
  * 新订单到店提示。挂在 (dashboard)/layout 鉴权闸之内。
@@ -148,8 +149,10 @@ export default function NewOrderWatcher() {
     const fresh = diffNewOrders(seen, items);
     if (fresh.length === 0) return;
 
-    const goto = (orderId?: string) =>
-      router.push(orderId ? `/orders?keyword=${encodeURIComponent(orderId)}` : "/orders");
+    const goto = (orderId?: string) => {
+      const href = orderId ? `/orders?keyword=${encodeURIComponent(orderId)}` : "/orders";
+      requestAppNavigation(href, () => router.push(href));
+    };
 
     // ⚠️ stopPropagation 必须有：按钮在 toast 内部，不拦冒泡就会连带触发
     // 整条 toast 的 onClick——前台想关个声音，人被弹到订单页去了。

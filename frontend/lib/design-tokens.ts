@@ -19,7 +19,7 @@ export const tokens = {
     radius: { none: 0, sm: 8, md: 12, lg: 16, pill: 999 },
     font: {
       serif:
-        "'Cormorant Garamond', var(--font-noto-serif-sc), 'Noto Serif SC', 'Songti SC', 'Source Han Serif SC', 'STSong', serif",
+        "var(--font-inter), 'Inter', 'PingFang SC', 'HarmonyOS Sans SC', -apple-system, BlinkMacSystemFont, sans-serif",
       sans:
         "var(--font-inter), 'Inter', 'PingFang SC', 'HarmonyOS Sans SC', -apple-system, BlinkMacSystemFont, sans-serif",
     },
@@ -98,7 +98,7 @@ export const tokens = {
     family:
       "var(--font-inter), 'Inter', 'PingFang SC', 'HarmonyOS Sans SC', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif",
     serif:
-      "'Cormorant Garamond', var(--font-noto-serif-sc), 'Noto Serif SC', 'Songti SC', 'Source Han Serif SC', 'STSong', serif",
+      "var(--font-inter), 'Inter', 'PingFang SC', 'HarmonyOS Sans SC', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif",
     mono: "'JetBrains Mono', 'SF Mono', Menlo, Consolas, monospace",
     size: {
       xs: 12,

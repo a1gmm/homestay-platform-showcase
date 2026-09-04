@@ -101,7 +101,7 @@ export function CheckinDepositModal({ open, order, onClose }: Props) {
       {/* 单间入住：多房单先选入住哪间，或选「全部入住」。这是「OTA 团单没法分房办入住」老坑的根治入口。 */}
       {isMultiRoom && (
         <div style={{ marginTop: 12, marginBottom: 4 }}>
-          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 6 }}>
+          <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 6 }}>
             这是多房间订单（{waitingRooms.length} 间待入住），请选择要入住的房间
           </div>
           <Select

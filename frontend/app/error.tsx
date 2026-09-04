@@ -1,6 +1,7 @@
 "use client";
 
 import { Button, Result } from "antd";
+import { useRouter } from "next/navigation";
 
 export default function GlobalError({
   error,
@@ -9,6 +10,8 @@ export default function GlobalError({
   error: Error & { digest?: string };
   reset: () => void;
 }) {
+  const router = useRouter();
+
   return (
     <div
       style={{
@@ -27,7 +30,7 @@ export default function GlobalError({
           <Button key="retry" type="primary" onClick={reset}>
             重试
           </Button>,
-          <Button key="home" onClick={() => (window.location.href = "/")}>
+          <Button key="home" onClick={() => router.push("/")}>
             返回首页
           </Button>,
         ]}

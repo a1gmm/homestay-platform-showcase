@@ -2,3 +2,17 @@ title = "Homestay showcase secret-scanning policy"
 
 [extend]
 useDefault = true
+
+[[allowlists]]
+description = "Ignore exact storage-read chunk-size expressions mistaken for API keys"
+condition = "AND"
+targetRules = ["generic-api-key"]
+regexTarget = "line"
+paths = [
+  '''(^|/)backend/app/services/miniapp_content/publisher\.py$''',
+  '''(^|/)backend/app/workers/miniapp_content_publish\.py$''',
+]
+regexes = [
+  '''^\s*return b""\.join\(storage\.read\(object_key, chunk_size=1024 \* 1024\)\)\s*$''',
+  '''^\s*for chunk in storage\.read\(media\.object_key, chunk_size=1024 \* 1024\):\s*$''',
+]

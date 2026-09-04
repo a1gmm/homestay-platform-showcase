@@ -68,6 +68,7 @@ class NotificationOut(BaseModel):
     user_id: Optional[str]
     title: str
     content: Optional[str]
+    action_url: Optional[str]
     type: str
     is_read: bool
     created_at: datetime

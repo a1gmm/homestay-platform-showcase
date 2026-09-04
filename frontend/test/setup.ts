@@ -41,24 +41,61 @@ if (typeof window !== "undefined") {
       }
     } as unknown as typeof IntersectionObserver;
   }
-  // 本环境 jsdom 的 localStorage 不完整（clear 缺失），补一个 Map 实现，
-  // 供 focus-store 持久化等测试使用。
-  if (!window.localStorage || typeof window.localStorage.clear !== "function") {
-    const store = new Map<string, string>();
-    const mock: Storage = {
-      get length() {
-        return store.size;
+  // Node 26 exposes an experimental global localStorage that can shadow
+  // jsdom's storage. Install one deterministic Storage-prototype-backed object
+  // so bare/window access and quota/CAS prototype spies all share the same data.
+  const storagePrototype = window.Storage.prototype;
+  const stores = new WeakMap<Storage, Map<string, string>>();
+  const storeFor = (storage: Storage) => {
+    let store = stores.get(storage);
+    if (!store) {
+      store = new Map<string, string>();
+      stores.set(storage, store);
+    }
+    return store;
+  };
+  Object.defineProperties(storagePrototype, {
+    length: {
+      configurable: true,
+      get: function length(this: Storage) { return storeFor(this).size; },
+    },
+    clear: {
+      configurable: true,
+      writable: true,
+      value: function clear(this: Storage) { storeFor(this).clear(); },
+    },
+    getItem: {
+      configurable: true,
+      writable: true,
+      value: function getItem(this: Storage, key: string) {
+        const store = storeFor(this);
+        return store.has(String(key)) ? store.get(String(key))! : null;
       },
-      clear: () => store.clear(),
-      getItem: (k: string) => (store.has(k) ? store.get(k)! : null),
-      key: (i: number) => Array.from(store.keys())[i] ?? null,
-      removeItem: (k: string) => {
-        store.delete(k);
+    },
+    key: {
+      configurable: true,
+      writable: true,
+      value: function key(this: Storage, index: number) {
+        return Array.from(storeFor(this).keys())[index] ?? null;
       },
-      setItem: (k: string, v: string) => {
-        store.set(k, String(v));
+    },
+    removeItem: {
+      configurable: true,
+      writable: true,
+      value: function removeItem(this: Storage, key: string) {
+        storeFor(this).delete(String(key));
       },
-    };
-    Object.defineProperty(window, "localStorage", { value: mock, configurable: true });
-  }
+    },
+    setItem: {
+      configurable: true,
+      writable: true,
+      value: function setItem(this: Storage, key: string, value: string) {
+        storeFor(this).set(String(key), String(value));
+      },
+    },
+  });
+  const storage = Object.create(storagePrototype) as Storage;
+  Object.defineProperty(window, "localStorage", { value: storage, configurable: true });
+  Object.defineProperty(globalThis, "localStorage", { value: storage, configurable: true });
+  Object.defineProperty(globalThis, "Storage", { value: window.Storage, configurable: true });
 }

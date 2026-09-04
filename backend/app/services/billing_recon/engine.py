@@ -18,7 +18,9 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
+import re
 import time
 from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
@@ -30,11 +32,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.datetime_helpers import today_cn
 from app.models.expense import Expense, ExpenseCategory
-from app.models.order import Channel, Order, OrderStatus
+from app.models.order import Channel, OTA_PLATFORM_CHANNELS, Order, OrderStatus
 from app.models.order_room import OrderRoom
 from app.models.recon import ReconBatch, ReconDiff, ReconDiffClass, ReconDiffStatus
 from app.models.settlement import OwnerSettlement, SettlementStatus
 from app.services.audit import log_action_tx
+from app.services.billing_recon.analysis import PlatformScope
 from app.services.billing_recon.parser import (
     BillMapping, BillOrder, aggregate_orders, extract_bill_rows, infer_bill_month,
     load_workbook_rows, validate_bill, _D01, _month_window,
@@ -42,11 +45,48 @@ from app.services.billing_recon.parser import (
 
 logger = logging.getLogger(__name__)
 
-CTRIP_FAMILY = (Channel.ctrip, Channel.qunar, Channel.tongcheng, Channel.zhixing)
+CTRIP_FAMILY = frozenset({Channel.ctrip, Channel.qunar, Channel.tongcheng, Channel.zhixing})
+_SCOPE_CHANNELS: dict[PlatformScope, frozenset[Channel]] = {
+    PlatformScope.ctrip_family: CTRIP_FAMILY,
+    PlatformScope.meituan: frozenset({Channel.meituan_hotel, Channel.meituan_homestay, Channel.meituan}),
+    PlatformScope.fliggy: frozenset({Channel.fliggy}),
+    PlatformScope.douyin: frozenset({Channel.douyin}),
+    PlatformScope.tujia: frozenset({Channel.tujia}),
+    PlatformScope.all_ota: OTA_PLATFORM_CHANNELS,
+}
+_SCOPE_DISPLAY: dict[PlatformScope, str] = {
+    PlatformScope.ctrip_family: "携程系",
+    PlatformScope.meituan: "美团",
+    PlatformScope.fliggy: "飞猪",
+    PlatformScope.douyin: "抖音",
+    PlatformScope.tujia: "途家",
+    PlatformScope.all_ota: "全部 OTA",
+}
 _ACTIVE = (OrderStatus.completed, OrderStatus.checked_in, OrderStatus.pending_checkout)
 # 前缀匹配的最短公共长度：携程单号 14~16 位，短于这个长度的"前缀命中"基本是巧合
 # （8 位单号撞上另一张单的前 8 位就把钱记到别人头上），一律不认，落到客人名兜底。
 _MIN_PREFIX_LEN = 12
+_LAYOUT_SIGNATURE_RE = re.compile(r"^[0-9a-f]{64}$")
+
+
+def channels_for_scope(scope: PlatformScope) -> frozenset[Channel]:
+    """Return exactly the OTA channels eligible for an administrator-confirmed scope."""
+    return _SCOPE_CHANNELS[scope]
+
+
+def source_namespace(scope: PlatformScope, layout_signature: str) -> str:
+    """Return the stable batch/reupload/appeal namespace for a confirmed source."""
+    if scope is not PlatformScope.all_ota:
+        return scope.value
+    signature = layout_signature.strip() if isinstance(layout_signature, str) else ""
+    if not _LAYOUT_SIGNATURE_RE.fullmatch(signature):
+        raise ValueError("a canonical layout signature is required for all-OTA source namespaces")
+    return f"layout:{signature[:12]}"
+
+
+def _platform_display(scope: PlatformScope) -> str:
+    """Use a bounded display label rather than a workbook- or AI-provided string."""
+    return _SCOPE_DISPLAY[scope]
 
 
 @dataclass
@@ -74,6 +114,7 @@ async def fetch_candidates(
     bill_month: str,
     date_lo: date | None = None,
     date_hi: date | None = None,
+    channels: frozenset[Channel] = OTA_PLATFORM_CHANNELS,
 ) -> list[Order]:
     """候选窗口 = [min(月首-7天, date_lo), max(月末+7天, date_hi)]。
 
@@ -81,6 +122,8 @@ async def fetch_candidates(
     账单里跨月补结行的离店日可能落在默认 ±7 天窗口外，也要能命中候选，故只做单向扩展
     （传入值比默认窗口更宽才生效，更窄不收缩）。
     """
+    if not channels.issubset(OTA_PLATFORM_CHANNELS):
+        raise ValueError("candidate channels must be OTA platform channels")
     lo, hi = _month_window(bill_month)
     if date_lo is not None and date_lo < lo:
         lo = date_lo
@@ -88,7 +131,7 @@ async def fetch_candidates(
         hi = date_hi
     rows = await db.execute(
         select(Order).where(
-            Order.channel.in_(CTRIP_FAMILY),
+            Order.channel.in_(channels),
             Order.order_status.in_(_ACTIVE),
             Order.is_deleted == False,  # noqa: E712
             Order.check_out_date >= lo,
@@ -374,7 +417,16 @@ async def _reject(
         batch.error = "; ".join(errors)
         batch.mapping = {**(batch.mapping or {}), **mapping_dump}
     await db.commit()
-    logger.info("billing_recon 拒收 platform=%s errors=%s", platform, errors)
+    safe_stats = stats or {}
+    logger.info(
+        "billing_recon 拒收 platform=%s error_code=PARSE_REJECTED error_count=%d "
+        "unparsed_amount_count=%d out_of_window_count=%d independent_total_verified=%s",
+        platform,
+        len(errors),
+        int(safe_stats.get("unparsed_amounts", 0) or 0),
+        int(safe_stats.get("out_of_window", 0) or 0),
+        bool(safe_stats.get("independent_total_verified", False)),
+    )
     return batch
 
 
@@ -383,14 +435,33 @@ async def run_recon(
     *,
     data: bytes,
     filename: str,
-    platform: str = "ctrip",
     user_id: str | None,
     mapping: BillMapping | None = None,
+    platform_scope: PlatformScope = PlatformScope.ctrip_family,
+    source_key: str | None = None,
+    layout_signature: str | None = None,
     upload_fingerprint: str | None = None,
     processing_batch: ReconBatch | None = None,
+    enable_ai_enrichment: bool = True,
+    # Legacy upload compatibility until Task 6 closes /upload.  Confirm callers pass
+    # platform_scope/source_key/layout_signature and never use this alias.
+    platform: str | None = None,
 ) -> ReconBatch:
     started = time.monotonic()
-    logger.info("billing_recon 入口 filename=%s size=%d", filename, len(data))
+    lowered_filename = (filename or "").lower()
+    extension = ".xlsx" if lowered_filename.endswith(".xlsx") else ".xls" if lowered_filename.endswith(".xls") else "unknown"
+    safe_layout = layout_signature if isinstance(layout_signature, str) and _LAYOUT_SIGNATURE_RE.fullmatch(layout_signature) else "none"
+    logger.info(
+        "billing_recon 入口 extension=%s size=%d sha256=%s layout=%s",
+        extension, len(data), hashlib.sha256(data).hexdigest(), safe_layout,
+    )
+
+    expected_source_key = source_namespace(platform_scope, layout_signature or "")
+    if source_key is None:
+        source_key = platform or expected_source_key
+    elif source_key != expected_source_key:
+        raise ValueError("source key does not match the confirmed platform scope")
+    platform_display = _platform_display(platform_scope)
 
     # 1. 解析工作簿；mapping 缺省走 AI 认列（engine 内 lazy import，测试可 monkeypatch
     #    app.services.billing_recon.ai_mapping.ai_column_mapping，绝不 patch engine 属性）
@@ -402,20 +473,15 @@ async def run_recon(
 
         mapping = await ai_column_mapping(sheets)
 
-    # 2. 平台门闸：当前只收携程系账单
-    if mapping.platform_guess != "ctrip":
-        errors = [f"当前仅支持携程系账单（AI 识别为 {mapping.platform_guess}）。其他平台账单等第二技能。"]
-        raise BillRejected(await _reject(db, platform, user_id, mapping, errors, batch=processing_batch), errors)
-
     if mapping.sheet not in sheets:
         errors = [f"AI 认出的 sheet「{mapping.sheet}」不存在"]
-        raise BillRejected(await _reject(db, platform, user_id, mapping, errors, batch=processing_batch), errors)
+        raise BillRejected(await _reject(db, source_key, user_id, mapping, errors, batch=processing_batch), errors)
 
     # 3. 抽取 + 校验闸
     rows = extract_bill_rows(sheets[mapping.sheet], mapping, datemode)
     errors, stats = validate_bill(rows, mapping)
     if errors:
-        raise BillRejected(await _reject(db, platform, user_id, mapping, errors, stats, processing_batch), errors)
+        raise BillRejected(await _reject(db, source_key, user_id, mapping, errors, stats, processing_batch), errors)
 
     bill_month = infer_bill_month(rows)
     bill_orders = aggregate_orders(rows)
@@ -429,12 +495,15 @@ async def run_recon(
     if db.get_bind().dialect.name == "postgresql":
         await db.execute(
             text("SELECT pg_advisory_xact_lock(hashtext(:k))"),
-            {"k": f"billrecon:{platform}:{bill_month}"},
+            {"k": f"billrecon:{source_key}:{bill_month}"},
         )
 
     # 4. 重传作废：同 (platform, bill_month) 旧批次的 pending → dismissed
     old_batch_ids = (await db.execute(
-        select(ReconBatch.batch_id).where(ReconBatch.platform == platform, ReconBatch.bill_month == bill_month)
+        select(ReconBatch.batch_id).where(
+            ReconBatch.platform == source_key,
+            ReconBatch.bill_month == bill_month,
+        )
     )).scalars().all()
 
     if old_batch_ids:
@@ -454,7 +523,7 @@ async def run_recon(
         # 一旦误核销，那笔真欠款就永远没人追了）。
         settled = (await db.execute(
             select(ReconDiff).join(ReconBatch, ReconDiff.batch_id == ReconBatch.batch_id).where(
-                ReconBatch.platform == platform,
+                ReconBatch.platform == source_key,
                 ReconDiff.status == ReconDiffStatus.appeal_pending,
                 ReconDiff.platform_order_id.in_(bill_nos),
             )
@@ -474,11 +543,15 @@ async def run_recon(
         }
     settled_nos = {d.platform_order_id for d in settled}
 
-    candidates = await fetch_candidates(db, bill_month, date_lo=date_lo, date_hi=date_hi)
+    candidates = await fetch_candidates(
+        db, bill_month, date_lo=date_lo, date_hi=date_hi,
+        channels=channels_for_scope(platform_scope),
+    )
     matches = match_orders(bill_orders, candidates)
     drafts = classify(bill_orders, matches, candidates, bill_month)
 
     summary = build_summary(drafts)
+    durable_total = mapping.summary_total if mapping.summary_total is not None else stats["computed_total"]
     result_mapping = {
         **(processing_batch.mapping if processing_batch else {}),
         **mapping.model_dump(),
@@ -487,19 +560,22 @@ async def run_recon(
         "ai_status": "pending",
         "ai_diagnosis": {"theme_codes": [], "per_row": {}},
         "ai_claim_failed": False,
+        "platform_scope": platform_scope.value,
+        "platform_display": platform_display,
+        "layout_signature": layout_signature,
     }
     if processing_batch is None:
         batch = ReconBatch(
-            batch_id=_new_id(f"RB-{bill_month}"), platform=platform, bill_month=bill_month,
-            summary_total=Decimal(str(mapping.summary_total)).quantize(_D01),
+            batch_id=_new_id(f"RB-{bill_month}"), platform=source_key, bill_month=bill_month,
+            summary_total=Decimal(str(durable_total)).quantize(_D01),
             row_count=len(rows), status="parsed", mapping=result_mapping, created_by=user_id,
         )
         db.add(batch)
     else:
         batch = processing_batch
-        batch.platform = platform
+        batch.platform = source_key
         batch.bill_month = bill_month
-        batch.summary_total = Decimal(str(mapping.summary_total)).quantize(_D01)
+        batch.summary_total = Decimal(str(durable_total)).quantize(_D01)
         batch.row_count = len(rows)
         batch.status = "parsed"
         batch.error = None
@@ -531,7 +607,10 @@ async def run_recon(
     existing_appeal_pids: set[str] = set()
     if appeal_pids:
         existing_appeal_pids = set((await db.execute(
-            select(ReconDiff.platform_order_id).where(
+            select(ReconDiff.platform_order_id).join(
+                ReconBatch, ReconDiff.batch_id == ReconBatch.batch_id,
+            ).where(
+                ReconBatch.platform == source_key,
                 ReconDiff.platform_order_id.in_(appeal_pids),
                 ReconDiff.status.in_([ReconDiffStatus.appeal_pending, ReconDiffStatus.appeal_settled]),
             )
@@ -586,7 +665,8 @@ async def run_recon(
 
     await db.commit()
     await db.refresh(batch)
-    await _enrich_batch_with_ai(db, batch=batch, drafts=drafts, candidates=candidates, summary=summary)
+    if enable_ai_enrichment:
+        await _enrich_batch_with_ai(db, batch=batch, drafts=drafts, candidates=candidates, summary=summary)
     await db.refresh(batch)
     elapsed = time.monotonic() - started
     logger.info(

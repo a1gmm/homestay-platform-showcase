@@ -140,7 +140,7 @@ export function StatCard({
               fontSize: tokens.font.size["3xl"],
               fontWeight: tokens.font.weight.semibold,
               color: tokens.color.text.primary,
-              letterSpacing: "-.01em",
+              letterSpacing: 0,
               lineHeight: 1.15,
             }}
           >

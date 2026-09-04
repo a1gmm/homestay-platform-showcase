@@ -9,22 +9,34 @@ import {
   TeamOutlined,
   FileSearchOutlined,
   RightOutlined,
+  SyncOutlined,
 } from "@ant-design/icons";
 import { useAuthStore } from "@/lib/auth";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { useIsMobile } from "@/lib/responsive";
 import { tokens } from "@/lib/design-tokens";
 
-// 系统管理里真正能操作的三件事。描述全部用「进去能干嘛」的大白话，
+// 系统管理里真正能操作的事项。描述全部用「进去能干嘛」的大白话，
 // 不再罗列后端接口 —— 使用者只需要知道点进去做什么。
-const ENTRIES: {
+type SystemEntry = {
   href: string;
   title: string;
   desc: string;
   icon: React.ReactNode;
   accent: string;
   accentSoft: string;
-}[] = [
+};
+
+const BYPMS_SYSTEM_ENTRY: SystemEntry = {
+  href: "/system/bypms-sync",
+  title: "宝寓同步",
+  desc: "查看同步是否正常、每一步处理结果和待处理差异，必要时请求完整重试。",
+  icon: <SyncOutlined />,
+  accent: tokens.color.status.warn,
+  accentSoft: tokens.color.status.warnSoft,
+};
+
+const ENTRIES: SystemEntry[] = [
   {
     href: "/system/share-config",
     title: "业主与分成",
@@ -49,6 +61,7 @@ const ENTRIES: {
     accent: tokens.color.status.info,
     accentSoft: tokens.color.status.infoSoft,
   },
+  BYPMS_SYSTEM_ENTRY,
 ];
 
 function EntryCard({

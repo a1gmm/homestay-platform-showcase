@@ -114,7 +114,7 @@ export function CheckoutModal({ open, order, onClose }: Props) {
       {/* 单间退房：多房单必须先选退哪间，或选「全部退房」整单一起退。这是「点一间连带整单退」老坑的根治入口。 */}
       {isMultiRoom && (
         <div style={{ marginBottom: 12 }}>
-          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 6 }}>
+          <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 6 }}>
             这是多房间订单（{activeRooms.length} 间在住），请选择要退的房间
           </div>
           <Select

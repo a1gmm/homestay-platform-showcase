@@ -20,7 +20,13 @@ class Owner(Base):
     # 总账号支持：指向上级「总账号」的 owner_id。None = 普通/独立业主或总账号本身。
     # 总账号 = 本身无房间、但有子业主（parent_owner_id 指向它）的 owner。单层嵌套。
     parent_owner_id: Mapped[str | None] = mapped_column(
-        String(20), ForeignKey("owners.owner_id", ondelete="SET NULL"), nullable=True
+        String(20),
+        ForeignKey(
+            "owners.owner_id",
+            name="fk_owners_parent_owner_id",
+            ondelete="SET NULL",
+        ),
+        nullable=True,
     )
     # 「镜像视图」账号：登录后按 view_as_owner_id 指向的业主取数（看那位业主的真房间/入住/
     # 日历），而不是自己的房间。None = 普通账号看自己。用于演示号（如 zhanshi 看某真业主）。

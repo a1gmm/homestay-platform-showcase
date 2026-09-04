@@ -6,7 +6,7 @@ import { tokens } from "@/lib/design-tokens";
 import { todayCNString } from "@/lib/utils";
 import { CHANNEL_LABEL } from "@/lib/channels";
 import { getCompletionBarStyle, COMPLETION_LEGEND, stayGroupBarStatus } from "@/lib/gantt-bar-style";
-import { groupByRoomType, UNGROUPED_LABEL } from "@/lib/room-types";
+import { groupByRoomType } from "@/lib/room-types";
 import { ORDER_STATUS_LABEL, orderStatusHex } from "@/lib/status-display";
 import type { CalendarRoom, CalendarDay } from "@/lib/types";
 import { CLEANING_STATUSES, CLEANING_CELL, TRIAL_BADGE } from "./constants";
@@ -145,10 +145,12 @@ export interface MobileGanttProps {
   onCellClick?: (roomId: string, date: string) => void;
   /** room_id → 有效房态。传入则在今天那格给保洁房(待清扫/清扫中)铺「保洁中」色。 */
   effectiveStatusById?: Record<string, string>;
+  onPreviousMonth?: () => void;
+  onNextMonth?: () => void;
+  onToday?: () => void;
 }
 
-const ROOM_COL_WIDTH = 96;
-const GROUP_COL_WIDTH = 104;
+const ROOM_COL_WIDTH = 92;
 
 export function MobileGantt({
   rooms,
@@ -158,6 +160,9 @@ export function MobileGantt({
   onOrderClick,
   onCellClick,
   effectiveStatusById,
+  onPreviousMonth,
+  onNextMonth,
+  onToday,
 }: MobileGanttProps) {
   const todayStr = todayCNString();
   const daysInMonth = new Date(calMonth.year, calMonth.month, 0).getDate();
@@ -176,42 +181,16 @@ export function MobileGantt({
     return m;
   }, [rooms, days]);
 
-  // 按房型分组（传入 roomTypeById 时）。分组数 >1 才显示房型列。
+  // 按房型分组以维持房间排序；窄屏不再额外占一整列，房型写进房间副标题。
   const groups = useMemo(
     () => groupByRoomType(rooms, (r) => roomTypeById?.[r.room_id]),
     [rooms, roomTypeById],
   );
-  const hasGroupCol = groups.length > 1;
-  const fixedLeftWidth = hasGroupCol ? GROUP_COL_WIDTH + ROOM_COL_WIDTH : ROOM_COL_WIDTH;
-
-  // sticky 分组标题高度跟随 thead 实测（长分组下滚仍能看到房型名）
-  const theadRef = useRef<HTMLTableSectionElement>(null);
-  const [theadH, setTheadH] = useState(64);
-  useEffect(() => {
-    const el = theadRef.current;
-    if (!el) return;
-    const update = () => setTheadH(el.getBoundingClientRect().height || 64);
-    update();
-    const ro = new ResizeObserver(update);
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, []);
+  const fixedLeftWidth = ROOM_COL_WIDTH;
 
   // 密度切换：宽=3天(信息全)，窄=7天(看全局)。列宽随之变化。
-  const [density, setDensity] = useState<"wide" | "narrow">("wide");
-  const cellWidth = density === "wide" ? 92 : 48;
-
-  // 横屏提示（#85 屏幕适配回归）：竖屏时提醒可横屏看更多天，横屏自动隐藏。
-  // SSR 安全：初值 false，首帧不渲染提示，挂载后按真实朝向更新，避免水合不一致。
-  const [isPortrait, setIsPortrait] = useState(false);
-  useEffect(() => {
-    if (typeof window === "undefined" || !window.matchMedia) return;
-    const mq = window.matchMedia("(orientation: portrait)");
-    const update = () => setIsPortrait(mq.matches);
-    update();
-    mq.addEventListener?.("change", update);
-    return () => mq.removeEventListener?.("change", update);
-  }, []);
+  const [density, setDensity] = useState<"wide" | "narrow">("narrow");
+  const cellWidth = density === "wide" ? 80 : 40;
 
   // 横向滚到「今天」那一列（首次挂载 + 点「回今天」按钮复用）
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -224,14 +203,15 @@ export function MobileGantt({
       return;
     }
     const todayIdx = td - 1;
-    const visibleGridW = container.clientWidth - fixedLeftWidth;
-    const target = todayIdx * cellWidth - visibleGridW / 2 + cellWidth / 2;
+    // 今天应成为日期区第一列。不要用首帧 clientWidth 居中：移动布局尚未收窄时该值会虚高，
+    // 例如 8 月 29 日会被算到 10 号附近，布局稳定后也不会自动纠正。
+    const target = todayIdx * cellWidth;
     container.scrollTo({ left: Math.max(0, target), behavior: smooth ? "smooth" : "auto" });
   }
   useEffect(() => {
     scrollToToday(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [calMonth.year, calMonth.month, todayStr, cellWidth]);
+  }, [calMonth.year, calMonth.month, todayStr, cellWidth, rooms.length, fixedLeftWidth]);
 
   // 每日剩余可订房量 = 总房 - 不可订房。
   // 不可订 = 当天有订单(非取消) 或 被锁房/维修/屏蔽。取消订单不占房。
@@ -274,6 +254,8 @@ export function MobileGantt({
   if (rooms.length === 0) {
     return (
       <div
+        className="mobile-gantt-shell"
+        aria-label="移动房态甘特图"
         style={{
           padding: 40,
           textAlign: "center",
@@ -291,6 +273,8 @@ export function MobileGantt({
   return (
     <>
       <div
+        className="mobile-gantt-shell"
+        aria-label="移动房态甘特图"
         style={{
           background: tokens.anyu.color.shell,
           border: `0.5px solid ${tokens.anyu.color.linen}`,
@@ -298,55 +282,72 @@ export function MobileGantt({
           padding: 10,
         }}
       >
-        {/* 工具栏：密度切换 + 回今天 */}
+        {/* 工具栏：月份导航 + 密度切换 + 回今天 */}
         <div
+          className="mobile-gantt-toolbar"
           style={{
             display: "flex",
             alignItems: "center",
             justifyContent: "space-between",
+            flexWrap: "wrap",
             gap: 8,
             padding: "2px 2px 10px",
           }}
         >
-          <Segmented
-            size="small"
-            value={density}
-            onChange={(v) => setDensity(v as "wide" | "narrow")}
-            options={[
-              { label: "3 天", value: "wide" },
-              { label: "7 天", value: "narrow" },
-            ]}
-          />
-          <button
-            type="button"
-            onClick={() => scrollToToday(true)}
-            style={{
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 4,
-              height: 28,
-              padding: "0 12px",
-              borderRadius: 999,
-              border: `0.5px solid ${tokens.anyu.color.linen}`,
-              background: tokens.anyu.color.shell,
-              color: tokens.anyu.color.ink.default,
-              fontSize: 12,
-              cursor: "pointer",
-            }}
-          >
-            回今天
-          </button>
+          <div className="mobile-gantt-month-nav" style={{ display: "flex", alignItems: "center", gap: 4 }}>
+            <button className="mobile-gantt-icon-button" type="button" aria-label="上个月" onClick={onPreviousMonth}>‹</button>
+            <span aria-label="房态月份" style={{ minWidth: 92, textAlign: "center", fontSize: 17, fontWeight: 500, color: tokens.anyu.color.ink.default }}>
+              {calMonth.year}年{calMonth.month}月
+            </span>
+            <button className="mobile-gantt-icon-button" type="button" aria-label="下个月" onClick={onNextMonth}>›</button>
+          </div>
+          <div className="mobile-gantt-view-actions" style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <Segmented
+              className="mobile-gantt-density"
+              value={density}
+              onChange={(v) => setDensity(v as "wide" | "narrow")}
+              options={[
+                { label: "3 天", value: "wide" },
+                { label: "7 天", value: "narrow" },
+              ]}
+            />
+            <button
+              type="button"
+              onClick={() => {
+                onToday?.();
+                requestAnimationFrame(() => scrollToToday(true));
+              }}
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 4,
+                minHeight: 44,
+                padding: "0 14px",
+                borderRadius: 999,
+                border: `0.5px solid ${tokens.anyu.color.linen}`,
+                background: tokens.anyu.color.shell,
+                color: tokens.anyu.color.ink.default,
+                fontSize: 12,
+                cursor: "pointer",
+              }}
+            >
+              回今天
+            </button>
+          </div>
         </div>
 
         {/* 图例：颜色=完成度（办没办入住）+ 维修/锁房 */}
         <div
+          className="mobile-gantt-legend"
           style={{
             display: "flex",
-            flexWrap: "wrap",
-            gap: 12,
+            flexWrap: "nowrap",
+            gap: 10,
             padding: "4px 4px 10px",
             fontSize: 10,
             color: tokens.anyu.color.driftwood,
+            overflowX: "auto",
+            whiteSpace: "nowrap",
           }}
         >
           {COMPLETION_LEGEND.map((l) => (
@@ -356,28 +357,8 @@ export function MobileGantt({
           <LegendDot color="#9CA3AF" label="锁房/屏蔽" />
         </div>
 
-        {/* 横屏提示（#85）：竖屏时提示横屏可看更多天；横屏自动隐藏。 */}
-        {isPortrait && (
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 6,
-              margin: "0 2px 8px",
-              padding: "6px 10px",
-              borderRadius: tokens.anyu.radius.sm,
-              background: tokens.anyu.color.sand,
-              color: tokens.anyu.color.stone,
-              fontSize: 11,
-              lineHeight: 1.4,
-            }}
-          >
-            <span aria-hidden style={{ fontSize: 13 }}>⟳</span>
-            <span>横屏可看更多天</span>
-          </div>
-        )}
-
         <div
+          className="mobile-gantt-table-scroll"
           ref={scrollRef}
           style={{
             overflow: "auto",
@@ -397,35 +378,13 @@ export function MobileGantt({
               width: "max-content",
             }}
           >
-            <thead ref={theadRef} style={{ position: "sticky", top: 0, zIndex: 4 }}>
+            <thead style={{ position: "sticky", top: 0, zIndex: 4 }}>
               <tr>
-                {hasGroupCol && (
-                  <th
-                    rowSpan={2}
-                    style={{
-                      position: "sticky",
-                      left: 0,
-                      background: tokens.anyu.color.shell,
-                      padding: "8px 10px",
-                      textAlign: "left",
-                      fontWeight: 500,
-                      color: tokens.anyu.color.driftwood,
-                      width: GROUP_COL_WIDTH,
-                      minWidth: GROUP_COL_WIDTH,
-                      fontSize: 10,
-                      zIndex: 5,
-                      borderBottom: `0.5px solid ${tokens.anyu.color.linen}`,
-                      borderRight: `0.5px solid ${tokens.anyu.color.linen}`,
-                    }}
-                  >
-                    房型
-                  </th>
-                )}
                 <th
                   rowSpan={2}
                   style={{
                     position: "sticky",
-                    left: hasGroupCol ? GROUP_COL_WIDTH : 0,
+                    left: 0,
                     background: tokens.anyu.color.shell,
                     padding: "8px 10px",
                     textAlign: "left",
@@ -433,6 +392,8 @@ export function MobileGantt({
                     color: tokens.anyu.color.driftwood,
                     width: ROOM_COL_WIDTH,
                     minWidth: ROOM_COL_WIDTH,
+                    maxWidth: ROOM_COL_WIDTH,
+                    boxSizing: "border-box",
                     fontSize: 10,
                     zIndex: 5,
                     borderBottom: `0.5px solid ${tokens.anyu.color.linen}`,
@@ -458,7 +419,7 @@ export function MobileGantt({
                         width: cellWidth,
                         minWidth: cellWidth,
                         textAlign: "center",
-                        fontWeight: isToday ? 700 : 500,
+                        fontWeight: 500,
                         color: isToday ? "#EF4444" : isWeekend ? "#EF4444" : tokens.anyu.color.stone,
                         fontSize: 11,
                         background: isToday ? "#FEF2F2" : tokens.anyu.color.shell,
@@ -469,7 +430,7 @@ export function MobileGantt({
                       </div>
                       <div style={{ fontSize: 9, fontWeight: 400, lineHeight: 1.2, marginTop: 2 }}>
                         {holiday ? (
-                          <span style={{ color: "#D46B08", fontWeight: 600 }}>{holiday}</span>
+                          <span style={{ color: "#D46B08", fontWeight: 500 }}>{holiday}</span>
                         ) : isToday ? (
                           "今天"
                         ) : (
@@ -509,13 +470,9 @@ export function MobileGantt({
             </thead>
             <tbody>
               {groups.map((g) => {
-                const isUngrouped = g.groupName === UNGROUPED_LABEL;
-                const displayName = isUngrouped ? "其他房型" : g.groupName;
-                const groupBg = isUngrouped ? "#FFF7E6" : "#F5F1EA";
-                const groupFg = isUngrouped ? "#D46B08" : tokens.anyu.color.ink.default;
                 return (
                   <React.Fragment key={g.groupName}>
-                    {g.items.map((room, roomIdxInGroup) => (
+                    {g.items.map((room) => (
                 <tr
                   key={room.room_id}
                   style={{
@@ -523,47 +480,16 @@ export function MobileGantt({
                     containIntrinsicSize: `${rowHeight}px 1200px` as unknown as string,
                   }}
                 >
-                  {hasGroupCol && roomIdxInGroup === 0 && (
-                    <td
-                      rowSpan={g.items.length}
-                      style={{
-                        position: "sticky",
-                        left: 0,
-                        background: groupBg,
-                        padding: 0,
-                        width: GROUP_COL_WIDTH,
-                        minWidth: GROUP_COL_WIDTH,
-                        verticalAlign: "top",
-                        zIndex: 2,
-                        borderBottom: `0.5px solid ${tokens.anyu.color.linen}`,
-                        borderRight: `1.5px solid ${isUngrouped ? "#FFD591" : tokens.anyu.color.linen}`,
-                      }}
-                    >
-                      <div
-                        style={{
-                          position: "sticky",
-                          top: theadH,
-                          padding: "10px 8px",
-                          fontSize: 11,
-                          fontWeight: 700,
-                          color: groupFg,
-                          lineHeight: 1.4,
-                          wordBreak: "break-all",
-                        }}
-                      >
-                        <div>{isUngrouped ? "⚠ " : ""}{displayName}</div>
-                        <div style={{ fontSize: 10, fontWeight: 400, marginTop: 4, color: tokens.anyu.color.driftwood }}>
-                          {g.items.length} 间
-                        </div>
-                      </div>
-                    </td>
-                  )}
                   <td
                     style={{
                       position: "sticky",
-                      left: hasGroupCol ? GROUP_COL_WIDTH : 0,
+                      left: 0,
                       background: tokens.anyu.color.shell,
                       padding: "0 8px",
+                      width: ROOM_COL_WIDTH,
+                      minWidth: ROOM_COL_WIDTH,
+                      maxWidth: ROOM_COL_WIDTH,
+                      boxSizing: "border-box",
                       height: rowHeight,
                       zIndex: 2,
                       borderBottom: `0.5px solid ${tokens.anyu.color.linen}`,
@@ -581,7 +507,7 @@ export function MobileGantt({
                     >
                       <div
                         style={{
-                          fontWeight: 600,
+                          fontWeight: 500,
                           fontSize: 12,
                           color: tokens.anyu.color.ink.default,
                           lineHeight: 1.3,
@@ -604,7 +530,7 @@ export function MobileGantt({
                             whiteSpace: "nowrap",
                           }}
                         >
-                          {room.room_name}
+                          {roomTypeById?.[room.room_id] || room.room_name}
                         </div>
                       )}
                     </div>
@@ -704,7 +630,7 @@ export function MobileGantt({
                               alignItems: "center",
                               gap: 3,
                               fontSize: 10,
-                              fontWeight: 600,
+                              fontWeight: 500,
                               overflow: "hidden",
                               whiteSpace: "nowrap",
                               position: "relative",
@@ -748,7 +674,7 @@ export function MobileGantt({
                                   flex: "0 0 auto",
                                   padding: "0 4px",
                                   fontSize: 9,
-                                  fontWeight: 700,
+                                  fontWeight: 500,
                                   color: TRIAL_BADGE.fg,
                                   background: TRIAL_BADGE.bg,
                                   borderRadius: 3,
@@ -794,7 +720,7 @@ export function MobileGantt({
                               alignItems: "center",
                               justifyContent: "center",
                               fontSize: 10,
-                              fontWeight: 600,
+                              fontWeight: 500,
                               overflow: "hidden",
                               whiteSpace: "nowrap",
                               padding: "0 3px",
@@ -817,7 +743,7 @@ export function MobileGantt({
                               maxWidth: "calc(100% - 6px)",
                               padding: "0 4px",
                               fontSize: 8,
-                              fontWeight: 700,
+                              fontWeight: 500,
                               lineHeight: 1.4,
                               color: CLEANING_CELL.fg,
                               background: CLEANING_CELL.bg,

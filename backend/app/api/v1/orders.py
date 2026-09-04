@@ -1,6 +1,7 @@
 from fastapi import APIRouter, BackgroundTasks, Header, HTTPException, Query
 from pydantic import BaseModel, ValidationError
-from sqlalchemy import select, and_, or_, func, delete, tuple_
+from sqlalchemy import select, and_, or_, func, delete, tuple_, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload, aliased
 from datetime import date, datetime, timezone
 from decimal import Decimal, ROUND_HALF_UP
@@ -63,6 +64,13 @@ from app.services.sponsorship import (
     append_sponsorship_adjustment,
     record_source_price_snapshot,
     select_source_price_snapshot,
+)
+from app.services import service_fee_ledger
+from app.services.order_browse import (
+    OrderDateBasis,
+    matching_group_keys_statement,
+    order_browse_member_conditions,
+    resolve_order_browse_date_filter,
 )
 
 router = APIRouter(prefix="/orders", tags=["orders"])
@@ -968,10 +976,10 @@ def _build_order_filters(
     exclude_continuation_mid_checkout: bool = False,
     exclude_continuation_later_checkin: bool = False,
 ) -> list:
-    """订单列表的筛选口径，`GET /orders` 与 `GET /orders/by-segment` 共用。
+    """原始订单事件列表的筛选口径（``GET /orders``）。
 
-    单一来源：加筛选条件只改这里，两个端点自动一致。抽出来是因为两套筛选逻辑漂掉
-    是必然事件，不是风险——本项目已经吃过「一份口径抄三份」的亏。
+    Dashboard 待入住/待退房按单和事件日期查询；订单管理页按整段查询，后者与导出
+    共用 ``services.order_browse``，不要再把整段日期条件塞回这里。
     """
     filters = [Order.is_deleted == False]
     if exclude_continuation_mid_checkout:
@@ -1109,6 +1117,9 @@ async def list_orders_by_segment(
     check_in_to: Optional[date] = Query(default=None),
     check_out_from: Optional[date] = Query(default=None),
     check_out_to: Optional[date] = Query(default=None),
+    date_basis: Optional[OrderDateBasis] = Query(default=None),
+    date_from: Optional[date] = Query(default=None),
+    date_to: Optional[date] = Query(default=None),
     keyword: Optional[str] = Query(default=None),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
@@ -1124,19 +1135,30 @@ async def list_orders_by_segment(
 
     每行的口径全部由 group_view 算，与详情页同源 —— 前端不做任何归并、不算任何合计。
 
-    筛选语义：筛选决定哪些段出现（段内任一单匹配即出现），段一旦出现就整段返回、
-    整段口径。
+    渠道、状态、房间、关键词仍是「段内任一单匹配即出现」。日期是例外：按本行
+    展示的首次入住日或最终退房日匹配，避免中间续住单日期把整段错误带出来。
     """
-    filters = _build_order_filters(
+    browse_date = resolve_order_browse_date_filter(
+        date_basis=date_basis,
+        date_from=date_from,
+        date_to=date_to,
+        check_in_from=check_in_from,
+        check_in_to=check_in_to,
+        check_out_from=check_out_from,
+        check_out_to=check_out_to,
+    )
+    filters = order_browse_member_conditions(
         status=status, channel=channel, room_id=room_id,
-        check_in_from=check_in_from, check_in_to=check_in_to,
-        check_out_from=check_out_from, check_out_to=check_out_to, keyword=keyword,
+        keyword=keyword,
     )
 
-    group_key = func.coalesce(Order.stay_group_id, Order.order_id)
-
+    matching_keys = matching_group_keys_statement(
+        member_conditions=filters,
+        date_filter=browse_date,
+    )
+    matching_keys_subquery = matching_keys.order_by(None).subquery()
     total = await db.scalar(
-        select(func.count(func.distinct(group_key))).where(*filters)
+        select(func.count()).select_from(matching_keys_subquery)
     ) or 0
 
     # 第一步：取本页的段键（按段内最新 created_at 降序 —— 新续住单进来该段浮到前面）
@@ -1146,14 +1168,11 @@ async def list_orders_by_segment(
     # 自由决定，而翻页是多次独立查询，两次之间的顺序可以不一样 → 一个段被两页都返回、或者
     # 一页都不返回。本地 SQLite 碰巧稳定，测不出来，别据此删掉它。
     page_keys = (await db.execute(
-        select(group_key.label("gk"))
-        .where(*filters)
-        .group_by(group_key)
-        .order_by(func.max(Order.created_at).desc(), group_key.asc())
+        matching_keys
         .offset((page - 1) * page_size)
         .limit(page_size)
     )).all()
-    keys = [row.gk for row in page_keys]
+    keys = [row.group_key for row in page_keys]
 
     if not keys:
         return PaginatedSegmentList(items=[], total=total, page=page, page_size=page_size)
@@ -1571,15 +1590,57 @@ async def update_order(order_id: str, body: OrderUpdate, db: DBSession, current_
     # 冻结的平台定价残留必须清：ota_owner_revenue 会让「净房费」一直显示旧平台到手价
     # （2026-08-02 张维伦单：房费 430 旁挂着 479.37）；ota_subsidy 残留会在结算端被计入
     # 业主收入（平台单已在 OTA 侧取消，补贴一分不会到账）。佣金率归零（线下无平台佣金）。
-    # 有平台单号则打 price_locked：staging 里的原单价格口径已成僵尸，bypms 价格对账/
-    # 补贴扫描不得再覆盖回来。触发条件必须是「本次翻转」——bypms 上门客单生来 channel=
-    # offline 且带 ota_owner_revenue，那不是残留，不能按渠道现值误清。
+    # 打 price_locked：staging 里的原单价格口径已成僵尸，bypms 价格对账/补贴扫描不得再
+    # 覆盖回来。通常由「平台→线下」翻转触发；另兜住一类真实数据：BYPMS 导入时渠道已经
+    # 是 offline、随后前台只在 Chengjia 改实收。这类单没有渠道翻转，但只要仍产生非零
+    # 平台佣金/补贴，同样必须在保存线下单时清掉，不能留到月底。
     # 放在 body.ota_owner_revenue 写入之前：同一请求里显式补录的新净值仍然生效。
-    if (
+    _platform_to_offline = (
         body.channel is not None
         and _old_channel in OTA_PLATFORM_CHANNELS
         and order.channel not in OTA_PLATFORM_CHANNELS
-    ):
+    )
+    _meta_before_offline_save = order.metadata_ or {}
+    _nonplatform_pricing_save_requested = (
+        body.channel is not None
+        or body.actual_price is not None
+        or body.rooms is not None
+    )
+    # 非平台单可以合法地由运营手填佣金率（例如私单分成），不能仅凭 rate!=0 就当成
+    # OTA 残留。只有存在平台单号、整单净值/补贴或每房净值等平台定价来源证据时，
+    # 非零佣金率才参与“保存即清理”的判定。三类真实漏单都有 platform_order_id 和
+    # ota_owner_revenue；纯手录私单两者都没有，因此保留运营填写的佣金率。
+    _has_platform_pricing_provenance = (
+        bool(order.platform_order_id)
+        or "ota_owner_revenue" in _meta_before_offline_save
+        or "ota_subsidy" in _meta_before_offline_save
+        or any(r.ota_owner_revenue is not None for r in order.rooms)
+    )
+    _saved_nonplatform_with_platform_pricing = (
+        _nonplatform_pricing_save_requested
+        and _old_channel not in OTA_PLATFORM_CHANNELS
+        and order.channel not in OTA_PLATFORM_CHANNELS
+        and (
+            (
+                safe_decimal(order.platform_commission_rate) != 0
+                and _has_platform_pricing_provenance
+            )
+            or safe_decimal(_meta_before_offline_save.get("ota_subsidy")) != 0
+            or (
+                "ota_owner_revenue" in _meta_before_offline_save
+                and order.actual_price is not None
+                and safe_decimal(_meta_before_offline_save.get("ota_owner_revenue"))
+                    != safe_decimal(order.actual_price)
+            )
+            or any(
+                r.ota_owner_revenue is not None
+                and r.actual_price is not None
+                and safe_decimal(r.ota_owner_revenue) != safe_decimal(r.actual_price)
+                for r in order.rooms
+            )
+        )
+    )
+    if _platform_to_offline or _saved_nonplatform_with_platform_pricing:
         # 每房手填净值同为平台时代旧值：不清的话结算按 房费−旧净值 扣不存在的佣金。
         # rooms 未被本次替换 → 清存量行（必须先于下方 _meta 快照，helper 会写留痕）；
         # 老客户端合成行的净值已在合成处剥掉（见 target_rooms 合成块尾）。
@@ -1592,7 +1653,11 @@ async def update_order(order_id: str, body: OrderUpdate, db: DBSession, current_
         _entry = {
             "old": {**_old_vals,
                     "platform_commission_rate": str(order.platform_commission_rate or 0)},
-            "reason": "channel_adopted_offline",
+            "reason": (
+                "channel_adopted_offline"
+                if _platform_to_offline
+                else "offline_order_saved_with_platform_pricing"
+            ),
             "from_channel": _old_channel.value,
             "to_channel": order.channel.value,
             "price_locked_before": bool(_meta.get("price_locked")),
@@ -1612,6 +1677,8 @@ async def update_order(order_id: str, body: OrderUpdate, db: DBSession, current_
         and _old_channel not in OTA_PLATFORM_CHANNELS
         and order.channel in OTA_PLATFORM_CHANNELS
         and (order.metadata_ or {}).get("ota_pricing_cleared")
+        and (order.metadata_ or {})["ota_pricing_cleared"].get("reason")
+            == "channel_adopted_offline"
     ):
         # 误点接手的回退：渠道翻回平台 → 按留痕恢复冻结的平台定价与佣金率，
         # 撤掉接手时打的锁（接手前本就有锁的保留——那是改价挣来的）。佣金率随后
@@ -2133,19 +2200,28 @@ async def batch_transition(
 
         # 复用单笔流转的同一守卫+副作用,避免批量绕过押金/收齐校验与房态联动 (#40)
         try:
-            before_status = await _apply_order_transition(db, order, target)
-        except HTTPException as e:
-            failed.append({"order_id": oid, "reason": e.detail})
+            # 每张订单用 savepoint 隔离。若多房费用冲突，整张失败订单的状态与
+            # 已暂存费用一起撤销，同时保留本批其它成功订单。
+            async with db.begin_nested():
+                before_status = await _apply_order_transition(db, order, target)
+
+                # 末段完成级联兄弟段：与单笔端点共用 complete_group_siblings，
+                # 批量路径不许把前面几段留在 checked_in。
+                if target == OrderStatus.completed:
+                    await stay_group_svc.complete_group_siblings(db, order)
+
+                apply_snapshot_manual_locks(
+                    order, before_snapshot, order_snapshot(order), source="human"
+                )
+        except HTTPException as exc:
+            failed.append({"order_id": oid, "reason": exc.detail})
             continue
-
-        # 末段完成级联兄弟段：与单笔端点共用 complete_group_siblings，
-        # 批量路径不许把前面几段留在 checked_in。
-        if target == OrderStatus.completed:
-            await stay_group_svc.complete_group_siblings(db, order)
-
-        apply_snapshot_manual_locks(
-            order, before_snapshot, order_snapshot(order), source="human"
-        )
+        except (
+            service_fee_ledger.CheckoutExpenseRecognitionError,
+            service_fee_ledger.CheckoutServiceFeeWrongMonthError,
+        ) as exc:
+            failed.append({"order_id": oid, "reason": exc.to_detail()})
+            continue
         audit_diffs.append((oid, before_status, before_snapshot))
         succeeded.append(oid)
 
@@ -2191,7 +2267,14 @@ async def transition_status(
             raise HTTPException(status_code=400,
                 detail="这是续住组的中间段，客人还没走。退房请到组内最后一段办理。")
 
-    before_status = await _apply_order_transition(db, order, target_status)
+    try:
+        before_status = await _apply_order_transition(db, order, target_status)
+    except (
+        service_fee_ledger.CheckoutExpenseRecognitionError,
+        service_fee_ledger.CheckoutServiceFeeWrongMonthError,
+    ) as exc:
+        await db.rollback()
+        raise HTTPException(status_code=409, detail=exc.to_detail()) from exc
 
     # 续住关联组：末段完成 → 级联兄弟段（与批量路径共用 complete_group_siblings）。
     if target_status == OrderStatus.completed and order.stay_group_id:
@@ -2628,17 +2711,6 @@ async def assign_room(
     order = result.scalar_one_or_none()
     if not order:
         raise HTTPException(status_code=404, detail="订单不存在")
-    await _reject_managed_ordinary_mutation(db, order)
-
-    if order.order_status in (OrderStatus.checked_in, OrderStatus.pending_checkout, OrderStatus.completed, OrderStatus.cancelled):
-        raise HTTPException(status_code=400, detail=f"当前状态「{order_status_label(order.order_status)}」不允许排房/换房")
-
-    # 校验目标房间存在
-    new_room = (await db.execute(select(Room).where(Room.room_id == body.room_id))).scalar_one_or_none()
-    if not new_room:
-        raise HTTPException(status_code=404, detail=f"房间 {body.room_id} 不存在")
-    if new_room.room_status in (RoomStatus.maintenance, RoomStatus.locked):
-        raise HTTPException(status_code=422, detail=f"房间 {body.room_id} 当前状态为 {new_room.room_status.value}，不可排房")
 
     # 定位要操作的 OrderRoom 行
     target_or: Optional[OrderRoom] = None
@@ -2655,6 +2727,33 @@ async def assign_room(
         if target_or is None:
             raise HTTPException(status_code=400, detail="该订单无任何房间行，无法排房")
 
+    old_room_id = target_or.room_id
+    rooms_by_id, orders_by_id, order_rooms_by_id = await _lock_room_mutation_context(
+        db,
+        room_ids=[old_room_id, body.room_id],
+        order_ids=[order_id],
+        order_room_ids=[target_or.order_room_id],
+    )
+    order = orders_by_id.get(order_id)
+    locked_target = order_rooms_by_id.get(target_or.order_room_id)
+    if order is None:
+        raise HTTPException(status_code=404, detail="订单不存在")
+    if locked_target is None or locked_target.order_id != order_id:
+        raise HTTPException(status_code=404, detail=f"order_room_id {target_or.order_room_id} 不属于本订单")
+    if locked_target.room_id != old_room_id:
+        raise HTTPException(status_code=409, detail="订单房间已被其他操作修改，请刷新后重试")
+    target_or = locked_target
+
+    await _reject_managed_ordinary_mutation(db, order)
+    if order.order_status in (OrderStatus.checked_in, OrderStatus.pending_checkout, OrderStatus.completed, OrderStatus.cancelled):
+        raise HTTPException(status_code=400, detail=f"当前状态「{order_status_label(order.order_status)}」不允许排房/换房")
+
+    new_room = rooms_by_id.get(body.room_id)
+    if not new_room:
+        raise HTTPException(status_code=404, detail=f"房间 {body.room_id} 不存在")
+    if new_room.room_status in (RoomStatus.maintenance, RoomStatus.locked):
+        raise HTTPException(status_code=422, detail=f"房间 {body.room_id} 当前状态为 {new_room.room_status.value}，不可排房")
+
     # 冲突校验：排除本订单的该行（避免自冲突）
     has_conflict = await check_room_conflict(
         db, body.room_id, target_or.check_in_date, target_or.check_out_date,
@@ -2667,7 +2766,6 @@ async def assign_room(
         )
 
     before_snapshot = order_snapshot(order)
-    old_room_id = target_or.room_id
     before = {"order_room_id": target_or.order_room_id, "room_id": old_room_id, "status": order.order_status.value}
 
     # 旧房回收
@@ -2737,6 +2835,65 @@ TRANSFER_ALLOWED_STATUSES = {
 SWAP_ALLOWED_STATUSES = TRANSFER_ALLOWED_STATUSES | {OrderStatus.completed}
 
 
+async def _lock_room_mutation_context(
+    db,
+    *,
+    room_ids: list[str | None],
+    order_ids: list[str],
+    order_room_ids: list[str],
+) -> tuple[dict[str, Room], dict[str, Order], dict[str, OrderRoom]]:
+    """Lock room mutations in one shared order, then reload current state.
+
+    Room rows come first because every booking path already serializes on them.
+    Order and OrderRoom locks then prevent a stale swap/transfer from overwriting
+    a concurrent mutation after it has waited for the room locks.
+    """
+    normalized_room_ids = sorted({room_id for room_id in room_ids if room_id})
+    normalized_order_ids = sorted(set(order_ids))
+    normalized_order_room_ids = sorted(set(order_room_ids))
+
+    locked_rooms = (await db.execute(
+        select(Room)
+        .where(Room.room_id.in_(normalized_room_ids))
+        .order_by(Room.room_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )).scalars().all()
+
+    await db.execute(
+        select(Order.order_id)
+        .where(Order.order_id.in_(normalized_order_ids))
+        .order_by(Order.order_id)
+        .with_for_update()
+    )
+    await db.execute(
+        select(OrderRoom.order_room_id)
+        .where(OrderRoom.order_room_id.in_(normalized_order_room_ids))
+        .order_by(OrderRoom.order_room_id)
+        .with_for_update()
+    )
+
+    locked_orders = (await db.execute(
+        select(Order)
+        .where(Order.order_id.in_(normalized_order_ids), Order.is_deleted == False)
+        .order_by(Order.order_id)
+        .options(selectinload(Order.rooms))
+        .execution_options(populate_existing=True)
+    )).scalars().all()
+    orders_by_id = {order.order_id: order for order in locked_orders}
+    order_rooms_by_id = {
+        row.order_room_id: row
+        for order in locked_orders
+        for row in order.rooms
+        if row.order_room_id in normalized_order_room_ids
+    }
+    return (
+        {room.room_id: room for room in locked_rooms},
+        orders_by_id,
+        order_rooms_by_id,
+    )
+
+
 async def recompute_payment_status(db, order_id: str, order: Order) -> None:
     """按已收非押金房费 vs 订单实收，重算 payment_status。换房加价后调用。"""
     total_paid = await sum_house_fee_paid(db, order_id)
@@ -2764,11 +2921,6 @@ async def transfer_room(
     )).scalar_one_or_none()
     if not order:
         raise HTTPException(status_code=404, detail="订单不存在")
-    await _reject_managed_ordinary_mutation(db, order)
-
-    if order.order_status not in TRANSFER_ALLOWED_STATUSES:
-        raise HTTPException(status_code=400,
-            detail=f"当前状态「{order_status_label(order.order_status)}」不允许换房")
 
     target = next((r for r in order.rooms if r.order_room_id == body.order_room_id), None)
     if target is None:
@@ -2777,7 +2929,27 @@ async def transfer_room(
     if body.new_room_id == old_room_id:
         raise HTTPException(status_code=400, detail="新房间与原房间相同")
 
-    new_room = await db.get(Room, body.new_room_id)
+    rooms_by_id, orders_by_id, order_rooms_by_id = await _lock_room_mutation_context(
+        db,
+        room_ids=[old_room_id, body.new_room_id],
+        order_ids=[order_id],
+        order_room_ids=[body.order_room_id],
+    )
+    order = orders_by_id.get(order_id)
+    target = order_rooms_by_id.get(body.order_room_id)
+    if order is None:
+        raise HTTPException(status_code=404, detail="订单不存在")
+    if target is None or target.order_id != order_id:
+        raise HTTPException(status_code=404, detail=f"order_room_id {body.order_room_id} 不属于本订单")
+    if target.room_id != old_room_id:
+        raise HTTPException(status_code=409, detail="订单房间已被其他操作修改，请刷新后重试")
+
+    await _reject_managed_ordinary_mutation(db, order)
+    if order.order_status not in TRANSFER_ALLOWED_STATUSES:
+        raise HTTPException(status_code=400,
+            detail=f"当前状态「{order_status_label(order.order_status)}」不允许换房")
+
+    new_room = rooms_by_id.get(body.new_room_id)
     if not new_room:
         raise HTTPException(status_code=404, detail=f"房间 {body.new_room_id} 不存在")
     if new_room.room_status in (RoomStatus.maintenance, RoomStatus.locked):
@@ -2859,6 +3031,20 @@ async def _set_room_static(db, room_id: str | None, status: RoomStatus) -> None:
         room.room_status = status
 
 
+def _is_room_overlap_violation(exc: IntegrityError) -> bool:
+    """Recognize the PostgreSQL exclusion violation through asyncpg's wrappers."""
+    current: BaseException | None = exc
+    seen: set[int] = set()
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if getattr(current, "constraint_name", None) == "orders_no_room_overlap":
+            return True
+        if "orders_no_room_overlap" in str(current):
+            return True
+        current = current.__cause__ or current.__context__
+    return False
+
+
 @router.post("/swap-rooms", response_model=list[OrderOut])
 async def swap_rooms(body: SwapRoomsRequest, db: DBSession, current_user: CurrentUser,
                      background_tasks: BackgroundTasks):
@@ -2878,16 +3064,6 @@ async def swap_rooms(body: SwapRoomsRequest, db: DBSession, current_user: Curren
     order_b = await _load(body.order_b_id)
     if not order_a or not order_b:
         raise HTTPException(status_code=404, detail="订单不存在")
-    await _reject_managed_ordinary_mutation(db, order_a, order_b)
-
-    for o in (order_a, order_b):
-        if o.order_status not in SWAP_ALLOWED_STATUSES:
-            raise HTTPException(status_code=400,
-                detail=f"当前状态「{order_status_label(o.order_status)}」不允许对调")
-    midstay_a = order_a.order_status == OrderStatus.checked_in
-    midstay_b = order_b.order_status == OrderStatus.checked_in
-    if midstay_a and midstay_b:
-        raise HTTPException(status_code=400, detail="两个订单都在住，不支持对调")
 
     row_a = next((r for r in order_a.rooms if r.order_room_id == body.order_room_a_id), None)
     row_b = next((r for r in order_b.rooms if r.order_room_id == body.order_room_b_id), None)
@@ -2899,10 +3075,42 @@ async def swap_rooms(body: SwapRoomsRequest, db: DBSession, current_user: Curren
     if room_a == room_b:
         raise HTTPException(status_code=400, detail="两个订单已在同一房间，无需对调")
 
-    room_obj_a = await db.get(Room, room_a)
-    room_obj_b = await db.get(Room, room_b)
-    if not room_obj_a or not room_obj_b:
+    rooms_by_id, orders_by_id, order_rooms_by_id = await _lock_room_mutation_context(
+        db,
+        room_ids=[room_a, room_b],
+        order_ids=[body.order_a_id, body.order_b_id],
+        order_room_ids=[body.order_room_a_id, body.order_room_b_id],
+    )
+    order_a = orders_by_id.get(body.order_a_id)
+    order_b = orders_by_id.get(body.order_b_id)
+    row_a = order_rooms_by_id.get(body.order_room_a_id)
+    row_b = order_rooms_by_id.get(body.order_room_b_id)
+    if order_a is None or order_b is None:
+        raise HTTPException(status_code=404, detail="订单不存在")
+    if (
+        row_a is None
+        or row_b is None
+        or row_a.order_id != order_a.order_id
+        or row_b.order_id != order_b.order_id
+    ):
+        raise HTTPException(status_code=404, detail="order_room 不属于对应订单")
+    if row_a.room_id != room_a or row_b.room_id != room_b:
+        raise HTTPException(status_code=409, detail="订单房间已被其他操作修改，请刷新后重试")
+    if room_a not in rooms_by_id or room_b not in rooms_by_id:
         raise HTTPException(status_code=404, detail="对调涉及的房间不存在")
+
+    await _reject_managed_ordinary_mutation(db, order_a, order_b)
+    for o in (order_a, order_b):
+        if o.order_status not in SWAP_ALLOWED_STATUSES:
+            raise HTTPException(status_code=400,
+                detail=f"当前状态「{order_status_label(o.order_status)}」不允许对调")
+    midstay_a = order_a.order_status == OrderStatus.checked_in
+    midstay_b = order_b.order_status == OrderStatus.checked_in
+    if midstay_a and midstay_b:
+        raise HTTPException(status_code=400, detail="两个订单都在住，不支持对调")
+
+    room_obj_a = rooms_by_id[room_a]
+    room_obj_b = rooms_by_id[room_b]
     for room_obj, label in [(room_obj_b, room_b), (room_obj_a, room_a)]:
         if room_obj.room_status in (RoomStatus.maintenance, RoomStatus.locked):
             raise HTTPException(status_code=422,
@@ -2929,38 +3137,53 @@ async def swap_rooms(body: SwapRoomsRequest, db: DBSession, current_user: Curren
     snap = {"a": {"order_id": order_a.order_id, "old_room": room_a, "new_room": room_b},
             "b": {"order_id": order_b.order_id, "old_room": room_b, "new_room": room_a}}
 
-    await apply_room_transfer(db, order_a, order_room_id=row_a.order_room_id, new_room_id=room_b,
-        reason=TransferReason.swap, transfer_date=a_start,
-        markup_amount=Decimal("0"), old_room_disposition=None)
-    await apply_room_transfer(db, order_b, order_room_id=row_b.order_room_id, new_room_id=room_a,
-        reason=TransferReason.swap, transfer_date=b_start,
-        markup_amount=Decimal("0"), old_room_disposition=None)
+    try:
+        # The exclusion constraint remains immediate for every ordinary write,
+        # but a two-row swap must be judged on its final state, not after the
+        # first UPDATE while the destination still contains the other order.
+        if db.get_bind().dialect.name == "postgresql":
+            await db.execute(text("SET CONSTRAINTS orders_no_room_overlap DEFERRED"))
 
-    await _set_room_static(db, room_b, RoomStatus.occupied if midstay_a else RoomStatus.reserved)
-    await _set_room_static(db, room_a, RoomStatus.occupied if midstay_b else RoomStatus.reserved)
+        await apply_room_transfer(db, order_a, order_room_id=row_a.order_room_id, new_room_id=room_b,
+            reason=TransferReason.swap, transfer_date=a_start,
+            markup_amount=Decimal("0"), old_room_disposition=None)
+        await apply_room_transfer(db, order_b, order_room_id=row_b.order_room_id, new_room_id=room_a,
+            reason=TransferReason.swap, transfer_date=b_start,
+            markup_amount=Decimal("0"), old_room_disposition=None)
 
-    await recompute_payment_status(db, order_a.order_id, order_a)
-    await recompute_payment_status(db, order_b.order_id, order_b)
-    apply_snapshot_manual_locks(order_a, before_a, order_snapshot(order_a), source="human")
-    apply_snapshot_manual_locks(order_b, before_b, order_snapshot(order_b), source="human")
+        await _set_room_static(db, room_b, RoomStatus.occupied if midstay_a else RoomStatus.reserved)
+        await _set_room_static(db, room_a, RoomStatus.occupied if midstay_b else RoomStatus.reserved)
 
-    await db.flush()
+        await recompute_payment_status(db, order_a.order_id, order_a)
+        await recompute_payment_status(db, order_b.order_id, order_b)
+        apply_snapshot_manual_locks(order_a, before_a, order_snapshot(order_a), source="human")
+        apply_snapshot_manual_locks(order_b, before_b, order_snapshot(order_b), source="human")
 
-    async def _refresh(oid: str) -> Order:
-        return (await db.execute(
-            select(Order).where(Order.order_id == oid).options(selectinload(Order.rooms))
-        )).scalar_one()
+        await db.flush()
 
-    refreshed_a = await _refresh(order_a.order_id)
-    refreshed_b = await _refresh(order_b.order_id)
+        async def _refresh(oid: str) -> Order:
+            return (await db.execute(
+                select(Order).where(Order.order_id == oid).options(selectinload(Order.rooms))
+            )).scalar_one()
 
-    await log_action_tx(db, current_user["user_id"], "order.swap_room", "order", order_a.order_id,
-                        before_data={**before_a, "_diff": snap["a"]},
-                        after_data=order_snapshot(refreshed_a))
-    await log_action_tx(db, current_user["user_id"], "order.swap_room", "order", order_b.order_id,
-                        before_data={**before_b, "_diff": snap["b"]},
-                        after_data=order_snapshot(refreshed_b))
-    await db.commit()
+        refreshed_a = await _refresh(order_a.order_id)
+        refreshed_b = await _refresh(order_b.order_id)
+
+        await log_action_tx(db, current_user["user_id"], "order.swap_room", "order", order_a.order_id,
+                            before_data={**before_a, "_diff": snap["a"]},
+                            after_data=order_snapshot(refreshed_a))
+        await log_action_tx(db, current_user["user_id"], "order.swap_room", "order", order_b.order_id,
+                            before_data={**before_b, "_diff": snap["b"]},
+                            after_data=order_snapshot(refreshed_b))
+        await db.commit()
+    except IntegrityError as exc:
+        await db.rollback()
+        if _is_room_overlap_violation(exc):
+            raise HTTPException(
+                status_code=409,
+                detail="对调后房间日期与其它订单重叠，请刷新页面后重试",
+            ) from exc
+        raise
 
     # 对调门锁联动：只有在住那一方需换码（两单都在住已被 400 拦）。后台 fail-safe。
     from app.services.lock.hooks import _process_transfer_relink

@@ -22,7 +22,7 @@ customerApi.interceptors.response.use(
       // Hard redirect so pages re-evaluate auth guard
       const next = encodeURIComponent(window.location.pathname + window.location.search);
       if (!window.location.pathname.startsWith("/booking/login")) {
-        window.location.href = `/booking/login?next=${next}`;
+        window.location.replace(`/booking/login?next=${next}`);
       }
     }
     return Promise.reject(error);

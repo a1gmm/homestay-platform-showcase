@@ -9,7 +9,12 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_db, require_role
-from app.models.utility_recon import UtilityReconBatch, UtilityReconRow, UtilityReconSuggestion
+from app.models.utility_recon import (
+    UtilityReconBatch,
+    UtilityReconRow,
+    UtilityReconSuggestion,
+    UtilityReconUpload,
+)
 from app.services.audit import log_action_tx
 from app.services.utility_recon.contracts import NormalizedRow, WorkbookInput
 from app.services.utility_recon.export import build_export
@@ -47,7 +52,7 @@ def _preflight_out(result) -> dict:
 @router.post("/preflight")
 async def preflight_utility_workbooks(
     files: list[UploadFile] = File(...),
-    current=Depends(require_role("admin", "finance", "operator")),
+    current=Depends(require_role("admin")),
 ):
     if len(files) != 2:
         raise HTTPException(422, "必须同时上传两份 Excel 文件")
@@ -114,7 +119,7 @@ async def _refresh_corrected_summary(db: AsyncSession, batch: UtilityReconBatch)
 
 @router.post("/run")
 async def run_utility_reconciliation(
-    files: list[UploadFile] = File(...), current=Depends(require_role("admin", "finance", "operator")),
+    files: list[UploadFile] = File(...), current=Depends(require_role("admin")),
     db: AsyncSession = Depends(get_db),
 ):
     try:
@@ -127,7 +132,7 @@ async def run_utility_reconciliation(
 
 @router.get("/batches/{batch_id}")
 async def utility_batch_detail(
-    batch_id: str, current=Depends(require_role("admin", "finance", "operator")),
+    batch_id: str, current=Depends(require_role("admin")),
     db: AsyncSession = Depends(get_db),
 ):
     batch = await db.get(UtilityReconBatch, batch_id)
@@ -157,7 +162,7 @@ async def utility_batch_detail(
 
 @router.get("/batches")
 async def list_utility_batches(
-    current=Depends(require_role("admin", "finance", "operator")), db: AsyncSession = Depends(get_db),
+    current=Depends(require_role("admin")), db: AsyncSession = Depends(get_db),
 ):
     result = await db.execute(select(UtilityReconBatch).order_by(UtilityReconBatch.created_at.desc()).limit(100))
     return [_batch_out(batch) for batch in result.scalars().all()]
@@ -165,7 +170,7 @@ async def list_utility_batches(
 
 @router.post("/suggestions/{suggestion_id}/{action}")
 async def decide_utility_suggestion(
-    suggestion_id: str, action: str, current=Depends(require_role("admin", "finance")),
+    suggestion_id: str, action: str, current=Depends(require_role("admin")),
     db: AsyncSession = Depends(get_db),
 ):
     if action not in {"adopt", "revert"}:
@@ -196,12 +201,33 @@ async def decide_utility_suggestion(
 
 @router.post("/batches/{batch_id}/close")
 async def close_utility_batch(
-    batch_id: str, current=Depends(require_role("admin", "finance")), db: AsyncSession = Depends(get_db),
+    batch_id: str, current=Depends(require_role("admin")), db: AsyncSession = Depends(get_db),
 ):
     batch = (await db.execute(select(UtilityReconBatch).where(UtilityReconBatch.batch_id == batch_id).with_for_update())).scalar_one_or_none()
     if batch is None:
         raise HTTPException(404, "对账批次不存在或无权访问")
     if batch.status != "closed":
+        upload = await db.get(UtilityReconUpload, batch.upload_id)
+        preflight_unparseable = (
+            (upload.preflight_stats or {}).get("unparseable", 0)
+            if upload is not None
+            else 0
+        )
+        unparseable_row_id = await db.scalar(
+            select(UtilityReconRow.row_id)
+            .where(
+                UtilityReconRow.batch_id == batch_id,
+                UtilityReconRow.disposition == "unparseable",
+            )
+            .limit(1)
+        )
+        if unparseable_row_id is not None or (
+            isinstance(preflight_unparseable, int) and preflight_unparseable > 0
+        ):
+            raise HTTPException(
+                409,
+                "仍有无法解析的原表行，请先修正字段映射或替换原表后再关闭批次",
+            )
         batch.status = "closed"
         batch.closed_by = current["user_id"]
         batch.closed_at = datetime.now(timezone.utc)
@@ -212,7 +238,7 @@ async def close_utility_batch(
 
 @router.get("/batches/{batch_id}/export")
 async def export_utility_batch(
-    batch_id: str, current=Depends(require_role("admin", "finance")), db: AsyncSession = Depends(get_db),
+    batch_id: str, current=Depends(require_role("admin")), db: AsyncSession = Depends(get_db),
 ):
     detail = await utility_batch_detail(batch_id, current, db)
     data = build_export(detail)

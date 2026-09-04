@@ -24,6 +24,10 @@ export default defineConfig({
           environment: "jsdom",
           include: ["**/*.test.tsx"],
           setupFiles: ["./test/setup.ts"],
+          // Ant Design + jsdom component suites are memory-heavy. Running test
+          // files concurrently causes deterministic 5s userEvent timeouts on
+          // otherwise passing cases, so keep this project file-serial in CI.
+          fileParallelism: false,
         },
       },
     ],
