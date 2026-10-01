@@ -88,6 +88,8 @@ class BypmsSyncOverview(BaseModel):
     latest_cycle: BypmsSyncCycle | None = None
     last_successful_or_partial_at: datetime | None = None
     last_successful_or_partial_age_seconds: int | None = Field(default=None, ge=0)
+    last_fully_successful_at: datetime | None = None
+    last_fully_successful_age_seconds: int | None = Field(default=None, ge=0)
     pending_retry_count: int = Field(default=0, ge=0)
     open_conflicts_by_field: dict[str, int] = Field(default_factory=dict)
     staging_watermark: datetime | None = None
@@ -128,3 +130,15 @@ class BypmsSyncRetryResponse(BaseModel):
     requested_by: RetryActor
     status: RetryStatus
     requested_at: datetime
+
+
+class BypmsOrderDiagnosis(BaseModel):
+    available: bool = True
+    found_in_staging: bool = False
+    fetched_at: datetime | None = None
+    staging_stale: bool = True
+    order_ids: list[str] = Field(default_factory=list)
+    candidate_order_ids: list[str] = Field(default_factory=list)
+    state: Literal["not_found", "missing_order", "linked", "manual_review", "cancelled", "unavailable"]
+    reasons: list[str] = Field(default_factory=list)
+    next_action: str

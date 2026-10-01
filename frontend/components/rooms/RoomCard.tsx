@@ -14,6 +14,7 @@ import { ROOM_STATUS } from "./constants";
 import { buildLockMenuItems, type LockBlockType } from "./room-lock-actions";
 import type { RoomItem, PricingDay } from "./types";
 import { useIsMobile } from "@/lib/responsive";
+import { usePrivacyMode } from "@/hooks/usePrivacyMode";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { tokens } from "@/lib/design-tokens";
 
@@ -51,6 +52,7 @@ export function RoomCard({
   onOpenPricingDetail,
 }: RoomCardProps) {
   const isMobile = useIsMobile();
+  const privacyMode = usePrivacyMode();
   const todayPricing = pricingDays?.[0];
   const shown = room.effective_status ?? room.room_status;
   const accent = STATUS_ACCENT[shown] ?? tokens.color.gray[500];
@@ -110,7 +112,7 @@ export function RoomCard({
           >
             <HomeOutlined style={{ fontSize: 16 }} />
           </div>
-          <Dropdown menu={{ items: menuItems }} trigger={["click"]} placement="bottomRight">
+          {!privacyMode && <Dropdown menu={{ items: menuItems }} trigger={["click"]} placement="bottomRight">
             <Button
               type="text"
               icon={<MoreOutlined />}
@@ -118,16 +120,16 @@ export function RoomCard({
               onClick={(e) => e.stopPropagation()}
               style={{ color: tokens.color.text.secondary }}
             />
-          </Dropdown>
+          </Dropdown>}
         </div>
 
         <div style={{ padding: 14, display: "flex", flexDirection: "column", gap: 10, flex: 1 }}>
           <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 8 }}>
             <div style={{ minWidth: 0 }}>
               {/* 点房号/房名 → 同一动作面板（锁房置顶）。stopPropagation 避免触发卡片展开房价 */}
-              <Dropdown menu={{ items: menuItems }} trigger={["click"]} placement="bottomLeft">
+              <Dropdown disabled={privacyMode} menu={{ items: privacyMode ? [] : menuItems }} trigger={["click"]} placement="bottomLeft">
                 <div
-                  onClick={(e) => e.stopPropagation()}
+                  onClick={(e) => { if (!privacyMode) e.stopPropagation(); }}
                   style={{ cursor: "pointer", display: "inline-block", minWidth: 0, maxWidth: "100%" }}
                 >
                   <div style={{ fontSize: 16, fontWeight: 500, color: tokens.color.text.primary, lineHeight: 1.2 }}>

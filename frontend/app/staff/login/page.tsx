@@ -1,5 +1,7 @@
 "use client";
 
+import { safeStaffNext } from "@/lib/safe-staff-next";
+
 import { Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { message, Spin } from "antd";
@@ -21,10 +23,6 @@ export default function StaffLoginPage() {
   );
 }
 
-function destinationByRole(role: string): string {
-  if (role === "cleaner") return "/staff/cleaner";
-  return "/staff/keeper";
-}
 
 function StaffLoginInner() {
   const router = useRouter();
@@ -48,7 +46,7 @@ function StaffLoginInner() {
           data.access_token,
         );
         message.success(`${data.display_name},欢迎回来`);
-        router.replace(next || destinationByRole(data.role));
+        router.replace(safeStaffNext(next, data.role));
       }}
       helpItems={[
         "短信可能延迟 1-2 分钟，请稍等后再看",

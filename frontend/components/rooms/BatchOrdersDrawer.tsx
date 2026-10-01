@@ -5,6 +5,7 @@ import { Drawer } from "antd";
 import { useIsMobile } from "@/lib/responsive";
 import { tokens } from "@/lib/design-tokens";
 import OrdersPage from "@/app/(dashboard)/orders/page";
+import { usePrivacyMode } from "@/hooks/usePrivacyMode";
 
 interface Props {
   open: boolean;
@@ -24,13 +25,14 @@ interface Props {
  */
 export function BatchOrdersDrawer({ open, onClose }: Props) {
   const isMobile = useIsMobile();
+  const privacyMode = usePrivacyMode();
 
   return (
     <Drawer
       open={open}
       onClose={onClose}
       placement="right"
-      title="订单查询 · 批量管理"
+      title={privacyMode ? "订单查询" : "订单查询 · 批量管理"}
       width={isMobile ? "100%" : "80vw"}
       destroyOnHidden
       styles={{ body: { padding: isMobile ? 12 : 20, background: tokens.color.bg.page } }}

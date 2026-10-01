@@ -15,6 +15,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
+import { OrderSyncDiagnosis } from "@/components/sync/OrderSyncDiagnosis";
 import { PageHeader } from "@/components/ui/PageHeader";
 import {
   useBypmsConflicts,
@@ -228,7 +229,9 @@ function healthState(overview: BypmsAdminSyncOverview): HealthState {
   }
   return {
     title: "同步正常",
-    description: "最新一轮已成功完成，宝寓数据水位在正常时效内。",
+    description: Object.values(overview.open_conflicts_by_field).some((count) => (count ?? 0) > 0)
+      ? "最新一轮已完成，但仍有业务差异需要人工处理；请查看下方待处理差异。"
+      : "最新一轮已成功完成，宝寓数据水位在正常时效内。",
     tone: "success",
   };
 }
@@ -629,9 +632,9 @@ function AdminWorkbench() {
         }}
       >
         <SummaryCard
-          title="最近成功或部分完成"
-          value={formatElapsed(overview.last_successful_or_partial_age_seconds, "前")}
-          detail={formatDateTime(overview.last_successful_or_partial_at)}
+          title="最近完整成功"
+          value={formatElapsed(overview.last_fully_successful_age_seconds ?? null, "前")}
+          detail={formatDateTime(overview.last_fully_successful_at ?? null)}
         />
         <SummaryCard
           title="水位延迟"
@@ -653,6 +656,8 @@ function AdminWorkbench() {
           detail="包含等待中和执行中的管理员重试"
         />
       </div>
+
+      <OrderSyncDiagnosis />
 
       <section style={{ ...surfaceStyle, padding: isMobile ? 16 : 20, marginTop: 16 }}>
         <h2 style={{ margin: "0 0 14px", fontSize: tokens.font.size.xl }}>最近同步周期</h2>

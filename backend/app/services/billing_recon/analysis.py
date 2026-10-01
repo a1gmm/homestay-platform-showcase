@@ -257,6 +257,80 @@ def _normalized_label(value: object) -> str:
     return text[start:end]
 
 
+_DETERMINISTIC_HEADER_LABELS: dict[str, frozenset[str]] = {
+    "col_order_no": frozenset({"订单", "订单号"}),
+    "col_guest": frozenset({"客人", "客人姓名", "姓名"}),
+    "col_checkin": frozenset({"入住", "入住日期"}),
+    "col_checkout": frozenset({"离店", "离店日期"}),
+    "col_amount": frozenset(
+        {"结算", "结算价", "结算金额", "金额", "付款", "实际付款金额"}
+    ),
+}
+_DETERMINISTIC_ROW_TYPES: dict[str, RowTypeName] = {
+    "正常订单": "normal",
+    "退款订单": "refund",
+    "退款": "refund",
+    "赔款": "compensation",
+    "罚款": "penalty",
+}
+
+
+def recognize_mapping_coordinates(
+    sheets: dict[str, list[list]],
+) -> MappingCoordinates | None:
+    """Recognize one exact, unambiguous safe-label header without AI."""
+    candidates: list[MappingCoordinates] = []
+    for sheet_name, rows in sheets.items():
+        for row_index, row in enumerate(rows):
+            labels = [_normalized_label(value) for value in row]
+            resolved: dict[str, int] = {}
+            ambiguous = False
+            for field, aliases in _DETERMINISTIC_HEADER_LABELS.items():
+                matches = [
+                    column
+                    for column, label in enumerate(labels)
+                    if label in aliases
+                ]
+                if len(matches) != 1:
+                    ambiguous = True
+                    break
+                resolved[field] = matches[0]
+            if ambiguous or len(set(resolved.values())) != len(resolved):
+                continue
+            row_type_matches = [
+                column
+                for column, label in enumerate(labels)
+                if label in {"类型", "订单类型"}
+            ]
+            if len(row_type_matches) > 1:
+                continue
+            row_type_column = row_type_matches[0] if row_type_matches else None
+            row_type_map: dict[str, RowTypeName] = {}
+            if row_type_column is not None:
+                for detail_row in rows[row_index + 1 :]:
+                    if row_type_column >= len(detail_row):
+                        continue
+                    value = str(detail_row[row_type_column]).strip()
+                    normalized = _normalized_label(value)
+                    mapped = _DETERMINISTIC_ROW_TYPES.get(normalized)
+                    if mapped is not None:
+                        row_type_map[value] = mapped
+            candidates.append(
+                MappingCoordinates(
+                    sheet=sheet_name,
+                    header_row=row_index,
+                    col_order_no=resolved["col_order_no"],
+                    col_guest=resolved["col_guest"],
+                    col_checkin=resolved["col_checkin"],
+                    col_checkout=resolved["col_checkout"],
+                    col_amount=resolved["col_amount"],
+                    col_row_type=row_type_column,
+                    row_type_map=row_type_map,
+                )
+            )
+    return candidates[0] if len(candidates) == 1 else None
+
+
 def _mapped_business_labels(row: list, coordinates: MappingCoordinates) -> tuple[str, ...]:
     return tuple(_normalized_label(_cell(row, col)) for col in (
         coordinates.col_order_no,

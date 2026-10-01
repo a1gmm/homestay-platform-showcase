@@ -1,4 +1,5 @@
-import { Alert, Spin, Typography } from "antd";
+import { useState } from "react";
+import { Alert, Input, List, Spin, Typography } from "antd";
 
 import type { SettlementPreflightIssue, SettlementPreflightReport } from "@/lib/types";
 
@@ -22,6 +23,9 @@ function issueReference(issue: SettlementPreflightIssue): string {
   const amountLabel = issue.code === "nonplatform_commission"
     ? "可能影响结算"
     : "金额";
+  const identity = [issue.guest_name, issue.room_name && `${issue.room_name}房`,
+    issue.check_in && issue.check_out && `${issue.check_in} 至 ${issue.check_out}`].filter(Boolean).join(" · ");
+  if (identity) return [identity, issue.amount != null && `${amountLabel} ¥${issue.amount}`].filter(Boolean).join(" · ");
   return [
     issue.order_id && `订单 ${issue.order_id}`,
     issue.room_id && `房间 ${issue.room_id}`,
@@ -39,37 +43,49 @@ export default function SettlementPreflightAlert({
   report?: SettlementPreflightReport;
   loading: boolean;
 }) {
+  const [search, setSearch] = useState("");
   if (loading) {
     return <Alert type="info" showIcon message={<><Spin size="small" /> 正在执行月结体检…</>} />;
   }
   if (!report) return null;
-  if (!report.blocking) {
+  const explanations = report.explanations ?? [];
+  const missing = explanations.filter((item) => item.code === "service_fee_missing");
+  const explained = explanations.filter((item) => item.code !== "service_fee_missing");
+  const filtered = explained.filter((item) => `${item.guest_name ?? ""} ${item.room_name ?? ""} ${item.message}`.includes(search.trim()));
+  function renderItem(issue: SettlementPreflightIssue, index: number) {
+    const href = issue.expense_id
+      ? `/finance?tab=expenses&month=${encodeURIComponent(issue.expense_date?.slice(0, 7) ?? report!.billing_month)}&search=${encodeURIComponent(issue.expense_id)}`
+      : issue.order_id ? `/orders?keyword=${encodeURIComponent(issue.order_id)}` : undefined;
     return (
-      <Alert
-        type="success"
-        showIcon
-        message="月结体检通过，可以生成或确认结算"
-        description={`${report.billing_month} 未发现佣金、费用归属或平台账单异常。`}
-      />
+      <li key={`${issue.code}-${issue.expense_id ?? issue.order_id ?? index}-${index}`} style={{ marginBottom: 16, overflowWrap: "anywhere" }}>
+        <Text strong>{ISSUE_LABELS[issue.code] ?? issue.message}</Text>
+        {ISSUE_LABELS[issue.code] && <div>{ISSUE_MESSAGES[issue.code] ?? issue.message}</div>}
+        {issueReference(issue) && <div><Text type="secondary">{issueReference(issue)}</Text></div>}
+        {issue.difference != null && <div>已登记 ¥{issue.current_amount} · 应登记 ¥{issue.expected_amount} · 差额 ¥{issue.difference}</div>}
+        {issue.next_action && issue.next_action !== issue.message && <div>{issue.next_action}</div>}
+        {href && <a href={href} style={{ display: "inline-flex", alignItems: "center", minHeight: 44 }}>查看相关{issue.expense_id ? "费用" : "订单"}</a>}
+      </li>
     );
   }
-
   return (
     <Alert
-      type="error"
+      type={report.blocking ? "error" : missing.length ? "warning" : "success"}
       showIcon
-      message={`发现 ${report.issues.length} 项阻断问题，暂不能结算`}
-      description={(
-        <ul style={{ margin: "8px 0 0", paddingLeft: 20 }}>
-          {report.issues.map((issue, index) => (
-            <li key={`${issue.code}-${issue.order_id ?? issue.expense_id ?? issue.recon_diff_id ?? index}`}>
-              <Text strong>{ISSUE_LABELS[issue.code] ?? issue.code}</Text>
-              {`：${ISSUE_MESSAGES[issue.code] ?? issue.message}`}
-              {issueReference(issue) ? <div><Text type="secondary">{issueReference(issue)}</Text></div> : null}
-            </li>
-          ))}
-        </ul>
-      )}
+      message={report.blocking ? `发现 ${report.issues.length} 项阻断问题，暂不能结算`
+        : missing.length ? `有 ${missing.length} 笔服务费待入账，生成方案时会列出补录`
+        : "月结体检通过，可以生成或确认结算"}
+      description={<>
+        <div>{report.billing_month} · 已检查费用承担方、续住关系、跨月记账、重复费用及平台差异。检查依据为当前系统记录。</div>
+        {!!report.issues.length && <ul style={{ margin: "12px 0 0", paddingLeft: 20 }}>{report.issues.map(renderItem)}</ul>}
+        {!!missing.length && <details><summary style={{ cursor: "pointer", minHeight: 44, paddingTop: 12 }}>查看 {missing.length} 笔待补费用</summary>
+          <ul style={{ paddingLeft: 20 }}>{missing.map(renderItem)}</ul></details>}
+        {!!explained.length && <details><summary style={{ cursor: "pointer", minHeight: 44, paddingTop: 12 }}>为什么订单条数、晚数和费用不一样（{explained.length} 笔说明）</summary>
+          <Input aria-label="按姓名或房号查计费说明" placeholder="输入客人姓名、房号或费用项目" value={search} onChange={(event) => setSearch(event.target.value)} style={{ maxWidth: 420, margin: "8px 0", minHeight: 44 }} />
+          <List dataSource={filtered} locale={{ emptyText: "没有找到匹配的计费说明，请换个姓名或房号。" }}
+            pagination={filtered.length > 10 ? { pageSize: 10, size: "small", showSizeChanger: false, simple: true } : false}
+            renderItem={(item, index) => <List.Item><ul style={{ paddingLeft: 20, margin: 0 }}>{renderItem(item, index)}</ul></List.Item>} />
+        </details>}
+      </>}
     />
   );
 }

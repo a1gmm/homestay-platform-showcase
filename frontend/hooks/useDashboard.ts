@@ -1,14 +1,13 @@
 import { useQuery } from "@tanstack/react-query";
 import { dashboardApi } from "@/lib/api";
+import { todayCNYearMonth } from "@/lib/utils";
 
 /**
  * Single-batch dashboard query. One HTTP round trip returns:
  *   { today, monthly, trend, channel, comparison }
  */
 export function useDashboard() {
-  const today = new Date();
-  const year = today.getFullYear();
-  const month = today.getMonth() + 1;
+  const { year, month } = todayCNYearMonth();
 
   const overviewQuery = useQuery({
     queryKey: ["dashboard", "overview", year, month],

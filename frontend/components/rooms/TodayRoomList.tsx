@@ -8,6 +8,7 @@ import type { CalendarRoom, CalendarDay } from "@/lib/types";
 import { tokens } from "@/lib/design-tokens";
 import { ROOM_STATUS, TRIAL_BADGE } from "./constants";
 import { todayCNString } from "@/lib/utils";
+import { usePrivacyMode } from "@/hooks/usePrivacyMode";
 
 const STATUS_LABEL: Record<string, string> = {
   pending_confirm: "待确认",
@@ -75,6 +76,7 @@ export function TodayRoomList({
   onOrderClick,
   onCreateOrder,
 }: Props) {
+  const privacyMode = usePrivacyMode();
   const targetDate = date || todayCNString();
 
   const rows: Row[] = useMemo(() => {
@@ -136,7 +138,9 @@ export function TodayRoomList({
       render: (_, r) => {
         if (!r.today) {
           return (
-            <span style={{ color: tokens.color.text.tertiary, fontSize: 12 }}>空闲</span>
+            <span style={{ color: tokens.color.text.tertiary, fontSize: 12 }}>
+              {r.room_status === "occupied" ? "客人仍在住，请核对退房" : "暂无当日预订"}
+            </span>
           );
         }
         if (r.isBlock) {
@@ -204,7 +208,7 @@ export function TodayRoomList({
             </Button>
           );
         }
-        if (r.isBlock) {
+        if (r.isBlock || privacyMode) {
           return (
             <span style={{ fontSize: 11, color: tokens.color.text.tertiary }}>—</span>
           );
@@ -245,9 +249,9 @@ export function TodayRoomList({
         onRow={(r) => ({
           onClick: () => {
             if (r.today?.order_id) onOrderClick(r.today.order_id);
-            else if (!r.isBlock) onCreateOrder(r.room_id, targetDate);
+            else if (!r.isBlock && !privacyMode) onCreateOrder(r.room_id, targetDate);
           },
-          style: { cursor: "pointer" },
+          style: { cursor: r.today?.order_id || (!r.isBlock && !privacyMode) ? "pointer" : "default" },
         })}
       />
     </div>

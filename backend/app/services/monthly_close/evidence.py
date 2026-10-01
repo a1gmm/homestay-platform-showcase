@@ -12,12 +12,14 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.monthly_close import (
+    MONTHLY_CLOSE_ACTIVE_SOURCE_TYPES,
     MONTHLY_CLOSE_SOURCE_TYPES,
     MONTHLY_CLOSE_STEP_KEYS,
     MonthlyCloseCycle,
     MonthlyCloseDocument,
     MonthlyCloseInboxItem,
     MonthlyCloseSourceRequirement,
+    uses_legacy_utility_contract,
 )
 from app.services.monthly_close.adapters import (
     exception_clearance_snapshot,
@@ -32,12 +34,12 @@ from app.services.monthly_close.adapters import (
 
 
 _SOURCE_LABELS = {
-    "cleaning_statement": "保洁供应商对账单",
-    "linen_statement": "布草供应商对账单",
-    "utility_receipt": "水电已收明细",
-    "utility_expense": "水电费用明细",
+    "cleaning_statement": "保洁打扫记录",
+    "linen_statement": "布草／洗涤记录",
+    "utility_receipt": "历史水电资料",
+    "utility_expense": "水电支出",
     "ota_statement": "OTA平台账单",
-    "operating_expenses": "运营支出明细",
+    "operating_expenses": "其他运营支出",
 }
 
 
@@ -57,7 +59,10 @@ def step_confirmation(step_key: str, summary: dict[str, Any]) -> dict[str, Any]:
         )
         return {
             "confirmation_title": f"确认 {completed} 类月结资料齐全",
-            "confirmation_items": [f"{completed} / 6 类资料已有明确结果", "缺失资料 0 项"],
+            "confirmation_items": [
+                f"{completed} / {len(sources) or len(MONTHLY_CLOSE_ACTIVE_SOURCE_TYPES)} 类资料已有明确结果",
+                "缺失资料 0 项",
+            ],
         }
     if step_key == "order_integrity":
         orders = _int(summary, "order_count")
@@ -76,6 +81,16 @@ def step_confirmation(step_key: str, summary: dict[str, Any]) -> dict[str, Any]:
     if step_key == "utilities":
         closed = _int(summary, "closed_batch_count")
         imported = _int(summary, "operating_expense_import_count")
+        if "processed_utility_document_count" in summary:
+            processed = _int(summary, "processed_utility_document_count")
+            return {
+                "confirmation_title": "确认本月水电支出和运营支出已核对",
+                "confirmation_items": [
+                    f"已确认水电支出资料 {processed} 份",
+                    f"已导入运营支出文件 {imported} 份",
+                    "阻断异常 0 项",
+                ],
+            }
         return {
             "confirmation_title": "确认本月水电和运营支出已核对",
             "confirmation_items": [f"已关闭水电批次 {closed} 个", f"已导入运营支出文件 {imported} 份", "阻断异常 0 项"],
@@ -185,6 +200,41 @@ def _canonical_hash(value: dict[str, Any]) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
+def compatible_confirmation_hashes(evidences, confirmations) -> dict[str, str]:
+    """Project intact old confirmations onto the current fact-only hash chain.
+
+    Never rewrite stored evidence. Only the non-blocking fee explanation and
+    an already verified predecessor's hash may differ from today's snapshot.
+    """
+    result = {}
+    predecessor_aliases = {None}
+    for evidence in evidences:
+        saved = confirmations.get(evidence.step_key)
+        aliases = {evidence.evidence_hash}
+        if saved is not None:
+            matched = saved.evidence_hash == evidence.evidence_hash
+            old = saved.evidence
+            if not matched and isinstance(old, dict):
+                def fact_snapshot(snapshot):
+                    value = {**snapshot}
+                    if value.get("step_key") == "preflight":
+                        value["summary"] = {k: v for k, v in value.get("summary", {}).items()
+                                            if k != "fee_explanations"}
+                    return value
+                old_facts = fact_snapshot(old)
+                intact = saved.evidence_hash in {_canonical_hash(old), _canonical_hash(old_facts)}
+                if intact and old.get("dependency_hash") in predecessor_aliases:
+                    old_facts["dependency_hash"] = evidence.snapshot.get("dependency_hash")
+                    matched = old_facts == fact_snapshot(evidence.snapshot)
+            if matched:
+                result[evidence.step_key] = evidence.evidence_hash
+                aliases.add(saved.evidence_hash)
+            else:
+                result[evidence.step_key] = saved.evidence_hash
+        predecessor_aliases = aliases
+    return result
+
+
 def build_evidence_chain(
     billing_month: str,
     raw_by_step: dict[str, dict[str, Any]],
@@ -210,7 +260,16 @@ def build_evidence_chain(
             ),
             **step_confirmation(key, raw.get("summary", {})),
         }
-        evidence_hash = _canonical_hash(snapshot)
+        # Expected fee explanations are presentation, not approval blockers.
+        # Keep them visible without invalidating historical confirmations or
+        # downstream steps when a normal fee is posted and its notice disappears.
+        hash_snapshot = snapshot
+        if key == "preflight":
+            hash_snapshot = {**snapshot, "summary": {
+                name: value for name, value in snapshot["summary"].items()
+                if name != "fee_explanations"
+            }}
+        evidence_hash = _canonical_hash(hash_snapshot)
         result.append(
             StepEvidence(
                 step_key=key,
@@ -223,8 +282,12 @@ def build_evidence_chain(
 
 
 async def _source_collection_snapshot(
-    db: AsyncSession, cycle: MonthlyCloseCycle
+    db: AsyncSession, cycle: MonthlyCloseCycle,
+    *, financial_case: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    if financial_case is None:
+        from app.services.monthly_close.financial_case_bridge import build_financial_case_snapshot
+        financial_case = await build_financial_case_snapshot(db, cycle)
     requirements = list(
         (
             await db.execute(
@@ -245,9 +308,20 @@ async def _source_collection_snapshot(
             )
         ).scalars()
     )
+    legacy_contract = uses_legacy_utility_contract(cycle, documents=documents)
+    source_types = (
+        MONTHLY_CLOSE_SOURCE_TYPES
+        if legacy_contract
+        else MONTHLY_CLOSE_ACTIVE_SOURCE_TYPES
+    )
     documents_by_type: dict[str, list[MonthlyCloseDocument]] = {}
     for document in documents:
-        documents_by_type.setdefault(document.source_type, []).append(document)
+        logical_type = (
+            "utility_expense"
+            if not legacy_contract and document.source_type == "utility_receipt"
+            else document.source_type
+        )
+        documents_by_type.setdefault(logical_type, []).append(document)
 
     pending_inbox = list(
         (
@@ -264,12 +338,18 @@ async def _source_collection_snapshot(
 
     issues: list[dict[str, Any]] = []
     sources: list[dict[str, Any]] = []
-    for source_type in MONTHLY_CLOSE_SOURCE_TYPES:
+    for source_type in source_types:
         requirement = requirement_by_type.get(source_type)
         state = requirement.state if requirement is not None else "pending"
         source_documents = sorted(
             documents_by_type.get(source_type, []), key=lambda item: item.sha256
         )
+        originals = [source for source in financial_case["sources"]
+                     if source_type in source["source_types"]]
+        if originals and state == "pending":
+            state = "uploaded"
+        if source_documents and state == "pending" and not legacy_contract:
+            state = "uploaded"
         if state == "pending":
             issues.append(
                 {
@@ -279,7 +359,7 @@ async def _source_collection_snapshot(
                     "message": "请上传资料，或填写原因标记为不适用。",
                 }
             )
-        elif state == "uploaded" and not source_documents:
+        elif state == "uploaded" and not source_documents and not originals:
             issues.append(
                 {
                     "code": "source_document_missing",
@@ -295,6 +375,7 @@ async def _source_collection_snapshot(
                 "not_applicable_reason": (
                     requirement.not_applicable_reason if requirement is not None else None
                 ),
+                **({"original_sources": originals} if originals else {}),
                 "documents": [
                     {
                         "document_id": document.document_id,
@@ -339,9 +420,15 @@ async def _source_collection_snapshot(
 
 
 async def build_step_evidences(
-    db: AsyncSession, cycle: MonthlyCloseCycle
+    db: AsyncSession, cycle: MonthlyCloseCycle,
+    *, financial_case: dict[str, Any] | None = None,
 ) -> list[StepEvidence]:
-    source_collection = await _source_collection_snapshot(db, cycle)
+    from app.services.monthly_close.financial_case_bridge import (
+        build_financial_case_snapshot, merge_financial_case_evidence,
+    )
+    if financial_case is None:
+        financial_case = await build_financial_case_snapshot(db, cycle)
+    source_collection = await _source_collection_snapshot(db, cycle, financial_case=financial_case)
     order_integrity = await order_integrity_snapshot(db, cycle)
     service_fees = await service_fees_snapshot(db, cycle)
     utilities = await utilities_snapshot(db, cycle)
@@ -359,4 +446,34 @@ async def build_step_evidences(
         "settlement_review": await settlement_review_snapshot(db, cycle),
         "owner_confirmation": await owner_confirmation_snapshot(db, cycle),
     }
+    merge_financial_case_evidence(raw, financial_case)
+    raw["exception_clearance"] = exception_clearance_snapshot(
+        raw["order_integrity"], raw["service_fees"], raw["utilities"], raw["ota_statements"]
+    )
     return build_evidence_chain(cycle.billing_month, raw)
+
+
+async def build_role_workflow_evidence(
+    db: AsyncSession,
+    cycle: MonthlyCloseCycle,
+    *,
+    actor_role: str,
+) -> list[dict[str, Any]]:
+    """Load full workflow evidence only for explicitly financial roles.
+
+    The projection service calls this after resolving the actor role.  Keeping
+    the role gate before ``build_step_evidences`` is intentional: low-privilege
+    projections never query owner settlements, OTA amounts, unrelated orders,
+    or other workflow evidence and therefore do not depend on JSON redaction
+    after broad ORM loads.
+    """
+    if actor_role not in {"admin", "finance"}:
+        return []
+    return [
+        {
+            "step_key": evidence.step_key,
+            "evidence_hash": evidence.evidence_hash,
+            **evidence.snapshot,
+        }
+        for evidence in await build_step_evidences(db, cycle)
+    ]

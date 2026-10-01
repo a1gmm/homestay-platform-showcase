@@ -3,6 +3,7 @@ import type {
   ReleaseAnnouncementClient,
   ReleaseAnnouncementList,
 } from "./release-announcements";
+import { parseMonthlyCloseEventStream, type AssistantReply, type MonthlyCloseDurableReceipt, type MonthlyCloseEventPage, type MonthlyCloseProjectedDocument, type MonthlyCloseProjection } from "./monthly-close";
 
 export const STAFF_TOKEN_KEY = "staff_access_token";
 
@@ -174,4 +175,30 @@ export const staffDataApi = {
       notes,
       ...deposit,
     }),
+};
+
+export const staffMonthlyCloseApi = {
+  getProjection: (billingMonth: string) =>
+    staffApi.get<MonthlyCloseProjection>(`/monthly-close/${billingMonth}/projection`),
+  listEvents: async (billingMonth: string, cursor: string) => {
+    const response = await staffApi.get<string>(`/monthly-close/${billingMonth}/events`, {
+      headers: { Accept: "text/event-stream", ...(cursor ? { "Last-Event-ID": cursor } : {}) },
+      responseType: "text",
+    });
+    return { ...response, data: parseMonthlyCloseEventStream(response.data, cursor) as MonthlyCloseEventPage };
+  },
+  postMessage: (billingMonth: string, text: string, attachmentIds: string[] = [], contextRunId?: string) =>
+    staffApi.post<AssistantReply>(`/monthly-close/${billingMonth}/messages`, { text, attachment_ids: attachmentIds, ...(contextRunId ? { context_run_id: contextRunId } : {}) }),
+  getProjectionDocument: (billingMonth: string, documentId: string) =>
+    staffApi.get<MonthlyCloseProjectedDocument>(`/monthly-close/${billingMonth}/projection/documents/${documentId}`),
+  uploadDocument: (billingMonth: string, sourceType: string, file: File) => {
+    const form = new FormData();
+    form.append("file", file);
+    return staffApi.post<MonthlyCloseDurableReceipt>(`/monthly-close/${billingMonth}/staff-documents`, form, { params: { source_type: sourceType } });
+  },
+  receiveInbox: (billingMonth: string, file: File) => {
+    const form = new FormData();
+    form.append("file", file);
+    return staffApi.post<MonthlyCloseDurableReceipt>(`/monthly-close/${billingMonth}/staff-inbox`, form);
+  },
 };

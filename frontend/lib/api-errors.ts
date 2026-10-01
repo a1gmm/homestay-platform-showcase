@@ -19,6 +19,12 @@ export function isDuplicateOrderError(error: unknown): boolean {
   );
 }
 
+export function extractErrorCode(error: unknown): string | undefined {
+  const ax = error as AxiosError<{ detail?: { code?: string } }>;
+  const code = ax?.response?.data?.detail?.code;
+  return typeof code === "string" ? code : undefined;
+}
+
 export function extractErrorMessage(error: unknown, fallback?: string): string {
   if (error instanceof Error && error.name === "PrivacyModeReadOnlyError") {
     return error.message;
@@ -26,8 +32,11 @@ export function extractErrorMessage(error: unknown, fallback?: string): string {
   const ax = error as AxiosError<{
     detail?: string | Array<{ msg?: string }> | { message?: string };
   }>;
-  if (ax?.code === "ECONNABORTED") {
-    return "请求超时，可能是后端冷启动或网络抖动，请稍后重试";
+  if (ax?.code === "ECONNABORTED" || ax?.code === "ETIMEDOUT") {
+    if (/\/auth\/login(?:\?|$)/.test(ax.config?.url ?? "")) {
+      return "登录连接超时，请切换 Wi-Fi 或手机流量后重试；若仍失败，请将发生时间反馈给管理员。";
+    }
+    return "请求超时，请检查网络后重试；保存或付款操作请先确认是否已成功。";
   }
   if (ax && !ax.response) {
     return "网络异常，请检查网络后重试";

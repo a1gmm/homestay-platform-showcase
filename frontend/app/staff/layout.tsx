@@ -1,7 +1,7 @@
 "use client";
 
 import { usePathname, useRouter } from "next/navigation";
-import { HomeOutlined, AppstoreOutlined, UserOutlined } from "@ant-design/icons";
+import { HomeOutlined, AppstoreOutlined, UserOutlined, FileDoneOutlined } from "@ant-design/icons";
 import { useStaffStore } from "@/lib/staff-store";
 import { ReleaseAnnouncementGate } from "@/components/release-announcements/ReleaseAnnouncementGate";
 import { staffReleaseAnnouncementClient } from "@/lib/staff-api";
@@ -15,6 +15,7 @@ export default function StaffLayout({ children }: { children: React.ReactNode })
   const showTabs =
     pathname === "/staff/cleaner" ||
     pathname === "/staff/keeper" ||
+    pathname === "/staff/monthly-close" ||
     pathname === "/staff/me";
 
   // 保洁: 任务 + 我的
@@ -24,11 +25,13 @@ export default function StaffLayout({ children }: { children: React.ReactNode })
   const tabs = isCleaner
     ? [
         { key: "/staff/cleaner", label: "任务", icon: <HomeOutlined /> },
+        { key: "/staff/monthly-close", label: "月结", icon: <FileDoneOutlined /> },
         { key: "/staff/me", label: "我的", icon: <UserOutlined /> },
       ]
     : [
         { key: "/staff/keeper", label: "今日", icon: <HomeOutlined /> },
         { key: "/staff/keeper?tab=rooms", label: "房态", icon: <AppstoreOutlined /> },
+        { key: "/staff/monthly-close", label: "月结", icon: <FileDoneOutlined /> },
         { key: "/staff/me", label: "我的", icon: <UserOutlined /> },
       ];
 
@@ -50,6 +53,7 @@ export default function StaffLayout({ children }: { children: React.ReactNode })
 
       {showTabs && (
         <nav
+          aria-label="员工导航"
           style={{
             position: "fixed",
             left: 0,

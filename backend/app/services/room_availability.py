@@ -97,7 +97,24 @@ async def check_room_conflict(
         )
         .limit(1)
     )
-    return block_result.scalar_one_or_none() is not None
+    if block_result.scalar_one_or_none() is not None:
+        return True
+
+    # Room remains locked from the start of this function. Re-read arrival
+    # evidence under that lock before placing another guest into an overdue
+    # stay today; planned checkout-day turnover and future bookings keep the
+    # normal half-open calendar rules above.
+    from app.core.datetime_helpers import today_cn
+    from app.services.room_presence import current_room_presence
+    today = today_cn()
+    if check_in <= today < check_out:
+        present = await current_room_presence(
+            db, today, room_id=room_id, exclude_order_id=exclude_order_id,
+            exclude_order_room_id=exclude_order_room_id,
+            exclude_stay_group_id=exclude_stay_group_id,
+        )
+        return any(room.checkout_date < today for room in present)
+    return False
 
 
 async def get_available_rooms(
@@ -112,6 +129,7 @@ async def get_available_rooms(
       - 静态 maintenance/locked 排除（无限期硬锁；按日期锁请用 RoomBlock）
       - 与窗口重叠的 active 订单 → 排除
       - 与窗口重叠的 RoomBlock → 排除
+      - 窗口覆盖今天且实际在住已超期未退房 → 排除
     静态 occupied/reserved/pending_clean/cleaning 不参与判断。
 
     exclude_order_id：编辑订单场景传本单 id，本单自己的占用不算冲突
@@ -155,6 +173,13 @@ async def get_available_rooms(
     )
     blocked = {r[0] for r in conflicted_blocks.all()}
 
+    from app.core.datetime_helpers import today_cn
+    from app.services.room_presence import current_room_presence
+    today = today_cn()
+    if check_in <= today < check_out:
+        present = await current_room_presence(db, today, exclude_order_id=exclude_order_id)
+        blocked.update(room.room_id for room in present if room.checkout_date < today)
+
     return sorted(all_room_ids - conflicted - blocked)
 
 
@@ -164,9 +189,8 @@ async def compute_effective_status(db: AsyncSession, on_date: date) -> dict[str,
     优先级（高→低）：
       1. 物理/事件态 room_status ∈ {维修, 锁房, 待清扫, 清扫中} —— 手动/事件驱动，
          订单算不出，优先级最高（业主/前台决策）。
-      2. 在住(occupied) —— 有客人「已办入住」且住宿区间覆盖 on_date。
-         入住中判据用订单状态（checked_in / pending_checkout），而非仅日期覆盖，
-         避免今天到店尚未办入住的订单被提前算成在住。
+      2. 在住(occupied) —— 今天按实际逐房入住/退房证据，与首页同源。
+         预计退房日到来不代表客人已走；历史/未来仍使用预订日期区间投影。
       3. 已预订(reserved) —— on_date「今明两天内」(on_date..on_date+1) 有未取消订单到店，
          且该房当日不在住。更远的未来预订仍算空置。
       4. 锁房区间(RoomBlock) —— 覆盖当日 → 维修/锁房。
@@ -174,19 +198,24 @@ async def compute_effective_status(db: AsyncSession, on_date: date) -> dict[str,
     """
     from app.models.room import Room, RoomStatus
 
-    rooms = (await db.execute(select(Room.room_id, Room.room_status))).all()
+    rooms = (await db.execute(select(Room.room_id, Room.room_status).where(Room.is_deleted == False))).all()
 
-    # 在住：客人已办入住(含待退房，人还在)且区间覆盖当日。
-    # 单间退房：已 checked_out_at 的房间行排除——即便整单仍 checked_in（还有别的房在住），
-    # 这间的客人已走，别再算成在住（否则该房打扫完释放后会被误判回在住）。
-    IN_HOUSE = [OrderStatus.checked_in, OrderStatus.pending_checkout]
-    occ = await db.execute(
-        select(OrderRoom.room_id).distinct().join(Order, Order.order_id == OrderRoom.order_id)
-        .where(Order.is_deleted == False, Order.order_status.in_(IN_HOUSE),
-               OrderRoom.room_id.isnot(None), OrderRoom.checked_out_at.is_(None),
-               OrderRoom.check_in_date <= on_date, OrderRoom.check_out_date > on_date)
-    )
-    occupied = {r[0] for r in occ.all()}
+    from app.core.datetime_helpers import today_cn
+    from app.services.room_presence import current_room_presence, room_arrival_predicate
+    if on_date == today_cn():
+        occupied = {room.room_id for room in await current_room_presence(db, on_date)}
+    else:
+        # Retain date-bounded projections: an overdue actual stay today must
+        # not silently block every future date or rewrite historical calendars.
+        occ = await db.execute(
+            select(OrderRoom.room_id).distinct().join(Order, Order.order_id == OrderRoom.order_id)
+            .where(Order.is_deleted == False,
+                   Order.order_status.in_([OrderStatus.checked_in, OrderStatus.pending_checkout]),
+                   OrderRoom.room_id.isnot(None), OrderRoom.checked_out_at.is_(None),
+                   room_arrival_predicate(),
+                   OrderRoom.check_in_date <= on_date, OrderRoom.check_out_date > on_date)
+        )
+        occupied = {r[0] for r in occ.all()}
 
     # 已预订：今明两天内到店的未取消/未完成订单（尚未入住）
     INACTIVE = [OrderStatus.cancelled, OrderStatus.completed]

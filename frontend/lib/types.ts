@@ -83,6 +83,13 @@ export type ExpenseCategory =
   | "utilities"
   | "supplies"
   | "platform_fee"
+  | "payroll"
+  | "social_insurance"
+  | "bank_fee"
+  | "rent"
+  | "operating_expense"
+  | "cleaning_supplier_cost"
+  | "laundry_supplier_cost"
   | "tax"
   | "other"
   | "public_utilities"
@@ -108,7 +115,7 @@ export type TaskType =
   | "return_deposit"
   | "custom";
 
-export type TaskStatus = "pending" | "in_progress" | "done";
+export type TaskStatus = "pending" | "in_progress" | "done" | "cancelled";
 
 export type TaskPriority = "low" | "medium" | "high" | "urgent";
 
@@ -289,6 +296,8 @@ export interface BypmsAdminSyncOverview {
   latest_cycle: BypmsAdminSyncCycle | null;
   last_successful_or_partial_at: string | null;
   last_successful_or_partial_age_seconds: number | null;
+  last_fully_successful_at?: string | null;
+  last_fully_successful_age_seconds?: number | null;
   pending_retry_count: number;
   open_conflicts_by_field: Partial<Record<ManualOverrideField, number>>;
   staging_watermark: string | null;
@@ -858,6 +867,8 @@ export interface ExpenseOut {
   amount: number;
   description: string;
   expense_date: string;
+  payment_date?: string | null;
+  paid_by?: ExpensePayer | null;
   room_id?: string | null;
   order_id?: string | null;
   payer: ExpensePayer;
@@ -1002,11 +1013,25 @@ export interface TaskCreate {
 export interface TaskUpdate {
   title?: string;
   description?: string;
-  assignee_id?: string;
+  assignee_id?: string | null;
   status?: TaskStatus;
   priority?: TaskPriority;
-  deadline?: string;
+  deadline?: string | null;
   notes?: string;
+}
+
+export interface TaskWorkspace {
+  items: TaskOut[];
+  total: number;
+  page: number;
+  page_size: number;
+  counts: Record<string, number>;
+  active: number;
+  overdue: number;
+  no_deadline: number;
+  unassigned: number;
+  aged: number;
+  needs_attention: number;
 }
 
 // ─── Dashboard ───────────────────────────────────────────────────────────────
@@ -1031,6 +1056,9 @@ export interface DashboardToday {
   checkout_today: number;
   cleaning_needed: number;
   overdue_tasks: number;
+  overdue_checkout_count?: number;
+  overdue_checkout_rooms?: string[];
+  task_attention?: Pick<TaskWorkspace, "active" | "overdue" | "no_deadline" | "unassigned" | "aged" | "needs_attention">;
   checked_in: number;
   total_rooms: number;
   occupancy_rate: number;
@@ -1070,6 +1098,10 @@ export interface DashboardMonthly {
   total_net_revenue: number;
   total_expenses: number;
   gross_profit: number;
+  recorded_operating_costs?: number | null;
+  standard_service_fees?: number | null;
+  balance_after_recorded_costs?: number | null;
+  cost_payment_unconfirmed_count?: number | null;
   occ: number;
   adr: number;
   revpar: number;
@@ -1084,6 +1116,8 @@ export interface RevenueTrendItem {
 // ─── Calendar ────────────────────────────────────────────────────────────────
 
 export interface CalendarDay {
+  /** 逐房入住/退房展示口径；status 仍是订单状态，操作逻辑不读此字段。 */
+  display_status?: string;
   order_id: string | null;        // 房间屏蔽 (RoomBlock) 时为 null
   order_room_id?: string;         // Multi-room: 该格属于哪一行 OrderRoom（拖拽换房用）
   stay_group_id?: string | null;  // 续住关联组号：同组相邻同房格渲染成一条连续横条
@@ -1210,6 +1244,15 @@ export interface SettlementPreflightIssue {
   recon_diff_id: string | null;
   platform_order_id: string | null;
   amount: string | null;
+  guest_name?: string | null;
+  room_name?: string | null;
+  check_in?: string | null;
+  check_out?: string | null;
+  expense_date?: string | null;
+  next_action?: string | null;
+  current_amount?: string | null;
+  expected_amount?: string | null;
+  difference?: string | null;
 }
 
 export interface SettlementPreflightReport {
@@ -1217,6 +1260,7 @@ export interface SettlementPreflightReport {
   blocking: boolean;
   counts: Record<string, number>;
   issues: SettlementPreflightIssue[];
+  explanations?: SettlementPreflightIssue[];
 }
 
 export interface OwnerSettlementOut {
@@ -1379,4 +1423,17 @@ export interface HostingLeadCreate {
 export interface HostingLeadOut {
   lead_id: string;
   status: "ok" | "already_registered";
+}
+
+
+export interface BypmsOrderDiagnosis {
+  available: boolean;
+  found_in_staging: boolean;
+  fetched_at: string | null;
+  staging_stale: boolean;
+  order_ids: string[];
+  candidate_order_ids: string[];
+  state: "not_found" | "missing_order" | "linked" | "manual_review" | "cancelled" | "unavailable";
+  reasons: string[];
+  next_action: string;
 }

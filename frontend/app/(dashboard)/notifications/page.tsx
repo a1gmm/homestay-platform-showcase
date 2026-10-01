@@ -1,5 +1,7 @@
 "use client";
 
+import { safeActionUrl } from "@/lib/safe-notification-url";
+
 import { useState } from "react";
 import {
   Card,
@@ -42,9 +44,6 @@ const TYPE_LABELS: Record<string, { label: string; color: string }> = {
 
 type FilterType = "all" | "unread" | "read";
 
-export function safeActionUrl(value: string | null | undefined) {
-  return value && value.startsWith("/") && !value.startsWith("//") && !value.includes("\\") ? value : null;
-}
 
 export default function NotificationsPage() {
   const [filter, setFilter] = useState<FilterType>("all");

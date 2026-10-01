@@ -14,6 +14,7 @@ from app.models.expense import Expense, ExpenseCategory
 from app.models.monthly_close import MonthlyCloseDocument, MonthlyCloseServiceLine
 from app.models.order import Order
 from app.models.room import Room
+from app.services.billing_recon.parser import BillParseError
 from app.services.monthly_close.service_statement import (
     ServiceStatementMapping,
     ServiceStatementError,
@@ -147,6 +148,27 @@ async def process_service_document(
 ) -> list[MonthlyCloseServiceLine]:
     """Parse one immutable document and replace only its derived rows."""
     try:
+        if document.source_type == "cleaning_statement":
+            from app.services.monthly_close.cleaning_work_log import parse_cleaning_work_log
+            entries = parse_cleaning_work_log(document.content, document.filename, billing_month)
+            if entries is not None:
+                # A daily work log is successfully recognized activity evidence;
+                # it has no supplier amounts to map into service invoice lines.
+                await db.execute(delete(MonthlyCloseServiceLine).where(
+                    MonthlyCloseServiceLine.document_id == document.document_id))
+                document.processing_status = "stored"
+                document.processing_error = None
+                document.metadata_ = {
+                    **(document.metadata_ or {}), "parser": "cleaning_work_log_v1",
+                    "mapping_required": False,
+                    "work_log_recognition": {
+                        "source_sha256": document.sha256, "record_count": len(entries),
+                        "normal_count": sum(e.service_type == "cleaning" for e in entries),
+                        "instay_count": sum(e.service_type == "instay_cleaning" for e in entries),
+                    },
+                }
+                await db.flush()
+                return []
         parsed = parse_service_statement(
             document.content,
             document.filename,
@@ -154,7 +176,7 @@ async def process_service_document(
             mapping=mapping,
             billing_month=billing_month,
         )
-    except ServiceStatementError as exc:
+    except (ServiceStatementError, BillParseError) as exc:
         document.processing_status = "rejected"
         document.processing_error = str(exc)
         document.metadata_ = {
@@ -228,7 +250,7 @@ async def process_service_document(
             }
             if len(canonical_order_ids) == 1:
                 canonical_order_ref = next(iter(canonical_order_ids))
-        business_key = "|".join(
+        grouping_key = "|".join(
             (
                 parsed_line.service_type,
                 canonical_order_ref,
@@ -236,16 +258,58 @@ async def process_service_document(
                 parsed_line.service_date.isoformat(),
             )
         )
-        grouped_lines[business_key].append(
+        grouped_lines[grouping_key].append(
             (parsed_line, canonical_room_id, room_candidates, room_match_method)
         )
 
     created: list[MonthlyCloseServiceLine] = []
-    for business_key, grouped in grouped_lines.items():
+    for grouping_key, grouped in grouped_lines.items():
         first_line, canonical_room_id, room_candidates, room_match_method = grouped[0]
         group_amount = sum(
             (line.amount for line, _, _, _ in grouped), Decimal("0.00")
         ).quantize(Decimal("0.01"))
+        quantities = [line.quantity for line, _, _, _ in grouped]
+        group_quantity = (
+            sum((item for item in quantities if item is not None), Decimal("0"))
+            .quantize(Decimal("0.001"))
+            if all(item is not None for item in quantities)
+            else None
+        )
+        unit_prices = {line.unit_price for line, _, _, _ in grouped}
+        group_unit_price = (
+            next(iter(unit_prices))
+            if len(unit_prices) == 1 and None not in unit_prices
+            else None
+        )
+        canonical_order_ref = _reference_key(first_line.order_ref)
+        category = _CATEGORY_BY_SERVICE_TYPE.get(first_line.service_type)
+        if category is not None and canonical_room_id and first_line.order_ref:
+            order_ids = {
+                candidate.order_id
+                for candidate in by_order.get(
+                    (
+                        category,
+                        canonical_room_id,
+                        _reference_key(first_line.order_ref),
+                    ),
+                    [],
+                )
+                if candidate.order_id
+            }
+            if len(order_ids) == 1:
+                canonical_order_ref = next(iter(order_ids))
+        business_key = "|".join(
+            (
+                document.source_type,
+                first_line.service_type,
+                canonical_order_ref,
+                canonical_room_id or _reference_key(first_line.room_ref),
+                first_line.service_date.isoformat(),
+                f"quantity={group_quantity if group_quantity is not None else '-'}",
+                f"unit_price={group_unit_price if group_unit_price is not None else '-'}",
+                f"amount={group_amount}",
+            )
+        )
         if canonical_room_id is None:
             match_status, expense_id, issue_code, match_detail = (
                 "ambiguous",

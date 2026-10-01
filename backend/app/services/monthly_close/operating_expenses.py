@@ -35,6 +35,7 @@ _ALIASES = {
     "room": {"关联房号", "房号", "房间", "房间号"},
     "payer": {"支付方", "承担方", "付款方"},
     "notes": {"备注", "附注"},
+    "reference": {"发票号", "发票编号", "单据号", "凭证号", "外部编号"},
 }
 _FUZZY_CATEGORIES = (
     ("厨房保洁", ExpenseCategory.kitchen_cleaning),
@@ -79,6 +80,8 @@ class ParsedOperatingExpenseRow:
     room_id: str | None
     payer: ExpensePayer
     notes: str | None
+    external_reference: str | None
+    event_key: str
     business_key: str
 
 
@@ -344,11 +347,86 @@ def _normalize_room(
     raise ValueError(f"房号未找到: {raw}")
 
 
-def _expense_id(document: MonthlyCloseDocument, sheet: str, row_number: int) -> str:
+def expense_id_for_business_key(business_key: str) -> str:
+    """Return one stable identity for one economic expense across every file replay."""
+    digest = sha256(business_key.encode("utf-8")).hexdigest()[:16].upper()
+    return f"EXM-{digest}"
+
+
+def _expense_id(
+    document: MonthlyCloseDocument, sheet: str, row_number: int
+) -> str:
+    """Keep the legacy direct-import identity scoped to its immutable document."""
     digest = sha256(
         f"{document.sha256}\x1f{sheet}\x1f{row_number}".encode("utf-8")
     ).hexdigest()[:16].upper()
     return f"EXM-{digest}"
+
+
+def operating_expense_row_fact(item: ParsedOperatingExpenseRow) -> dict:
+    return {
+        "amount": format(item.amount.quantize(Decimal("0.01")), ".2f"),
+        "business_key": item.event_key,
+        "category": item.category.value,
+        "description": item.description[:200],
+        "expense_date": item.expense_date.isoformat(),
+        "expense_id": expense_id_for_business_key(item.business_key),
+        "notes": item.notes[:200] if item.notes else None,
+        "payer": item.payer.value,
+        "room_id": item.room_id,
+    }
+
+
+def expense_matches_operating_fact(expense: Expense, fact: dict) -> bool:
+    return (
+        not expense.is_deleted
+        and expense.expense_id == fact["expense_id"]
+        and expense.category.value == fact["category"]
+        and format(Decimal(expense.amount).quantize(Decimal("0.01")), ".2f")
+        == fact["amount"]
+        and expense.description == fact["description"]
+        and expense.expense_date.isoformat() == fact["expense_date"]
+        and expense.room_id == fact["room_id"]
+        and expense.payer.value == fact["payer"]
+        and expense.notes == fact["notes"]
+    )
+
+
+async def apply_operating_expense_row_tx(
+    db: AsyncSession,
+    item: ParsedOperatingExpenseRow,
+    user_id: str,
+) -> tuple[Expense, bool]:
+    """Insert one parsed row without committing; exact replay is a no-op."""
+    fact = operating_expense_row_fact(item)
+    existing = await db.scalar(
+        select(Expense)
+        .where(Expense.expense_id == fact["expense_id"])
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    if existing is not None:
+        if not expense_matches_operating_fact(existing, fact):
+            raise MonthlyCloseDocumentError(
+                "operating_expense_business_key_conflict",
+                "同一运营支出业务标识对应了不同内容，请人工核对。",
+                409,
+            )
+        return existing, False
+    expense = Expense(
+        expense_id=fact["expense_id"],
+        category=item.category,
+        amount=item.amount,
+        description=fact["description"],
+        expense_date=item.expense_date,
+        room_id=item.room_id,
+        payer=item.payer,
+        notes=fact["notes"],
+        created_by=user_id,
+    )
+    db.add(expense)
+    await db.flush()
+    return expense, True
 
 
 def parse_operating_expense_workbook(
@@ -414,6 +492,9 @@ def parse_operating_expense_workbook(
                 mapping.payer_values,
             )
             notes = _text(_cell(row, mapping.columns.get("notes"))) or None
+            external_reference = (
+                _normalized(_cell(row, mapping.columns.get("reference"))) or None
+            )
             business_key = "|".join(
                 (
                     expense_date.isoformat(),
@@ -421,6 +502,13 @@ def parse_operating_expense_workbook(
                     str(amount),
                     room_id or "",
                     description,
+                )
+            )
+            event_key = "|".join(
+                (
+                    billing_month,
+                    _normalized(mapping.sheet),
+                    str(row_number),
                 )
             )
             parsed_rows.append(
@@ -433,6 +521,8 @@ def parse_operating_expense_workbook(
                     room_id=room_id,
                     payer=payer,
                     notes=notes,
+                    external_reference=external_reference,
+                    event_key=event_key,
                     business_key=business_key,
                 )
             )
@@ -634,7 +724,7 @@ async def import_operating_expense_documents(
     )
     if not documents:
         raise MonthlyCloseDocumentError(
-            "operating_expense_document_missing", "请先上传运营支出明细。", 409
+            "operating_expense_document_missing", "请先上传其他运营支出。", 409
         )
     results = [
         await _import_document(db, cycle, document, user_id)

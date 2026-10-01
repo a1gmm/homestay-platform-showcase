@@ -1,8 +1,8 @@
 from fastapi import APIRouter, HTTPException, Query
-from sqlalchemy import select, and_, or_
-from typing import Optional
-from pydantic import BaseModel
-from datetime import datetime, timezone
+from sqlalchemy import select, and_, or_, case, func
+from typing import Optional, Literal
+from pydantic import BaseModel, Field
+from datetime import date, datetime, time, timedelta, timezone
 import uuid
 
 from app.core.deps import DBSession, CurrentUser
@@ -10,6 +10,9 @@ from app.models.task import Task, TaskStatus, TaskType, TaskPriority, ReviewStat
 from app.models.order import Order, OrderStatus, CleaningStatus
 from app.models.room import Room, RoomStatus
 from app.services.audit import log_action_tx
+from app.services.task_lifecycle import (
+    ACTIVE_STATUSES, CN, reconcile_task_batch, task_attention_conditions, task_attention_summary,
+)
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
 
@@ -67,11 +70,119 @@ class TaskOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class TaskWorkspaceOut(BaseModel):
+    items: list[TaskOut]
+    total: int
+    page: int
+    page_size: int
+    counts: dict[str, int]
+    active: int
+    overdue: int
+    no_deadline: int
+    unassigned: int
+    aged: int
+    needs_attention: int
+
+
+def _visibility(current_user):
+    if current_user["role"] == "cleaner":
+        return [or_(Task.assignee_id == current_user["user_id"],
+                    and_(Task.assignee_id.is_(None), Task.task_type == TaskType.cleaning))]
+    return []
+
+
+async def _lock_cleaning_room(db, room_id: str):
+    """Serialize task-driven room changes with checkin/checkout room writes."""
+    room = (await db.execute(select(Room).where(Room.room_id == room_id)
+                            .with_for_update().execution_options(populate_existing=True))).scalar_one_or_none()
+    from app.core.datetime_helpers import today_cn
+    from app.services.room_presence import current_room_presence
+    if await current_room_presence(db, today_cn(), room_id=room_id):
+        raise HTTPException(status_code=409, detail="房间仍有实际在住记录，请先核实退房，不能用历史保洁任务改变房态")
+    return room
+
+
+@router.get("/workspace", response_model=TaskWorkspaceOut)
+async def task_workspace(
+    db: DBSession, current_user: CurrentUser,
+    status: Literal["active", "all", "pending", "in_progress", "pending_review", "done", "cancelled"] = "active",
+    keyword: str = Query(default="", max_length=100),
+    assignee_id: Optional[str] = None, deadline: Optional[date] = None,
+    overdue_only: bool = False,
+    attention: Optional[Literal["no_deadline", "unassigned", "aged", "needs_attention"]] = None,
+    page: int = Query(default=1, ge=1), page_size: int = Query(default=30, ge=1, le=100),
+):
+    now = datetime.now(timezone.utc)
+    conditions = _visibility(current_user)
+    if keyword.strip():
+        # Treat % and _ as literal search text, not wildcard operators.
+        conditions.append(or_(*[column.icontains(keyword.strip(), autoescape=True)
+                                for column in (Task.title, Task.room_id, Task.order_id)]))
+    if assignee_id:
+        conditions.append(Task.assignee_id.is_(None) if assignee_id == "unassigned" else Task.assignee_id == assignee_id)
+    if deadline:
+        start = datetime.combine(deadline, time.min, tzinfo=CN)
+        conditions.extend([Task.deadline >= start, Task.deadline < start + timedelta(days=1)])
+    attention_conditions = task_attention_conditions(now)
+    if overdue_only:
+        conditions.append(attention_conditions["overdue"])
+    if attention:
+        conditions.append(attention_conditions[attention])
+    summary = await task_attention_summary(db, now=now, conditions=conditions)
+    # Cast enum to text: PostgreSQL otherwise tries to interpret pending_review
+    # as task_status (review state is deliberately stored separately).
+    from sqlalchemy import String, cast
+    display_status = case(
+        (Task.status.in_((TaskStatus.done, TaskStatus.cancelled)), cast(Task.status, String)),
+        (Task.review_status == ReviewStatus.pending_review.value, "pending_review"),
+        (Task.review_status == ReviewStatus.rejected.value, "in_progress"),
+        else_=cast(Task.status, String),
+    )
+    counts = dict((await db.execute(select(display_status, func.count()).where(*conditions)
+                                    .group_by(display_status))).all())
+    item_conditions = list(conditions)
+    if status == "active":
+        item_conditions.append(Task.status.in_(ACTIVE_STATUSES))
+    elif status != "all":
+        item_conditions.append(display_status == status)
+    total = (await db.execute(select(func.count()).select_from(Task).where(*item_conditions))).scalar_one()
+    # Keep the current page usable if completing the last task empties a page.
+    page = min(page, max(1, (total + page_size - 1) // page_size))
+    items = (await db.execute(select(Task).where(*item_conditions)
+        .order_by(Task.deadline.asc().nullslast(), Task.created_at.desc(), Task.task_id)
+        .offset((page - 1) * page_size).limit(page_size))).scalars().all()
+    return {"items": items, "total": total, "page": page, "page_size": page_size,
+            "counts": counts, **summary}
+
+
+class TaskReconcileRequest(BaseModel):
+    task_ids: Optional[list[str]] = Field(default=None, min_length=1, max_length=200)
+    limit: int = Field(default=100, ge=1, le=200)
+    after_id: Optional[str] = None
+    apply: bool = False
+    expected_fingerprint: Optional[str] = None
+
+
+@router.post("/reconcile")
+async def reconcile_tasks(body: TaskReconcileRequest, db: DBSession, current_user: CurrentUser):
+    if current_user["role"] != "admin":
+        raise HTTPException(status_code=403, detail="仅管理员可核对历史任务")
+    try:
+        result = await reconcile_task_batch(db, **body.model_dump(), operator_id=current_user["user_id"])
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if body.apply:
+        await db.commit()
+    return result
+
+
 @router.get("", response_model=list[TaskOut])
 async def list_tasks(
     db: DBSession,
     current_user: CurrentUser,
-    status: Optional[TaskStatus] = Query(default=None),
+    status: Optional[TaskStatus | Literal["pending_review"]] = Query(default=None),
     order_id: Optional[str] = Query(default=None),
     assignee_id: Optional[str] = Query(default=None),
     overdue_only: bool = Query(default=False),
@@ -90,12 +201,15 @@ async def list_tasks(
     elif assignee_id:
         q = q.where(Task.assignee_id == assignee_id)
 
-    if status:
+    if status == "pending_review":
+        q = q.where(Task.review_status == ReviewStatus.pending_review.value,
+                    Task.status.not_in([TaskStatus.done, TaskStatus.cancelled]))
+    elif status:
         q = q.where(Task.status == status)
     if order_id:
         q = q.where(Task.order_id == order_id)
     if overdue_only:
-        q = q.where(Task.deadline < datetime.now(timezone.utc), Task.status != TaskStatus.done)
+        q = q.where(Task.deadline < datetime.now(timezone.utc), Task.status.not_in([TaskStatus.done, TaskStatus.cancelled]))
 
     result = await db.execute(q.order_by(Task.deadline.asc().nullslast(), Task.created_at.desc()))
     return result.scalars().all()
@@ -118,14 +232,21 @@ async def create_task(body: TaskCreate, db: DBSession, current_user: CurrentUser
 
 @router.patch("/{task_id}", response_model=TaskOut)
 async def update_task(task_id: str, body: TaskUpdate, db: DBSession, current_user: CurrentUser):
-    result = await db.execute(select(Task).where(Task.task_id == task_id))
+    result = await db.execute(select(Task).where(Task.task_id == task_id).with_for_update())
     task = result.scalar_one_or_none()
     if not task:
         raise HTTPException(status_code=404, detail="任务不存在")
 
+    if task.status in (TaskStatus.done, TaskStatus.cancelled) and body.status and body.status != task.status:
+        raise HTTPException(status_code=400, detail="终态任务不能重新开始，请创建新任务")
+    before = {"status": task.status.value, "assignee_id": task.assignee_id,
+              "deadline": task.deadline.isoformat() if task.deadline else None}
+
     # Cleaner 可操作自己的任务；未派单的清扫任务在操作时自动 claim 给当前保洁。
     auto_claimed = False
     if current_user["role"] == "cleaner":
+        if "assignee_id" in body.model_fields_set and body.assignee_id != current_user["user_id"]:
+            raise HTTPException(status_code=403, detail="保洁不能取消认领或修改任务负责人")
         if task.assignee_id is None and task.task_type == TaskType.cleaning:
             task.assignee_id = current_user["user_id"]
             auto_claimed = True
@@ -145,7 +266,9 @@ async def update_task(task_id: str, body: TaskUpdate, db: DBSession, current_use
             detail="清扫任务需要通过查房审核才能完成,请在管家端使用'查房通过'",
         )
 
-    for field, value in body.model_dump(exclude_none=True).items():
+    for field, value in body.model_dump(exclude_unset=True).items():
+        if value is None and field not in ("description", "assignee_id", "deadline", "notes"):
+            continue
         setattr(task, field, value)
 
     if body.status == TaskStatus.done and not task.completed_at:
@@ -157,11 +280,13 @@ async def update_task(task_id: str, body: TaskUpdate, db: DBSession, current_use
         and task.task_type == TaskType.cleaning
         and task.room_id
     ):
-        room = (await db.execute(select(Room).where(Room.room_id == task.room_id))).scalar_one_or_none()
+        room = await _lock_cleaning_room(db, task.room_id)
         if room and room.room_status in (RoomStatus.pending_clean, RoomStatus.occupied):
             room.room_status = RoomStatus.cleaning
 
-    await log_action_tx(db, current_user["user_id"], "task.update", "task", task_id)
+    await log_action_tx(db, current_user["user_id"], "task.update", "task", task_id,
+                        before_data=before, after_data={"status": task.status.value,
+                        "assignee_id": task.assignee_id, "deadline": task.deadline.isoformat() if task.deadline else None})
     if auto_claimed:
         await log_action_tx(db, current_user["user_id"], "task.auto_claim", "task", task_id,
                             after_data={"assignee_id": current_user["user_id"]})
@@ -192,7 +317,7 @@ async def delete_task(task_id: str, db: DBSession, current_user: CurrentUser):
 @router.post("/{task_id}/submit", response_model=TaskOut)
 async def submit_task(task_id: str, body: TaskSubmitRequest, db: DBSession, current_user: CurrentUser):
     """保洁提交完工，等待审核。"""
-    result = await db.execute(select(Task).where(Task.task_id == task_id))
+    result = await db.execute(select(Task).where(Task.task_id == task_id).with_for_update())
     task = result.scalar_one_or_none()
     if not task:
         raise HTTPException(status_code=404, detail="任务不存在")
@@ -206,8 +331,8 @@ async def submit_task(task_id: str, body: TaskSubmitRequest, db: DBSession, curr
         elif task.assignee_id != current_user["user_id"]:
             raise HTTPException(status_code=403, detail="只能提交分配给自己的任务")
 
-    if task.status == TaskStatus.done:
-        raise HTTPException(status_code=400, detail="任务已完成，无法重复提交")
+    if task.status in (TaskStatus.done, TaskStatus.cancelled):
+        raise HTTPException(status_code=400, detail="任务已完成或已取消，无法提交")
 
     task.submitted_at = datetime.now(timezone.utc)
     task.review_status = ReviewStatus.pending_review.value
@@ -233,13 +358,17 @@ async def review_task(task_id: str, body: TaskReviewRequest, db: DBSession, curr
     if current_user["role"] not in ("admin", "operator", "keeper"):
         raise HTTPException(status_code=403, detail="无权审核任务")
 
-    result = await db.execute(select(Task).where(Task.task_id == task_id))
+    result = await db.execute(select(Task).where(Task.task_id == task_id).with_for_update())
     task = result.scalar_one_or_none()
     if not task:
         raise HTTPException(status_code=404, detail="任务不存在")
 
-    if task.review_status != ReviewStatus.pending_review.value:
+    if task.status not in ACTIVE_STATUSES or task.review_status != ReviewStatus.pending_review.value:
         raise HTTPException(status_code=400, detail="该任务不在待审核状态")
+
+    review_room = None
+    if body.approved and task.task_type == TaskType.cleaning and task.room_id:
+        review_room = await _lock_cleaning_room(db, task.room_id)
 
     task.reviewer_id = current_user["user_id"]
     task.reviewed_at = datetime.now(timezone.utc)
@@ -254,8 +383,7 @@ async def review_task(task_id: str, body: TaskReviewRequest, db: DBSession, curr
         # 保洁通常早于平台到账,在此强制 completed 会系统性关闭未收款订单 (#40)。
         if task.task_type == TaskType.cleaning:
             if task.room_id:
-                room_res = await db.execute(select(Room).where(Room.room_id == task.room_id))
-                room = room_res.scalar_one_or_none()
+                room = review_room
                 # 当前流程退房后房间处于 pending_clean/cleaning;一并纳入恢复白名单,
                 # 否则验收后房间永久卡在 cleaning。
                 if room and room.room_status in (

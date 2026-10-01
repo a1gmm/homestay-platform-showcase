@@ -25,17 +25,17 @@ export function MonthlyCloseControlTower({ rows, selectedMonth, onSelect }: { ro
         const complete = row.status === "completed";
         const label = monthLabel(row.billing_month);
         return (
-          <div className="monthly-close-overview-row" key={row.cycle_id} style={{ display: "grid", gridTemplateColumns: "minmax(140px, .9fr) minmax(220px, 1.5fr) minmax(260px, 2fr) auto", alignItems: "center", gap: 14, padding: "13px 18px", background: selected ? tokens.anyu.color.shell : "transparent", borderBottom: `0.5px solid ${tokens.anyu.color.linen}` }}>
-            <div className="monthly-close-overview-month"><div className="serif" style={{ fontSize: 17 }}>{label}</div><div style={{ color: tokens.color.text.tertiary, fontSize: 12, marginTop: 2 }}>已完成 {row.progress} / 9 步</div><div style={{ color: tokens.color.text.tertiary, fontSize: 12, marginTop: 2 }}>{activityLabel(row.updated_at, row.last_actor)}</div></div>
-            <div className="monthly-close-overview-status"><div>{complete ? "月结已完成" : row.current_step_label || "等待开始"}</div><div style={{ color: tokens.color.text.tertiary, fontSize: 12, marginTop: 2 }}>{complete ? "可查看结算历史" : "当前应处理步骤"}</div></div>
-            <div className="monthly-close-overview-signals" style={{ display: "flex", gap: 7, flexWrap: "wrap" }}>
+          <div className="monthly-close-overview-row" key={row.cycle_id} style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 14, padding: "13px 18px", background: selected ? tokens.anyu.color.shell : "transparent", borderBottom: `0.5px solid ${tokens.anyu.color.linen}` }}>
+            <div className="monthly-close-overview-month" style={{ flex: "1 1 140px", minWidth: 0, overflowWrap: "anywhere" }}><div className="serif" style={{ fontSize: 17 }}>{label}</div><div style={{ color: tokens.color.text.tertiary, fontSize: 12, marginTop: 2 }}>已完成 {row.progress} / 9 步</div><div style={{ color: tokens.color.text.tertiary, fontSize: 12, marginTop: 2 }}>{activityLabel(row.updated_at, row.last_actor)}</div></div>
+            <div className="monthly-close-overview-status" style={{ flex: "1 1 140px", minWidth: 0, overflowWrap: "anywhere" }}><div>{complete ? "月结已完成" : row.current_step_label || "等待开始"}</div><div style={{ color: tokens.color.text.tertiary, fontSize: 12, marginTop: 2 }}>{complete ? "可查看结算历史" : "当前应处理步骤"}</div></div>
+            <div className="monthly-close-overview-signals" style={{ display: "flex", gap: 7, flexWrap: "wrap", flex: "1 1 180px", minWidth: 0 }}>
               {row.missing_source_count > 0 && <Tag color="warning">缺 {row.missing_source_count} 份资料</Tag>}
               {row.blocking_count > 0 && <Tag color="error">{row.blocking_count} 个阻断项</Tag>}
               {row.inbox_pending_count > 0 && <Tag color="processing">{row.inbox_pending_count} 个收件待确认</Tag>}
               {complete && <Tag color="success">已完成</Tag>}
               {!complete && row.missing_source_count === 0 && row.blocking_count === 0 && row.inbox_pending_count === 0 && <Tag color="success">可继续</Tag>}
             </div>
-            <Button className="monthly-close-overview-action" aria-label={`继续 ${label}月结`} onClick={() => onSelect(row.billing_month)}>{complete ? "查看" : "继续"} →</Button>
+            <Button style={{ flexShrink: 0, minHeight: 44 }} className="monthly-close-overview-action" aria-label={`继续 ${label}月结`} onClick={() => onSelect(row.billing_month)}>{complete ? "查看" : "继续"} →</Button>
           </div>
         );
       })}

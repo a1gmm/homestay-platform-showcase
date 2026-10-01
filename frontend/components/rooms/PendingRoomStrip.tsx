@@ -8,6 +8,7 @@ import { tokens } from "@/lib/design-tokens";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 
 import { CHANNEL_LABELS } from "@/lib/channels";
+import { usePrivacyMode } from "@/hooks/usePrivacyMode";
 
 interface Props {
   orders: OrderOut[] | undefined;
@@ -32,6 +33,8 @@ export function PendingRoomStrip({
   onDragEnd,
   collapsible = false,
 }: Props) {
+  const privacyMode = usePrivacyMode();
+  const canDrag = draggable && !privacyMode;
   const count = orders?.length ?? 0;
   const [expanded, setExpanded] = React.useState(false);
 
@@ -63,7 +66,7 @@ export function PendingRoomStrip({
       >
         <HomeOutlined />
         <span>{`▸ 待排房 ${count} 单`}</span>
-        <span style={{ fontSize: 12, color: tokens.color.text.tertiary }}>（点击展开拖拽排房）</span>
+        <span style={{ fontSize: 12, color: tokens.color.text.tertiary }}>{privacyMode ? "（点击查看订单）" : "（点击展开拖拽排房）"}</span>
       </div>
     );
   }
@@ -108,7 +111,7 @@ export function PendingRoomStrip({
             {count}
           </span>
         </div>
-        {draggable && count > 0 && (
+        {canDrag && count > 0 && (
           <span style={{ fontSize: 11, color: tokens.color.text.tertiary }}>
             可拖拽到甘特图房间×日期完成排房
           </span>
@@ -132,14 +135,14 @@ export function PendingRoomStrip({
             // 待排房区不再占大半屏、把甘特图挤下去（客户 2026-07-07 反馈）。
             <div
               key={o.order_id}
-              draggable={draggable}
+              draggable={canDrag}
               onDragStart={(e) => {
-                if (!draggable) return;
+                if (!canDrag) return;
                 e.dataTransfer.setData("text/order-id", o.order_id);
                 e.dataTransfer.effectAllowed = "move";
                 onDragStart?.(o, e);
               }}
-              onDragEnd={() => draggable && onDragEnd?.()}
+              onDragEnd={() => canDrag && onDragEnd?.()}
               style={{
                 flex: "0 0 auto",
                 background: tokens.color.bg.page,
@@ -149,7 +152,7 @@ export function PendingRoomStrip({
                 display: "flex",
                 alignItems: "center",
                 gap: 10,
-                cursor: draggable ? "grab" : "default",
+                cursor: canDrag ? "grab" : "default",
                 scrollSnapAlign: "start",
                 transition: "border-color 120ms ease, transform 120ms ease",
               }}
@@ -192,9 +195,9 @@ export function PendingRoomStrip({
                 </div>
               </div>
               <div style={{ display: "flex", gap: 6, marginLeft: "auto", flex: "0 0 auto" }}>
-                <Button size="small" type="primary" icon={<HomeOutlined />} onClick={() => onAssign(o)}>
+                {!privacyMode && <Button size="small" type="primary" icon={<HomeOutlined />} onClick={() => onAssign(o)}>
                   排房
-                </Button>
+                </Button>}
                 <Button
                   size="small"
                   icon={<EyeOutlined />}

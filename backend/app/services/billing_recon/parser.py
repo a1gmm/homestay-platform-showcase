@@ -69,6 +69,9 @@ class BillRow:
     # 金额单元格原文非空、但解析不出数字（被当 0 处理）——可见性标记，
     # validate_bill 汇总进 stats["unparsed_amounts"]，总额闸失败时附在错误信息里。
     amount_unparsed: bool = False
+    # Zero-based worksheet row index.  This is safe structural evidence used to
+    # bind a later-statement appeal candidate without retaining guest cells.
+    source_row_index: int | None = None
 
 
 @dataclass
@@ -219,6 +222,7 @@ def extract_bill_rows(rows: list[list], m: BillMapping, datemode: int = 0) -> li
                 amount=amount,
                 row_type=row_type,
                 amount_unparsed=unparsed,
+                source_row_index=i,
             )
         )
     return out

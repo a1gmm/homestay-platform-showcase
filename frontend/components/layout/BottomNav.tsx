@@ -6,6 +6,7 @@ import { tokens } from "@/lib/design-tokens";
 import { useAuthStore } from "@/lib/auth";
 import { NAV_ENTRIES, ROLE_NAV, FALLBACK_NAV, type NavKey } from "@/lib/nav-config";
 import { requestAppNavigation } from "@/lib/app-navigation";
+import { usePrivacyMode } from "@/hooks/usePrivacyMode";
 
 // 导航入口/角色布局单一来源见 lib/nav-config；底栏与侧边栏集合由 nav-config.test 守卫一致。
 
@@ -13,6 +14,7 @@ export function BottomNav() {
   const pathname = usePathname();
   const router = useRouter();
   const role = useAuthStore((s) => s.user?.role);
+  const privacyMode = usePrivacyMode();
 
   const nav = (role && ROLE_NAV[role]) || FALLBACK_NAV;
   const primaryKeys = [...nav.left, ...nav.right];
@@ -129,7 +131,7 @@ export function BottomNav() {
         )}
 
         {/* 开单是独立业务动作，浮在底栏右上方，不再挤占或打乱任务入口。 */}
-        {nav.fab && (
+        {nav.fab && !privacyMode && (
           <button
             aria-label="开单"
             data-navigation-href="/rooms?action=new"

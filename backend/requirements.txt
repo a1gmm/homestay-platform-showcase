@@ -1,4 +1,5 @@
-fastapi==0.115.0
+fastapi==0.136.3
+starlette==1.3.1  # Security fixes for multipart/form parsing and URL validation.
 uvicorn[standard]==0.30.6
 sqlalchemy[asyncio]==2.0.36
 asyncpg==0.30.0
@@ -7,7 +8,7 @@ pydantic==2.9.2
 pydantic-settings==2.5.2
 passlib[bcrypt]==1.7.4
 bcrypt==4.0.1
-python-jose[cryptography]==3.5.0
+PyJWT[crypto]==2.15.1
 cryptography==50.0.0  # Fernet 门锁码 at-rest 加密 + 慧享家 AES（直接依赖，显式钉版）
 python-multipart==0.0.31
 redis[asyncio]==5.1.1
@@ -27,7 +28,7 @@ Pillow==12.3.0
 openai==2.52.0
 xlrd==2.0.1
 # ─── Test dependencies ───
-pytest==8.3.3
-pytest-asyncio==0.24.0
+pytest==9.0.3
+pytest-asyncio==1.3.0
 aiosqlite==0.20.0
 lark-oapi==1.7.1

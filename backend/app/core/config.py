@@ -26,6 +26,20 @@ class Settings(BaseSettings):
     # remove every legacy embedded ``-B`` owner, then enable it on exactly one service.
     CELERY_BEAT_SCHEDULE_ENABLED: bool = False
 
+    # Monthly-close assistant is an additive control plane.  Legacy handlers
+    # remain the write owner until each explicitly gated stage is enabled.
+    MONTHLY_CLOSE_ASSISTANT_ENABLED: bool = False
+    # Fail closed during the first production preview.  The global assistant
+    # switch alone must never expose the workspace or Agent APIs to employees.
+    MONTHLY_CLOSE_ASSISTANT_ADMIN_ONLY: bool = True
+    MONTHLY_CLOSE_ASSISTANT_MODEL_ENABLED: bool = False
+    MONTHLY_CLOSE_SEMANTIC_AGENT_ENABLED: bool = False
+    MONTHLY_CLOSE_AGENT_MODEL: str = "deepseek-chat"
+    MONTHLY_CLOSE_SOURCE_ADAPTERS_ENABLED: bool = False
+    MONTHLY_CLOSE_PROPOSAL_EXECUTION_ENABLED: bool = False
+    MONTHLY_CLOSE_LOW_RISK_AUTOMATION_ENABLED: bool = False
+    MONTHLY_CLOSE_EXTERNAL_INTAKE_ENABLED: bool = False
+
     # JWT — 强制环境变量提供，无默认值。生产环境未设会启动失败，避免使用弱 key 签发 token。
     JWT_SECRET_KEY: str
     JWT_ALGORITHM: str = "HS256"
@@ -164,6 +178,7 @@ class Settings(BaseSettings):
     BYPMS_PULL_STALE_ALERT_MINUTES: int = Field(default=30, ge=1, le=24 * 60)
     # 持续停摆时的重报周期（小时）：停着就每隔这么久再喊一次（同门锁回调教训——报一次会被漏看）。
     BYPMS_PULL_REALERT_HOURS: int = 6
+    BYPMS_SYNC_STALE_ALERT_MINUTES: int = Field(default=10, ge=5, le=60)
 
     # 宝寓人工接管/免房拆分 rollout。混合版本期间必须先开 ota-sync reader，
     # 再开 PMS canonical writer，最后开 split；默认全部关闭。

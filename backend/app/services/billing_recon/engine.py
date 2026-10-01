@@ -18,6 +18,7 @@
 from __future__ import annotations
 
 import asyncio
+from bisect import bisect_left
 import hashlib
 import logging
 import re
@@ -29,9 +30,12 @@ from uuid import uuid4
 
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import undefer
 
+from app.services.order_identity_lock import check_platform_identity_available
 from app.core.datetime_helpers import today_cn
 from app.models.expense import Expense, ExpenseCategory
+from app.models.monthly_close import MonthlyCloseCycle, MonthlyCloseDocument
 from app.models.order import Channel, OTA_PLATFORM_CHANNELS, Order, OrderStatus
 from app.models.order_room import OrderRoom
 from app.models.recon import ReconBatch, ReconDiff, ReconDiffClass, ReconDiffStatus
@@ -67,6 +71,134 @@ _ACTIVE = (OrderStatus.completed, OrderStatus.checked_in, OrderStatus.pending_ch
 # （8 位单号撞上另一张单的前 8 位就把钱记到别人头上），一律不认，落到客人名兜底。
 _MIN_PREFIX_LEN = 12
 _LAYOUT_SIGNATURE_RE = re.compile(r"^[0-9a-f]{64}$")
+
+
+class ReconWriteControlled(RuntimeError):
+    """The monthly-close assistant owns a subject the legacy recon would mutate."""
+
+    def __init__(self, billing_month: str):
+        self.billing_month = billing_month
+        super().__init__(billing_month)
+
+
+async def lock_recon_write_control(
+    db: AsyncSession,
+    *,
+    source_key: str,
+    bill_month: str,
+    bill_nos: list[str],
+    assistant_intake_cycle_id: str | None = None,
+    assistant_intake_document_id: str | None = None,
+    current_processing_batch_id: str | None = None,
+) -> None:
+    """Lock every cycle/batch that a confirmation can dismiss or settle.
+
+    A monthly-close document confirmation is the only assistant-owned intake
+    context.  It may create the first batch for its exact cycle; a direct
+    confirmation or re-upload cannot mutate assistant-owned subjects.
+    """
+    subject_batches = list(
+        await db.scalars(
+            select(ReconBatch).where(
+                ReconBatch.platform == source_key,
+                (
+                    (ReconBatch.bill_month == bill_month)
+                    | (
+                        ReconBatch.batch_id.in_(
+                            select(ReconDiff.batch_id).where(
+                                ReconDiff.status == ReconDiffStatus.appeal_pending,
+                                ReconDiff.platform_order_id.in_(bill_nos or ["__none__"]),
+                            )
+                        )
+                    )
+                ),
+            )
+        )
+    )
+    subject_months = sorted({bill_month, *(batch.bill_month for batch in subject_batches)})
+    cycles = list(
+        await db.scalars(
+            select(MonthlyCloseCycle)
+            .where(MonthlyCloseCycle.billing_month.in_(subject_months))
+            .order_by(MonthlyCloseCycle.billing_month, MonthlyCloseCycle.cycle_id)
+            .with_for_update(of=MonthlyCloseCycle)
+            .execution_options(populate_existing=True)
+        )
+    )
+    current_cycle = next((cycle for cycle in cycles if cycle.billing_month == bill_month), None)
+    assistant_cycles = [cycle for cycle in cycles if cycle.write_control_owner == "assistant"]
+    if not assistant_cycles:
+        return
+    if (
+        assistant_intake_cycle_id is None
+        or assistant_intake_document_id is None
+        or current_cycle is None
+        or current_cycle.cycle_id != assistant_intake_cycle_id
+    ):
+        raise ReconWriteControlled(assistant_cycles[0].billing_month)
+
+    subject_batch_ids = sorted(batch.batch_id for batch in subject_batches)
+    linked_documents = list(
+        await db.scalars(
+            select(MonthlyCloseDocument)
+            .options(undefer(MonthlyCloseDocument.content))
+            .where(
+                MonthlyCloseDocument.cycle_id.in_([cycle.cycle_id for cycle in cycles]),
+                MonthlyCloseDocument.source_type == "ota_statement",
+                (
+                    MonthlyCloseDocument.document_id == assistant_intake_document_id
+                )
+                | MonthlyCloseDocument.engine_id.in_(subject_batch_ids or ["__none__"]),
+            )
+            .order_by(MonthlyCloseDocument.cycle_id, MonthlyCloseDocument.document_id)
+            .with_for_update(of=MonthlyCloseDocument)
+            .execution_options(populate_existing=True)
+        )
+    )
+    current_document = next(
+        (
+            document
+            for document in linked_documents
+            if document.document_id == assistant_intake_document_id
+        ),
+        None,
+    )
+    if (
+        current_document is None
+        or current_document.cycle_id != assistant_intake_cycle_id
+        or current_document.source_type != "ota_statement"
+        or not current_document.is_active
+    ):
+        raise ReconWriteControlled(current_cycle.billing_month)
+
+    if subject_batches:
+        subject_batches = list(
+            await db.scalars(
+                select(ReconBatch)
+                .where(ReconBatch.batch_id.in_(subject_batch_ids))
+                .order_by(ReconBatch.batch_id)
+                .with_for_update(of=ReconBatch)
+                .execution_options(populate_existing=True)
+            )
+        )
+
+    existing_subject_batches = [
+        batch
+        for batch in subject_batches
+        if batch.batch_id != current_processing_batch_id
+    ]
+    same_month_subject_batches = [
+        batch for batch in existing_subject_batches if batch.bill_month == bill_month
+    ]
+    for batch in same_month_subject_batches:
+        batch_documents = [
+            document for document in linked_documents if document.engine_id == batch.batch_id
+        ]
+        # Only an assistant upload whose exact predecessor is archived may make
+        # a replacement batch. Unlinked legacy batches and active evidence still
+        # block the write path.
+        if not batch_documents or any(document.is_active for document in batch_documents):
+            raise ReconWriteControlled(batch.bill_month)
 
 
 def channels_for_scope(scope: PlatformScope) -> frozenset[Channel]:
@@ -143,9 +275,13 @@ async def fetch_candidates(
 
 def match_orders(bill_orders: dict[str, BillOrder], candidates: list[Order]) -> dict[str, MatchResult]:
     by_pid: dict[str, list[Order]] = {}
+    by_guest: dict[str, list[Order]] = {}
     for o in candidates:
         if o.platform_order_id:
             by_pid.setdefault(o.platform_order_id, []).append(o)
+        if o.guest_name:
+            by_guest.setdefault(o.guest_name, []).append(o)
+    sorted_pids = sorted(by_pid)
 
     used: set[str] = set()
     out: dict[str, MatchResult] = {}
@@ -165,12 +301,19 @@ def match_orders(bill_orders: dict[str, BillOrder], candidates: list[Order]) -> 
     for no in bill_orders:  # 2) 前缀（互为前缀且候选唯一）
         if no in out:
             continue
-        hits = [
-            o for pid, lst in by_pid.items() for o in lst
-            if o.order_id not in used
-            and min(len(no), len(pid)) >= _MIN_PREFIX_LEN
-            and (no.startswith(pid) or pid.startswith(no))
-        ]
+        hits = []
+        if len(no) >= _MIN_PREFIX_LEN:
+            # Shorter candidate IDs can only be prefixes of this bill ID.
+            for length in range(_MIN_PREFIX_LEN, len(no)):
+                hits.extend(o for o in by_pid.get(no[:length], ()) if o.order_id not in used)
+            # Longer IDs sharing the bill prefix form one contiguous sorted range.
+            position = bisect_left(sorted_pids, no)
+            while position < len(sorted_pids):
+                pid = sorted_pids[position]
+                if not pid.startswith(no):
+                    break
+                hits.extend(o for o in by_pid[pid] if o.order_id not in used)
+                position += 1
         if len(hits) == 1:
             out[no] = MatchResult(hits[0], "prefix")
             used.add(hits[0].order_id)
@@ -178,7 +321,7 @@ def match_orders(bill_orders: dict[str, BillOrder], candidates: list[Order]) -> 
     for no, bo in bill_orders.items():  # 3) 客人名兜底（唯一才算；多候选 = ambiguous）
         if no in out:
             continue
-        hits = [o for o in candidates if o.order_id not in used and bo.guest and o.guest_name == bo.guest]
+        hits = [o for o in by_guest.get(bo.guest, ()) if o.order_id not in used]
         if len(hits) == 1:
             out[no] = MatchResult(hits[0], "name")
             used.add(hits[0].order_id)
@@ -401,6 +544,7 @@ def _fp_pid_key(pid: str | None, order_id: str | None) -> str | None:
 async def _reject(
     db: AsyncSession, platform: str, user_id: str | None, mapping: BillMapping | None,
     errors: list[str], stats: dict | None = None, batch: ReconBatch | None = None,
+    *, commit: bool = True,
 ) -> ReconBatch:
     mapping_dump = mapping.model_dump() if mapping else {}
     if stats:
@@ -416,7 +560,10 @@ async def _reject(
         batch.status = "rejected"
         batch.error = "; ".join(errors)
         batch.mapping = {**(batch.mapping or {}), **mapping_dump}
-    await db.commit()
+    if commit:
+        await db.commit()
+    else:
+        await db.flush()
     safe_stats = stats or {}
     logger.info(
         "billing_recon 拒收 platform=%s error_code=PARSE_REJECTED error_count=%d "
@@ -442,6 +589,9 @@ async def run_recon(
     layout_signature: str | None = None,
     upload_fingerprint: str | None = None,
     processing_batch: ReconBatch | None = None,
+    assistant_intake_cycle_id: str | None = None,
+    assistant_intake_document_id: str | None = None,
+    commit: bool = True,
     enable_ai_enrichment: bool = True,
     # Legacy upload compatibility until Task 6 closes /upload.  Confirm callers pass
     # platform_scope/source_key/layout_signature and never use this alias.
@@ -475,13 +625,25 @@ async def run_recon(
 
     if mapping.sheet not in sheets:
         errors = [f"AI 认出的 sheet「{mapping.sheet}」不存在"]
-        raise BillRejected(await _reject(db, source_key, user_id, mapping, errors, batch=processing_batch), errors)
+        raise BillRejected(
+            await _reject(
+                db, source_key, user_id, mapping, errors,
+                batch=processing_batch, commit=commit,
+            ),
+            errors,
+        )
 
     # 3. 抽取 + 校验闸
     rows = extract_bill_rows(sheets[mapping.sheet], mapping, datemode)
     errors, stats = validate_bill(rows, mapping)
     if errors:
-        raise BillRejected(await _reject(db, source_key, user_id, mapping, errors, stats, processing_batch), errors)
+        raise BillRejected(
+            await _reject(
+                db, source_key, user_id, mapping, errors, stats, processing_batch,
+                commit=commit,
+            ),
+            errors,
+        )
 
     bill_month = infer_bill_month(rows)
     bill_orders = aggregate_orders(rows)
@@ -498,6 +660,16 @@ async def run_recon(
             {"k": f"billrecon:{source_key}:{bill_month}"},
         )
 
+    await lock_recon_write_control(
+        db,
+        source_key=source_key,
+        bill_month=bill_month,
+        bill_nos=list(bill_orders),
+        assistant_intake_cycle_id=assistant_intake_cycle_id,
+        assistant_intake_document_id=assistant_intake_document_id,
+        current_processing_batch_id=(processing_batch.batch_id if processing_batch else None),
+    )
+
     # 4. 重传作废：同 (platform, bill_month) 旧批次的 pending → dismissed
     old_batch_ids = (await db.execute(
         select(ReconBatch.batch_id).where(
@@ -506,7 +678,7 @@ async def run_recon(
         )
     )).scalars().all()
 
-    if old_batch_ids:
+    if old_batch_ids and assistant_intake_cycle_id is None:
         old_pending = (await db.execute(
             select(ReconDiff).where(ReconDiff.batch_id.in_(old_batch_ids),
                                     ReconDiff.status == ReconDiffStatus.pending)
@@ -528,19 +700,23 @@ async def run_recon(
                 ReconDiff.platform_order_id.in_(bill_nos),
             )
         )).scalars().all()
-    for d in settled:
-        bo = bill_orders[d.platform_order_id]
-        settled_amount = bo.net
-        system_amount = d.system_amount
-        short_paid = bool(system_amount is not None and (system_amount - settled_amount) > _D01)
-        d.status = ReconDiffStatus.appeal_settled
-        d.detail = {
-            **(d.detail or {}),
-            "settled_amount": str(settled_amount),
-            "system_amount": str(system_amount) if system_amount is not None else None,
-            "settled_month": bill_month,
-            "short_paid": short_paid,
-        }
+    # Assistant document intake is evidence collection only.  The exact later
+    # document/batch/row lineage is staged by the monthly-close adapter and an
+    # explicit authorized reconcile operation performs the historical write.
+    if assistant_intake_cycle_id is None:
+        for d in settled:
+            bo = bill_orders[d.platform_order_id]
+            settled_amount = bo.net
+            system_amount = d.system_amount
+            short_paid = bool(system_amount is not None and (system_amount - settled_amount) > _D01)
+            d.status = ReconDiffStatus.appeal_settled
+            d.detail = {
+                **(d.detail or {}),
+                "settled_amount": str(settled_amount),
+                "system_amount": str(system_amount) if system_amount is not None else None,
+                "settled_month": bill_month,
+                "short_paid": short_paid,
+            }
     settled_nos = {d.platform_order_id for d in settled}
 
     candidates = await fetch_candidates(
@@ -663,7 +839,10 @@ async def run_recon(
         ))
         diff_count += 1
 
-    await db.commit()
+    if commit:
+        await db.commit()
+    else:
+        await db.flush()
     await db.refresh(batch)
     if enable_ai_enrichment:
         await _enrich_batch_with_ai(db, batch=batch, drafts=drafts, candidates=candidates, summary=summary)
@@ -756,7 +935,7 @@ async def _settlement_warnings(db: AsyncSession, month: str) -> list[str]:
     rows = await db.execute(
         select(OwnerSettlement.settlement_id, OwnerSettlement.status).where(
             OwnerSettlement.billing_month == month,
-        )
+        ).order_by(OwnerSettlement.settlement_id)
     )
     out: list[str] = []
     for sid, status in rows.all():
@@ -901,8 +1080,19 @@ async def _adopt_compensation(
     return "adopted", bill_month
 
 
-async def apply_diff_action(db: AsyncSession, diff: ReconDiff, action: str, user_id: str | None) -> dict:
-    """处置一条 ReconDiff。返回 {"status": <新状态>, "settlement_warnings": [...]}。
+async def apply_diff_action_tx(
+    db: AsyncSession,
+    diff: ReconDiff,
+    action: str,
+    user_id: str | None,
+) -> dict:
+    """Stage one deterministic diff action in the caller-owned transaction.
+
+    This function deliberately flushes but never commits.  The monthly-close
+    control plane must persist the business mutation, canonical-command audit,
+    execution attempt and idempotency outcome atomically.
+
+    返回 {"status": <新状态>, "settlement_warnings": [...]}。
 
     settlement_warnings 里 pending 结算单是裸 settlement_id（前端包既有"需重新生成"文案），
     已确认/已打款/有争议的是一整句警告文本（见 _settlement_warnings）。
@@ -955,15 +1145,7 @@ async def apply_diff_action(db: AsyncSession, diff: ReconDiff, action: str, user
             raise ValueError(f"订单 {diff.order_id} 不存在")
         if order.platform_order_id and order.platform_order_id != diff.platform_order_id:
             raise ValueError("系统订单已关联其他平台单号，请改用人工核对")
-        duplicate = (await db.execute(
-            select(Order.order_id).where(
-                Order.platform_order_id == diff.platform_order_id,
-                Order.order_id != order.order_id,
-                Order.is_deleted.is_(False),
-            )
-        )).scalars().first()
-        if duplicate:
-            raise ValueError("该平台单号已关联其他系统订单，请人工核对")
+        await check_platform_identity_available(db, diff.platform_order_id, order.order_id)
         old_platform_order_id = order.platform_order_id
         order.platform_order_id = diff.platform_order_id
         await log_action_tx(
@@ -978,8 +1160,20 @@ async def apply_diff_action(db: AsyncSession, diff: ReconDiff, action: str, user
     diff.status = ReconDiffStatus(new_status)
     diff.resolved_by = user_id
     diff.resolved_at = datetime.now(timezone.utc)
-    await db.commit()
+    await db.flush()
     return {"status": new_status, "settlement_warnings": warnings}
+
+
+async def apply_diff_action(
+    db: AsyncSession,
+    diff: ReconDiff,
+    action: str,
+    user_id: str | None,
+) -> dict:
+    """Legacy deterministic action wrapper that owns its request transaction."""
+    result = await apply_diff_action_tx(db, diff, action, user_id)
+    await db.commit()
+    return result
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -992,7 +1186,12 @@ async def apply_diff_action(db: AsyncSession, diff: ReconDiff, action: str, user
 # ─────────────────────────────────────────────────────────────────────────
 
 
-async def claim_match(db: AsyncSession, diff: ReconDiff, order_id: str, user_id: str | None) -> dict:
+async def claim_match_tx(
+    db: AsyncSession,
+    diff: ReconDiff,
+    order_id: str,
+    user_id: str | None,
+) -> dict:
     """认领确认（两步中的 step1）：把账单行链接到用户选定的系统单，重算分类。
     只写 linkage（platform_order_id）+ 分类，绝不写 ota_owner_revenue——金额差由用户
     随后走 apply_diff_action('adopt') 处置（多房单守卫/结算警告/审计都在那）。"""
@@ -1008,7 +1207,10 @@ async def claim_match(db: AsyncSession, diff: ReconDiff, order_id: str, user_id:
         raise ValueError(f"差异 {diff.diff_id} 当前状态 {diff.status.value}，不可认领")
     if diff.diff_class != ReconDiffClass.manual_review:
         raise ValueError("只有待人工核对的行可以认领")
-    order = await db.get(Order, order_id)
+    order = await db.scalar(
+        select(Order).where(Order.order_id == order_id).with_for_update()
+        .execution_options(populate_existing=True)
+    )
     if order is None or order.is_deleted:
         raise ValueError(f"订单 {order_id} 不存在")
     no = diff.platform_order_id
@@ -1022,6 +1224,7 @@ async def claim_match(db: AsyncSession, diff: ReconDiff, order_id: str, user_id:
     if dup is not None:
         raise ValueError("该订单已被本批另一条账单行认领")
 
+    await check_platform_identity_available(db, no, order.order_id)
     old_pid = order.platform_order_id
     order.platform_order_id = no  # 建立链接（下次上传即可精确匹配）
     diff.order_id = order_id
@@ -1049,5 +1252,17 @@ async def claim_match(db: AsyncSession, diff: ReconDiff, order_id: str, user_id:
         after_data={"order_id": order_id, "order_platform_order_id": no, "new_class": new_class},
         notes=f"账单认领 diff={diff.diff_id} → order={order_id}",
     )
-    await db.commit()
+    await db.flush()
     return {"status": new_status, "diff_class": new_class}
+
+
+async def claim_match(
+    db: AsyncSession,
+    diff: ReconDiff,
+    order_id: str,
+    user_id: str | None,
+) -> dict:
+    """Legacy claim wrapper; controlled callers use :func:`claim_match_tx`."""
+    result = await claim_match_tx(db, diff, order_id, user_id)
+    await db.commit()
+    return result

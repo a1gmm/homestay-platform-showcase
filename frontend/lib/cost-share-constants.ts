@@ -74,6 +74,13 @@ export const LEGACY_EXPENSE_CATEGORY_LABEL: Record<string, string> = {
   cold_water: "冷水",
   hot_water: "热水",
   platform_fee: "平台佣金",
+  payroll: "工资",
+  social_insurance: "社保",
+  bank_fee: "银行手续费",
+  rent: "租金",
+  operating_expense: "经营费用",
+  cleaning_supplier_cost: "保洁供应商成本",
+  laundry_supplier_cost: "洗涤供应商成本",
   tax: "税费",
 };
 

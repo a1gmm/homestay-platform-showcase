@@ -793,6 +793,11 @@ async def get_overview(db: AsyncSession, now: datetime) -> BypmsSyncOverview:
                 .limit(1),
             )
         ).mappings().first()
+        last_full_at = _as_utc((await _execute_integration(
+            db, select(func.max(bypms_sync_cycles.c.finished_at)).where(
+                bypms_sync_cycles.c.status == "succeeded",
+            ),
+        )).scalar_one_or_none())
         completed_cycle_id = (
             await _execute_integration(
                 db,
@@ -862,6 +867,7 @@ async def get_overview(db: AsyncSession, now: datetime) -> BypmsSyncOverview:
     )
     clock_skew_detected = (
         latest_clock_skew or last_good_clock_skew or staging_clock_skew
+        or _is_future_beyond_clock_skew_tolerance(last_full_at, now)
     )
     latest_cycle = (
         _cycle_from_row(latest_row, now)
@@ -878,6 +884,8 @@ async def get_overview(db: AsyncSession, now: datetime) -> BypmsSyncOverview:
         last_successful_or_partial_age_seconds=_age_seconds_or_none(
             last_good_at, now
         ),
+        last_fully_successful_at=last_full_at,
+        last_fully_successful_age_seconds=_age_seconds_or_none(last_full_at, now),
         pending_retry_count=pending_retry_count,
         open_conflicts_by_field=conflicts,
         staging_watermark=staging_watermark,

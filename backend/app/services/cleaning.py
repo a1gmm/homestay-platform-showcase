@@ -157,7 +157,8 @@ async def add_checkout_cleaning_charge(
     fees: ServiceFees = await get_service_fees(db)
     order = await db.scalar(select(Order).where(Order.order_id == order_id))
     owner_self = order is not None and is_owner_self_order(order)
-    payer = ExpensePayer.company if owner_self else ExpensePayer.owner
+    from app.services.reconciliation_policy import service_cost_payer
+    payer = service_cost_payer(order)
     checkout_cleaning_fee = (
         OWNER_SELF_CHECKOUT_CLEANING_FEE if owner_self else fees.checkout_cleaning_fee
     )

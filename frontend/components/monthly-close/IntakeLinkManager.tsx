@@ -2,14 +2,15 @@ import { useState } from "react";
 import { Alert, Button, Input, Space, Tag, message } from "antd";
 
 import type { MonthlyCloseIntakeLink, MonthlyCloseIntakeLinkCreated } from "@/lib/monthly-close";
-import { MONTHLY_CLOSE_SOURCE_LABELS } from "@/lib/monthly-close";
+import { MONTHLY_CLOSE_ACTIVE_SOURCE_OPTIONS } from "@/lib/monthly-close";
 import { tokens } from "@/lib/design-tokens";
 import { extractErrorMessage } from "@/lib/api-errors";
 
-export function IntakeLinkManager({ links, onCreate, onRevoke }: {
+export function IntakeLinkManager({ links, onCreate, onRevoke, creationEnabled = true }: {
   links: MonthlyCloseIntakeLink[];
   onCreate: (label: string, sourceType: string) => Promise<MonthlyCloseIntakeLinkCreated>;
   onRevoke: (linkId: string) => Promise<unknown>;
+  creationEnabled?: boolean;
 }) {
   const [createdUrl, setCreatedUrl] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -41,9 +42,16 @@ export function IntakeLinkManager({ links, onCreate, onRevoke }: {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
-      <Alert type="info" showIcon message="链接只能上传文件" description="供应商看不到订单、金额、业主或其他资料。链接到期或停用后立即失效。" />
+      <Alert
+        type="info"
+        showIcon
+        message={creationEnabled ? "链接只能上传文件" : "外部收件已关闭"}
+        description={creationEnabled
+          ? "供应商看不到订单、金额、业主或其他资料。链接到期或停用后立即失效。"
+          : "不能新建或使用供应商上传链接；已有链接仍可在下方停用。"}
+      />
       {localError && <Alert type="error" showIcon message={localError} />}
-      {createdUrl && (
+      {creationEnabled && createdUrl && (
         <section aria-label="新生成的收件链接" style={{ border: `0.5px solid ${tokens.anyu.color.linen}`, borderRadius: 10, padding: 14 }}>
           <div style={{ marginBottom: 8 }}>该地址只显示这一次，请现在发给供应商：</div>
           <Space.Compact style={{ width: "100%" }}>
@@ -63,14 +71,14 @@ export function IntakeLinkManager({ links, onCreate, onRevoke }: {
           </Space.Compact>
         </section>
       )}
-      <section aria-label="生成供应商收件链接">
+      {creationEnabled && <section aria-label="生成供应商收件链接">
         <div className="serif" style={{ fontSize: 18, marginBottom: 10 }}>按资料类型生成链接</div>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(230px, 1fr))", gap: 9 }}>
-          {Object.entries(MONTHLY_CLOSE_SOURCE_LABELS).map(([sourceType, label]) => (
+          {MONTHLY_CLOSE_ACTIVE_SOURCE_OPTIONS.map(({ value: sourceType, label }) => (
             <Button key={sourceType} aria-label={`生成${label}收件链接`} loading={busy === sourceType} disabled={busy !== null} onClick={() => void create(sourceType, label)}>{label} →</Button>
           ))}
         </div>
-      </section>
+      </section>}
       <section aria-label="已有收件链接">
         <div className="serif" style={{ fontSize: 18, marginBottom: 10 }}>本月已有链接</div>
         {links.length === 0 ? <div style={{ color: tokens.color.text.tertiary }}>尚未生成</div> : links.map((link) => {

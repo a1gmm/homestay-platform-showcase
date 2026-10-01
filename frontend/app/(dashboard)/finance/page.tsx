@@ -21,6 +21,7 @@ import { exportApi } from "@/lib/api";
 import { downloadBlob } from "@/lib/utils";
 import type { ColumnsType } from "antd/es/table";
 import { useIsMobile } from "@/lib/responsive";
+import { usePrivacyMode } from "@/hooks/usePrivacyMode";
 import { useAuthStore } from "@/lib/auth";
 import { navForRole } from "@/lib/nav-config";
 import { getChannelLabel } from "@/lib/channels";
@@ -136,6 +137,7 @@ function MetricCard({
 }
 
 export default function FinancePage() {
+  const privacyMode = usePrivacyMode();
   const isMobile = useIsMobile();
   const router = useRouter();
   const { user } = useAuthStore();
@@ -429,7 +431,7 @@ export default function FinancePage() {
       },
     },
     {
-      title: "支付方",
+      title: "费用承担方",
       dataIndex: "payer",
       key: "payer",
       width: 80,
@@ -448,6 +450,20 @@ export default function FinancePage() {
       },
     },
     {
+      title: "实际付款人",
+      dataIndex: "paid_by",
+      key: "paid_by",
+      width: 110,
+      render: (value, record: any) => record.__group ? "展开查看" : value === "company" ? "公司" : value === "owner" ? "业主已自行支付" : "待核实",
+    },
+    {
+      title: "实际付款日",
+      dataIndex: "payment_date",
+      key: "payment_date",
+      width: 110,
+      render: (value, record: any) => record.__group ? "展开查看" : value || "未记录",
+    },
+    {
       title: "金额",
       dataIndex: "amount",
       key: "amount",
@@ -459,7 +475,7 @@ export default function FinancePage() {
         </Text>
       ),
     },
-    ...(user?.role === "admin"
+    ...(!privacyMode && user?.role === "admin"
       ? [
           {
             title: "操作",
@@ -616,7 +632,7 @@ export default function FinancePage() {
             showIcon
             banner
             message="净收入已与正式结算统一口径"
-            description="仅统计已实际退房订单；本页已计入平台补贴，并按正式费用分摊规则计算。逐房『房间业主应得』不含无法归到单间的整层/业主级支出；最终打款仍以业主结算单为准。"
+            description="仅统计已实际退房订单，计入平台补贴。公司净利扣除已识别的公司实际付款成本（含代付），付款人未知时沿用原承担方口径；不含无法归到单间的公共费用。逐房业主应得不含整层或业主级支出，最终打款以业主结算单为准。"
             style={{ fontSize: 12 }}
           />
           <Table
@@ -808,13 +824,13 @@ export default function FinancePage() {
             >
               <div style={{ fontWeight: 500 }}>支出记录</div>
               <Space wrap>
-                <Button size="small" icon={<FileExcelOutlined />} onClick={handleDownloadTemplate}>
+                <Button disabled={privacyMode} size="small" icon={<FileExcelOutlined />} onClick={handleDownloadTemplate}>
                   下载模板
                 </Button>
-                <Button size="small" icon={<UploadOutlined />} onClick={() => setImportOpen(true)}>
+                <Button disabled={privacyMode} size="small" icon={<UploadOutlined />} onClick={() => setImportOpen(true)}>
                   Excel 导入
                 </Button>
-                <Button type="primary" size="small" icon={<PlusOutlined />} onClick={() => { form.resetFields(); setScopeMode("room"); setAddExpenseOpen(true); }}>
+                <Button disabled={privacyMode} type="primary" size="small" icon={<PlusOutlined />} onClick={() => { form.resetFields(); setScopeMode("room"); setAddExpenseOpen(true); }}>
                   添加支出
                 </Button>
               </Space>
@@ -911,7 +927,7 @@ export default function FinancePage() {
               presets={rangePresets}
               style={{ minWidth: 260 }}
             />
-            <Button icon={<DownloadOutlined />} loading={exportLoading} onClick={handleExportFinance}>
+            <Button disabled={privacyMode} title={privacyMode ? "隐私演示模式禁止导出" : undefined} icon={<DownloadOutlined />} loading={exportLoading} onClick={handleExportFinance}>
               导出 Excel
             </Button>
             {user?.role === "admin" && (
@@ -1037,7 +1053,7 @@ export default function FinancePage() {
           </Form.Item>
           <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
             <Button onClick={() => setAddExpenseOpen(false)}>取消</Button>
-            <Button type="primary" htmlType="submit" loading={addExpenseMutation.isPending}>
+            <Button disabled={privacyMode} type="primary" htmlType="submit" loading={addExpenseMutation.isPending}>
               保存
             </Button>
           </div>

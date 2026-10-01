@@ -246,6 +246,10 @@ def parse_service_statement(
         sheets, datemode = load_workbook_rows(data, filename)
     except BillParseError as exc:
         raise ServiceStatementError("无法解析表格文件") from exc
+    if source_type == "cleaning_statement":
+        from app.services.monthly_close.cleaning_work_log import parse_cleaning_work_log
+        if parse_cleaning_work_log(data, filename, billing_month) is not None:
+            raise ServiceStatementError("已识别为按天的保洁工作记录。原文件已保存，请点击查看识别结果，按日期、正常打扫和续住房间核对系统记录；本表不按金额账单导入")
     mapping = (
         _validate_confirmed_mapping(mapping, sheets)
         if mapping is not None
@@ -294,10 +298,14 @@ def parse_service_statement(
         )
         business_key = "|".join(
             (
+                source_type,
                 service_type,
                 order_ref or "",
                 room_ref,
                 service_date.isoformat(),
+                f"quantity={quantity if quantity is not None else '-'}",
+                f"unit_price={unit_price if unit_price is not None else '-'}",
+                f"amount={amount}",
             )
         )
         lines.append(

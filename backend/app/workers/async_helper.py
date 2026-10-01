@@ -7,7 +7,7 @@ reused across all task invocations within a worker process, avoiding the
 overhead of creating and tearing down a new loop per task.
 """
 import asyncio
-from typing import Coroutine, Any, TypeVar
+from typing import Any, Coroutine, TypeVar
 
 T = TypeVar("T")
 
@@ -31,4 +31,16 @@ def run_async(coro: Coroutine[Any, Any, T]) -> T:
     worker process, avoiding repeated loop creation/teardown overhead.
     """
     loop = _get_loop()
-    return loop.run_until_complete(coro)
+    task = loop.create_task(coro)
+    try:
+        return loop.run_until_complete(task)
+    except BaseException:
+        if not task.done():
+            task.cancel()
+        try:
+            loop.run_until_complete(task)
+        except BaseException:
+            # Preserve the interruption that reached the synchronous Celery
+            # task. The drain exists only to finish cancellation on this loop.
+            pass
+        raise

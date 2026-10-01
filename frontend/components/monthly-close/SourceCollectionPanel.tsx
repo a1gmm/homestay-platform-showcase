@@ -8,6 +8,7 @@ import { MONTHLY_CLOSE_SOURCE_LABELS } from "@/lib/monthly-close";
 import { monthlyCloseApi } from "@/lib/api";
 import { downloadBlob } from "@/lib/utils";
 import { tokens } from "@/lib/design-tokens";
+import { usePrivacyMode } from "@/hooks/usePrivacyMode";
 import { ServiceMappingReview } from "./ServiceMappingReview";
 
 export function SourceCollectionPanel({
@@ -33,6 +34,7 @@ export function SourceCollectionPanel({
   uploadLabel?: string;
   showUploadActions?: boolean;
 }) {
+  const privacyMode = usePrivacyMode();
   const [editing, setEditing] = useState<string | null>(null);
   const [reason, setReason] = useState("");
 
@@ -121,9 +123,9 @@ export function SourceCollectionPanel({
               </span>
               <Space>
                 {document.processing_status === "rejected" && (source.source_type === "cleaning_statement" || source.source_type === "linen_statement") && (
-                  <ServiceMappingReview billingMonth={billingMonth} document={document} disabled={readOnly} onFinished={onRefresh} />
+                  <ServiceMappingReview billingMonth={billingMonth} document={document} sourceType={source.source_type} disabled={readOnly} onFinished={onRefresh} />
                 )}
-                <Button aria-label={`下载${document.filename}`} type="text" icon={<DownloadOutlined />} onClick={() => void download(document.document_id, document.filename)} />
+                <Button disabled={privacyMode} aria-label={`下载${document.filename}`} type="text" icon={<DownloadOutlined />} onClick={() => void download(document.document_id, document.filename)} />
                 <Popconfirm disabled={readOnly} title="归档后本文件不再参与当前月结，确认继续？" onConfirm={() => onArchive(document.document_id)}>
                   <Button disabled={readOnly} aria-label={`归档${document.filename}`} type="text" icon={<DeleteOutlined />} />
                 </Popconfirm>

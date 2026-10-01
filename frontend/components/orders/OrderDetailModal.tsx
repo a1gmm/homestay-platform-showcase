@@ -47,6 +47,7 @@ import { tokens } from "@/lib/design-tokens";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { BOOKING_TYPE_LABEL, BOOKING_TYPE_TAG_COLOR, type BookingType, type RoomOut, type StaySegment } from "@/lib/types";
 import { useAuthStore } from "@/lib/auth";
+import { usePrivacyMode } from "@/hooks/usePrivacyMode";
 
 import { CHANNEL_LABELS } from "@/lib/channels";
 import { computeCheckinFinancialRisks } from "@/lib/checkin-risk";
@@ -143,6 +144,7 @@ export default function OrderDetailModal({
   cancelMutation,
 }: Props) {
   const isMobile = useIsMobile();
+  const privacyMode = usePrivacyMode();
   const queryClient = useQueryClient();
   // 始终用 live query 数据渲染；父组件传入的 orderProp 仅作为 initialData
   const order = useLiveOrder(open, orderProp);
@@ -191,11 +193,11 @@ export default function OrderDetailModal({
   const isTerminal = isCancelled || isCompleted;
   // 换房/排房两条后端路径允许集不同，按行（有无 room_id）分别对齐，避免前端放行→后端 400。
   // 换房（已排房行走 /transfer-room）：与后端 TRANSFER_ALLOWED_STATUSES 逐项对齐（含入住中 midstay 拆账）。
-  const canTransferRoom = [
+  const canTransferRoom = !privacyMode && [
     "pending_confirm", "paid_pending_room", "roomed_pending_checkin", "rescheduled", "checked_in",
   ].includes(currentStatus || "");
   // 排房（未排房行走 /assign-room）：与后端 assign-room 允许集对齐（屏蔽入住中/退房后态/终态）。
-  const canAssignRoom = !isTerminal && !["checked_in", "pending_checkout", "pending_payment"].includes(currentStatus || "");
+  const canAssignRoom = !privacyMode && !isTerminal && !["checked_in", "pending_checkout", "pending_payment"].includes(currentStatus || "");
   // 2026-06-27 流程调整：取消「完成订单必须房费收齐」卡点（后端同步移除）。
   // 走携程等平台不存在欠款，完成订单不再要求记录收款，按钮始终可点（无禁用/提示）。
 
@@ -245,8 +247,8 @@ export default function OrderDetailModal({
 
   const currentUser = useAuthStore((s) => s.user);
   const isAdmin = currentUser?.role === "admin";
-  const canEditPayment = currentUser?.role === "admin" || currentUser?.role === "operator";
-  const canEditOrder = currentUser?.role === "admin" || currentUser?.role === "operator";
+  const canEditPayment = !privacyMode && (currentUser?.role === "admin" || currentUser?.role === "operator");
+  const canEditOrder = !privacyMode && (currentUser?.role === "admin" || currentUser?.role === "operator");
 
   const updatePaymentMutation = useMutation({
     mutationFn: ({ payment_id, ...payload }: any) =>
@@ -293,7 +295,7 @@ export default function OrderDetailModal({
   // 且仅 admin/operator 可见（后端 assert_can_write 已卡，前端也别给别的角色渲染出入口）。
   const canViewLockCode = currentUser?.role === "admin" || currentUser?.role === "operator";
   const showLockCodeSection =
-    canViewLockCode && ["checked_in", "pending_checkout"].includes(currentStatus);
+    !privacyMode && canViewLockCode && ["checked_in", "pending_checkout"].includes(currentStatus);
   const { data: lockCodesResp } = useQuery({
     queryKey: ["lock-codes", order?.order_id],
     queryFn: () => ordersApi.lockCodes(order.order_id),
@@ -404,6 +406,7 @@ export default function OrderDetailModal({
     ((manualControl?.locked_fields.length ?? 0) > 0 ||
       (manualControl?.open_conflicts.length ?? 0) > 0);
   const sourcePriceCanBeCorrected =
+    !privacyMode &&
     manualControl?.can_administer === true &&
     manualControl?.split.visible === true &&
     ["SOURCE_PRICE_SNAPSHOT_MISSING", "SOURCE_PRICE_SNAPSHOT_INVALID"].includes(
@@ -416,7 +419,7 @@ export default function OrderDetailModal({
     requestAnimationFrame(() => settlementAnchorRef.current?.focus());
   };
 
-  const title = isMobile && splitOpen ? (
+  const title = !privacyMode && isMobile && splitOpen ? (
     <span style={{ fontSize: 16, fontWeight: 500, letterSpacing: 0 }}>拆分住宿段</span>
   ) : (
     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
@@ -457,23 +460,23 @@ export default function OrderDetailModal({
     <Drawer
       open={open}
       onClose={() => {
-        if (splitOpen) {
+        if (!privacyMode && splitOpen) {
           if (splitPending) return;
           setSplitOpen(false);
           return;
         }
         onClose();
       }}
-      closable={!splitPending}
-      keyboard={!splitPending}
-      maskClosable={!splitPending}
+      closable={privacyMode || !splitPending}
+      keyboard={privacyMode || !splitPending}
+      maskClosable={privacyMode || !splitPending}
       title={title}
       width={isMobile ? "100%" : 560}
       placement="right"
       destroyOnHidden
       styles={{ body: { padding: 0, background: tokens.color.bg.page } }}
       footer={
-        activeTab === "audit" || (isMobile && splitOpen) ? null : (
+        privacyMode || activeTab === "audit" || (isMobile && splitOpen) ? null : (
         <div
           style={{
             display: "flex",
@@ -712,9 +715,10 @@ export default function OrderDetailModal({
       }
     >
       <div
-        hidden={isMobile && splitOpen}
+        hidden={!privacyMode && isMobile && splitOpen}
         style={{ padding: isMobile ? 14 : 20, display: "flex", flexDirection: "column", gap: 16 }}
       >
+        {privacyMode && <Alert type="info" showIcon message="隐私演示模式：订单详情仅可查看，修改、收款和发卡操作已关闭。" />}
         {activeTab === "detail" && (
         <>
         {manualControl?.is_relevant ? (
@@ -778,7 +782,7 @@ export default function OrderDetailModal({
                 {manualControl.split.enabled === true && manualControl.split.visible ? (
                   <Button
                     type="primary"
-                    disabled={!manualControl.split.eligible || !manualControl.can_write}
+                    disabled={privacyMode || !manualControl.split.eligible || !manualControl.can_write}
                     onClick={() => setSplitOpen(true)}
                   >
                     拆分住宿段
@@ -795,7 +799,11 @@ export default function OrderDetailModal({
             ) : null}
 
             {showManualControl ? (
-              <ManualOverridePanel orderId={manualControlOrderId} control={manualControl} />
+              <ManualOverridePanel
+                key={privacyMode ? "privacy" : "live"}
+                orderId={manualControlOrderId}
+                control={privacyMode ? { ...manualControl, can_write: false, can_administer: false } : manualControl}
+              />
             ) : null}
           </>
         ) : manualControlQuery.isError ? (
@@ -855,7 +863,7 @@ export default function OrderDetailModal({
             message="看着像续住"
             description={`同房间还有一张${stayGroup!.link_candidates[0].guest_name}的单，紧接着这一段。关联后按一趟住宿算：一个门锁密码、押金不重复收。`}
             action={
-              <Button size="small" type="primary" onClick={() => setLinkStayOpen(true)}>
+              <Button size="small" type="primary" disabled={privacyMode} onClick={() => setLinkStayOpen(true)}>
                 关联
               </Button>
             }
@@ -1493,6 +1501,21 @@ export default function OrderDetailModal({
         )}
       </div>
 
+      {privacyMode && editSegment && (
+        <Drawer open title="分段详情" width={isMobile ? "100%" : 480} onClose={() => setEditSegment(null)}>
+          <Space direction="vertical" size={16} style={{ width: "100%" }}>
+            <Field label="订单号">{editSegment.order_id}</Field>
+            <Field label="入住日期">{editSegment.check_in_date} → {editSegment.check_out_date}</Field>
+            <Field label="渠道">{CHANNEL_LABELS[editSegment.channel] || editSegment.channel}</Field>
+            <Field label="房间">{(editSegment.room_ids ?? editSegment.rooms?.map((room: any) => room.room_id).filter(Boolean) ?? []).join(" / ") || "待排房"}</Field>
+            <Field label="房费">¥{editSegment.actual_price ?? "0.00"}</Field>
+            <Field label="状态"><StatusBadge status={editSegment.order_status} /></Field>
+          </Space>
+        </Drawer>
+      )}
+
+      {/* 演示模式不挂载任何写入弹窗，防止已打开的状态或间接入口越过只读边界。 */}
+      {!privacyMode && <>
       {isMobile && manualControl && splitOpen ? (
         <div className="split-stay-child-view">
           <SplitStayDialog
@@ -1639,6 +1662,7 @@ export default function OrderDetailModal({
         onFinish={(values) => updatePaymentMutation.mutate(values)}
         loading={updatePaymentMutation.isPending}
       />
+      </>}
     </Drawer>
   );
 }

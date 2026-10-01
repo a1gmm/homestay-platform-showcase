@@ -1,6 +1,6 @@
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, UploadFile, File
 from fastapi.responses import StreamingResponse
-from sqlalchemy import select, func, case
+from sqlalchemy import select, func, case, and_, or_
 from sqlalchemy.orm import aliased
 from typing import Optional
 from decimal import Decimal, InvalidOperation
@@ -32,6 +32,9 @@ from app.services.service_fees import get_or_create_config_row, get_service_fees
 from app.services.feishu_lead_alert import send_cleaning_renewal_alert
 from app.services.payment_service import (
     sum_house_fee_paid, sum_house_fee_refunded, sum_deposit_paid,
+)
+from app.services.monthly_close.finalization import (
+    invalidate_monthly_close_order_refund,
 )
 
 router = APIRouter(tags=["finance"])
@@ -176,6 +179,10 @@ async def create_payment(
     # 把退款态误刷成 paid。
     await _recompute_order_payment_status(db, body.order_id)
 
+    if body.is_deposit:
+        from app.services.task_lifecycle import sync_order_tasks
+        await sync_order_tasks(db, order, current_user["user_id"])
+
     await log_action_tx(db, current_user["user_id"], "payment.create", "payment", payment.payment_id)
     await db.commit()
     await db.refresh(payment)
@@ -273,6 +280,11 @@ async def update_payment(
         setattr(payment, field, value)
     await db.flush()
     await _recompute_order_payment_status(db, payment.order_id)
+    if payment.is_deposit:
+        from app.services.task_lifecycle import sync_order_tasks
+        task_order = await db.get(Order, payment.order_id)
+        if task_order:
+            await sync_order_tasks(db, task_order, current_user["user_id"])
     after = {
         "amount": str(payment.amount),
         "method": payment.method.value if payment.method else None,
@@ -337,6 +349,11 @@ async def delete_payment(
     payment.deleted_by = current_user["user_id"]
     await db.flush()
     await _recompute_order_payment_status(db, payment.order_id)
+    if payment.is_deposit:
+        from app.services.task_lifecycle import sync_order_tasks
+        task_order = await db.get(Order, payment.order_id)
+        if task_order:
+            await sync_order_tasks(db, task_order, current_user["user_id"])
     await log_action_tx(
         db, current_user["user_id"], "payment.delete", "payment", payment_id,
         before_data=before,
@@ -404,6 +421,17 @@ async def create_refund(body: RefundCreate, db: DBSession, current_user: Current
     # 重算 payment_status（单一真相源，refund-aware）：口径与配额校验一致，排 deposit_return。
     await _recompute_order_payment_status(db, body.order_id)
 
+    await invalidate_monthly_close_order_refund(
+        db,
+        billing_month=order.check_out_date.strftime("%Y-%m"),
+        order_id=body.order_id,
+        refund_id=refund.refund_id,
+        operation="created",
+        actor_id=current_user["user_id"],
+        amount=refund.amount,
+        reason=refund.reason.value,
+    )
+
     await log_action_tx(db, current_user["user_id"], "refund.create", "refund", refund.refund_id)
     await db.commit()
     await db.refresh(refund)
@@ -452,6 +480,26 @@ async def delete_refund(
 
     # 重算 payment_status（单一真相源，refund-aware；内部对订单行加锁与并发串行化）。
     await _recompute_order_payment_status(db, refund.order_id)
+    order = await db.scalar(
+        select(Order).where(
+            Order.order_id == refund.order_id,
+            Order.is_deleted == False,
+        )
+    )
+    if order is not None:
+        if refund.reason == RefundReason.deposit_return:
+            from app.services.task_lifecycle import sync_order_tasks
+            await sync_order_tasks(db, order, current_user["user_id"])
+        await invalidate_monthly_close_order_refund(
+            db,
+            billing_month=order.check_out_date.strftime("%Y-%m"),
+            order_id=refund.order_id,
+            refund_id=refund.refund_id,
+            operation="deleted",
+            actor_id=current_user["user_id"],
+            amount=refund.amount,
+            reason=refund.reason.value,
+        )
 
     await log_action_tx(
         db, current_user["user_id"], "refund.delete", "refund", refund_id,
@@ -835,6 +883,8 @@ async def summary_by_room(
       expense_company= SUM(expenses.amount) WHERE payer=company
       expense_owner  = SUM(expenses.amount) WHERE payer=owner
       owner_net_share= net_revenue * owner_share_ratio - 按规则加权后的业主支出
+      company_net= net_revenue - 实际公司付款成本 - owner_net_share；公司代业主付款扣一次，
+                   标准服务费不重复作成本；付款方未知保留原公司承担口径，公共成本不分摊到房。
     """
     if current_user["role"] not in ("admin", "operator", "finance", "owner"):
         raise HTTPException(status_code=403, detail="无权查看分账")
@@ -862,6 +912,11 @@ async def summary_by_room(
                 func.sum(case((Expense.payer == ExpensePayer.owner, Expense.amount), else_=0)),
                 0,
             ).label("expense_owner"),
+            func.coalesce(func.sum(case((and_(
+                Expense.is_service_fee.is_(False),
+                or_(Expense.paid_by == ExpensePayer.company,
+                    and_(Expense.paid_by.is_(None), Expense.payer == ExpensePayer.company)),
+            ), Expense.amount), else_=0)), 0).label("company_cost_basis"),
         )
         .where(Expense.room_id.isnot(None))
         .where(Expense.is_deleted == False)
@@ -893,6 +948,11 @@ async def summary_by_room(
         commission = stat.commission
         order_count = stat.order_count
         expense_company = Decimal(exp.expense_company) if exp else Decimal("0")
+        # Owner-borne costs advanced by the company are deducted once as actual
+        # costs and recovered through the lower owner payout. Standard service
+        # charges are not supplier costs. Unknown historic payment ownership
+        # retains the previous company-payer basis; public costs remain unallocated.
+        company_cost_basis = Decimal(exp.company_cost_basis) if exp else Decimal("0")
         expense_owner = stat.owner_expenses
         net_revenue = stat.net_revenue
         share_ratio = stat.share_ratio
@@ -911,7 +971,7 @@ async def summary_by_room(
                 expense_company=expense_company.quantize(Decimal("0.01")),
                 expense_owner=expense_owner.quantize(Decimal("0.01")),
                 owner_net_share=owner_net_share,
-                company_net=(net_revenue - expense_company - owner_net_share).quantize(Decimal("0.01")),
+                company_net=(net_revenue - company_cost_basis - owner_net_share).quantize(Decimal("0.01")),
             )
         )
     return out

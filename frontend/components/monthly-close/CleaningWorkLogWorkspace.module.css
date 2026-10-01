@@ -1,0 +1,36 @@
+.workspace { min-width: 0; display: flex; flex-direction: column; gap: 18px; color: var(--ink); }
+.header h2 { font-size: 24px; font-weight: 500; margin: 8px 0; line-height: 1.35; }
+.header p { margin: 6px 0; color: var(--stone); line-height: 1.7; }
+.header .eyebrow { font-size: 13px; }
+.header .filename { color: var(--ink); overflow-wrap: anywhere; }
+.summary { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); margin: 0; padding: 20px 0; border-block: 1px solid var(--linen); gap: 18px; }
+.summary dt { color: var(--stone); font-size: 13px; }
+.summary dd { font-size: 28px; margin: 4px 0 0; font-variant-numeric: tabular-nums; }
+.summary small { display: block; font-size: 12px; color: var(--stone); line-height: 1.5; margin-top: 5px; }
+.footer { position: sticky; bottom: -24px; background: var(--shell); border-top: 1px solid var(--linen); padding: 16px 0; display: flex; gap: 16px; align-items: center; justify-content: space-between; z-index: 2; }
+.footer p { margin: 0; color: var(--stone); font-size: 13px; line-height: 1.6; }
+.actions { display: flex; gap: 10px; flex-shrink: 0; }
+.actions button { min-height: 44px; }
+@media (max-width: 640px) {
+  .summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .header h2 { font-size: 21px; }
+  .footer { flex-direction: column; align-items: stretch; }
+  .actions { flex-wrap: wrap; }
+  .actions button { flex: 1; height: auto; white-space: normal; padding: 10px 12px; }
+}
+
+.notice { padding: 16px 18px; background: var(--sand); border-left: 3px solid var(--sage); line-height: 1.7; }
+.notice strong { font-weight: 500; }
+.notice p { margin: 5px 0 0; color: var(--stone); font-size: 13px; }
+
+.backButton { align-self: flex-start; min-height: 44px; }
+.evidenceGrid { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; padding-block: 8px; }
+.evidenceGrid h3 { font-size: 16px; font-weight: 500; margin: 0 0 12px; }
+.evidenceGrid p { font-size: 14px; color: var(--stone); line-height: 1.7; overflow-wrap: anywhere; }
+.evidenceGrid small { display: block; font-size: 12px; }
+.decisions { border: 0; padding: 0; margin: 0; min-width: 0; }
+.decisions legend { font-size: 16px; font-weight: 500; margin-bottom: 8px; }
+.decisions :global(.ant-radio-group) { display: flex; flex-direction: column; gap: 8px; margin-bottom: 18px; }
+.decisions :global(.ant-radio-wrapper) { min-height: 44px; align-items: center; }
+.decisions label[for] { display: block; margin-bottom: 8px; }
+@media (max-width: 640px) { .evidenceGrid { grid-template-columns: 1fr; gap: 12px; } }

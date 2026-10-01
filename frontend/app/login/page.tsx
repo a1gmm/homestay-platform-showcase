@@ -9,7 +9,8 @@ import {
   UserOutlined, LockOutlined, ArrowRightOutlined,
   MobileOutlined, SafetyCertificateOutlined,
 } from "@ant-design/icons";
-import { authApi, unifiedAuthApi, handoffApi, type UnifiedIdentity, type HandoffPayload } from "@/lib/api";
+import { authApi, unifiedAuthApi, type UnifiedIdentity, type HandoffPayload } from "@/lib/api";
+import { createHandoffUrl, HANDOFF_RETRY_MESSAGE } from "@/lib/auth-handoff";
 import { useAuthStore } from "@/lib/auth";
 import { useNewOrderStore } from "@/lib/new-order-store";
 import { useStaffStore } from "@/lib/staff-store";
@@ -29,6 +30,7 @@ export default function LoginPage() {
 
   const [pwError, setPwError] = useState("");
   const [pwLoading, setPwLoading] = useState(false);
+  const [handoffError, setHandoffError] = useState("");
 
   const [phone, setPhone] = useState("");
   const [code, setCode] = useState("");
@@ -38,25 +40,15 @@ export default function LoginPage() {
 
   const [identities, setIdentities] = useState<UnifiedIdentity[]>([]);
 
-  // 跨子域交接:优先换一次性 code,目标子域用 code 换回 token,token 不进 URL (#46)。
-  // 降级:换码失败时(如后端 Redis 不可用 → 503)退回「URL 携带 token」的老方式,
-  // 保证登录永远不会因为 Redis 抖动而瘫痪。accept 页同时支持 code 与 at/rt 两种入参。
+  // 跨子域只传一次性交接码；失败时留在登录页，凭证不得进入 URL。
   const handoffRedirect = async (acceptOrigin: string, payload: HandoffPayload) => {
-    const target = new URL(`${acceptOrigin}/auth/accept`);
     try {
-      const { data } = await handoffApi.create(payload);
-      target.searchParams.set("code", data.code);
+      window.location.href = await createHandoffUrl(acceptOrigin, payload);
+      return true;
     } catch {
-      // fail-open 降级:把 token 直接放进 URL(安全性回退到老方式,但登录可用)
-      target.searchParams.set("at", payload.at);
-      if (payload.rt) target.searchParams.set("rt", payload.rt);
-      if (payload.kind) target.searchParams.set("kind", payload.kind);
-      if (payload.uid) target.searchParams.set("uid", payload.uid);
-      if (payload.role) target.searchParams.set("role", payload.role);
-      if (payload.name) target.searchParams.set("name", payload.name);
-      if (payload.next) target.searchParams.set("next", payload.next);
+      setHandoffError(HANDOFF_RETRY_MESSAGE);
+      return false;
     }
-    window.location.href = target.toString();
   };
 
   // 进入登录页时主动清掉任何残留认证态 + react-query 缓存。
@@ -84,25 +76,26 @@ export default function LoginPage() {
   // admin 子域登录后直接 push("/staff/*") 会跨域跳到 www,而 www 的 staff store 是空的,
   // 于是被 /staff/cleaner 判定未登录 → 踢回 /staff/login(手机号验证码页)。
   // 解法与后台登录一致:把 token 交接到 www 的 /auth/accept(kind=staff),由它在 www 写入 store。
-  const enterStaffPortal = (
+  const enterStaffPortal = async (
     u: { user_id: string; display_name: string; role: string },
     token: string
   ) => {
     const next = u.role === "keeper" ? "/staff/keeper" : "/staff/cleaner";
     if (typeof window !== "undefined" && window.location.host.startsWith("admin.")) {
-      void handoffRedirect("http://localhost:3000", {
+      return handoffRedirect("http://localhost:3000", {
         at: token, kind: "staff", uid: u.user_id, role: u.role, name: u.display_name, next,
       });
-      return;
     }
     // 已在 C 端(www / vercel.app / 本地),同源直接写 store 并跳转。
     setStaffAuth({ user_id: u.user_id, display_name: u.display_name, role: u.role }, token);
     router.push(next);
+    return true;
   };
 
   const onPwFinish = async (values: { username: string; password: string }) => {
     setPwLoading(true);
     setPwError("");
+    setHandoffError("");
     try {
       const res = await authApi.login(values.username, values.password);
       const { access_token, refresh_token, user_id, role, display_name } = res.data;
@@ -112,7 +105,7 @@ export default function LoginPage() {
       // 既看到订单/新建订单等越权入口,又拿不到自己的"开始打扫/提交完工"操作。
       // OTP 登录的 pickIdentity 早已按角色分流,这里与它对齐。
       if (!["admin", "operator", "finance"].includes(role)) {
-        enterStaffPortal({ user_id, display_name, role }, access_token);
+        await enterStaffPortal({ user_id, display_name, role }, access_token);
         return;
       }
 
@@ -132,7 +125,7 @@ export default function LoginPage() {
       setAuth({ user_id, role, display_name }, access_token, refresh_token);
       router.push("/dashboard");
     } catch (e: any) {
-      setPwError(extractErrorMessage(e, "登录失败,请检查用户名和密码"));
+      setPwError(extractErrorMessage(e, "登录失败，请检查用户名和密码"));
     } finally {
       setPwLoading(false);
     }
@@ -146,7 +139,7 @@ export default function LoginPage() {
     setSending(true);
     try {
       await unifiedAuthApi.sendOtp(phone);
-      message.success("验证码已发送 (演示期可用 888888)");
+      message.success("验证码已发送，请查看短信");
       setCooldown(60);
     } catch (e: any) {
       message.error(extractErrorMessage(e, "发送失败"));
@@ -155,7 +148,7 @@ export default function LoginPage() {
     }
   };
 
-  const pickIdentity = (id: UnifiedIdentity) => {
+  const pickIdentity = async (id: UnifiedIdentity) => {
     if (id.kind === "user") {
       const isAdminLike = id.role && ["admin", "operator", "finance"].includes(id.role);
       if (isAdminLike) {
@@ -168,14 +161,14 @@ export default function LoginPage() {
           );
           router.push("/dashboard");
         } else {
-          void handoffRedirect("http://localhost:3000", {
+          return handoffRedirect("http://localhost:3000", {
             at: id.access_token, rt: id.refresh_token || "", uid: id.user_id || "",
             role: id.role || "admin", name: id.display_name || "", next: "/dashboard",
           });
         }
       } else {
         // 与密码登录同一套跨子域交接逻辑(在 admin 子域登录时把 token 交接到 www)。
-        enterStaffPortal(
+        return enterStaffPortal(
           { user_id: id.user_id || "", display_name: id.display_name || "", role: id.role || "" },
           id.access_token
         );
@@ -203,6 +196,20 @@ export default function LoginPage() {
       );
       router.push("/booking");
     }
+    return true;
+  };
+
+  const chooseIdentity = async (id: UnifiedIdentity) => {
+    if (verifying) return;
+    setVerifying(true);
+    setHandoffError("");
+    try {
+      if (await pickIdentity(id)) setIdentities([]);
+    } catch (e: unknown) {
+      message.error(extractErrorMessage(e, "登录失败，请重试"));
+    } finally {
+      setVerifying(false);
+    }
   };
 
   const verify = async () => {
@@ -211,12 +218,13 @@ export default function LoginPage() {
       return;
     }
     setVerifying(true);
+    setHandoffError("");
     try {
       const { data } = await unifiedAuthApi.verify(phone, code);
       if (data.identities.length === 0) {
-        message.error("未找到账号,请联系管理员");
+        message.error("未找到账号，请联系管理员");
       } else if (data.identities.length === 1) {
-        pickIdentity(data.identities[0]);
+        await pickIdentity(data.identities[0]);
       } else {
         setIdentities(data.identities);
       }
@@ -297,7 +305,7 @@ export default function LoginPage() {
               letterSpacing: 0,
             }}
           >
-            一个手机号,
+            一个手机号，
             <br />
             <span style={{ color: "#A89680" }}>自动认出你是谁。</span>
           </h1>
@@ -306,7 +314,7 @@ export default function LoginPage() {
               marginTop: 24, fontSize: 14, color: "#A89680", lineHeight: 1.9, maxWidth: 460,
             }}
           >
-            管理员 · 管家 · 保洁 · 业主 · 客人 —— 统一入口,各进各的视图,无需记住不同链接。
+            管理员 · 管家 · 保洁 · 业主 · 客人 —— 统一入口，各进各的视图，无需记住不同链接。
           </p>
         </div>
 
@@ -357,10 +365,15 @@ export default function LoginPage() {
               欢迎回来
             </h2>
             <div style={{ marginTop: 8, fontSize: 14, color: tokens.color.text.secondary }}>
-              输入手机号,自动识别身份
+              输入手机号，自动识别身份
             </div>
           </div>
 
+          {handoffError && identities.length <= 1 && (
+            <div role="alert" style={{ marginBottom: 16, color: tokens.color.status.warn, fontSize: 13 }}>
+              {handoffError}
+            </div>
+          )}
           <Tabs
             defaultActiveKey="otp"
             items={[
@@ -436,7 +449,7 @@ export default function LoginPage() {
                         lineHeight: 1.6,
                       }}
                     >
-                      演示期验证码 <b style={{ color: tokens.color.text.primary }}>888888</b>。一个手机号对应多个身份时登录后弹窗选择。
+                      请输入短信中的验证码。一个手机号对应多个身份时，登录后可选择身份。
                     </div>
                   </div>
                 ),
@@ -529,19 +542,17 @@ export default function LoginPage() {
       <Modal
         open={identities.length > 1}
         onCancel={() => setIdentities([])}
-        title="您有多个身份,请选择要进入的视图"
+        title="您有多个身份，请选择要进入的视图"
         footer={null}
         centered
         width={420}
       >
+        {handoffError && <div role="alert" style={{ color: tokens.color.status.warn }}>{handoffError}</div>}
         <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 12 }}>
           {identities.map((id, i) => (
             <div
               key={i}
-              onClick={() => {
-                setIdentities([]);
-                pickIdentity(id);
-              }}
+              onClick={() => { void chooseIdentity(id); }}
               style={{
                 padding: 16,
                 borderRadius: 10,

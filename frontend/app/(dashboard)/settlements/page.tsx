@@ -101,11 +101,11 @@ export default function SettlementsPage() {
     }
   };
 
-  const handleExportPackage = async (r: OwnerSettlementOut) => {
+  const handleExportPackage = async (r: OwnerSettlementOut, internal = false) => {
     setStatementExportingId(r.settlement_id);
     try {
-      const res = await exportApi.settlementPackage(r.settlement_id);
-      downloadBlob(res.data, `完整结算包_${r.owner_id}_${r.billing_month}.xlsx`);
+      const res = await exportApi.settlementPackage(r.settlement_id, internal);
+      downloadBlob(res.data, `${internal ? '公司内部核账' : '业主结算'}_${r.owner_id}_${r.billing_month}.xlsx`);
       message.success("完整结算包已导出");
     } catch (e) {
       message.error(extractErrorMessage(e, "导出失败"));
@@ -219,8 +219,9 @@ export default function SettlementsPage() {
           <Dropdown
             disabled={statementExportingId === r.settlement_id}
             menu={{ items: [
-              { key: "package", label: "完整结算包", onClick: () => handleExportPackage(r) },
-              { key: "income", label: "到账收入明细", onClick: () => handleExportIncome(r) },
+              { key: "package", label: "业主结算包（姓名脱敏）", onClick: () => handleExportPackage(r) },
+              ...(isAdmin ? [{ key: "internal", label: "公司核账包（完整姓名）", onClick: () => handleExportPackage(r, true) }] : []),
+              { key: "income", label: "分房订单明细", onClick: () => handleExportIncome(r) },
               { key: "statement", label: "业主分成表", onClick: () => handleExportStatement(r) },
             ] }}
           >

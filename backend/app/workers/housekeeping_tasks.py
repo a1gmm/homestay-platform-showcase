@@ -14,7 +14,7 @@ import uuid
 from datetime import date, datetime, timedelta, timezone
 from app.core.datetime_helpers import today_cn
 
-from sqlalchemy import Date, case, func, select, type_coerce, update
+from sqlalchemy import Date, case, func, select, type_coerce
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -36,10 +36,8 @@ _CLEANING_STATUSES = (RoomStatus.pending_clean, RoomStatus.cleaning)
 def plan_stale_pending_clean_clears(rows, now: datetime, threshold_hours: int) -> list[str]:
     """纯函数：从 (room_id, room_status, updated_at) 里挑出「卡住太久」的待清扫/清扫中房。
 
-    正常保洁退房当天即点「打扫完了」把房态复位；房态在 pending_clean/cleaning
-    停留超过 ``threshold_hours`` 小时，必是残留（收尾漏点 / 退房后取消订单未回滚 /
-    引擎绕过通知没发卡）。用「静态房态停留时长」而非「有无未完成任务」判定——
-    因为一间房可能堆着多张历史清扫任务（只关掉最新一张），有残留任务≠还在扫。
+    停留超过 ``threshold_hours`` 小时只说明需要核查，不能证明已经清扫。
+    此函数保留原名兼容调用方，结果只能用于告警，不能据此释放房间或取消任务。
 
     Args:
         rows: 可迭代的 (room_id, room_status, updated_at)。room_status 可是
@@ -64,7 +62,7 @@ def plan_stale_pending_clean_clears(rows, now: datetime, threshold_hours: int) -
 
 @celery_app.task(name="app.workers.housekeeping_tasks.reconcile_stale_pending_clean")
 def reconcile_stale_pending_clean():
-    """自动清理「卡住的待清扫」：房态卡在 pending_clean/cleaning 超阈值即清回 available。
+    """发现长时间待清扫房并告警，由工作人员核实后走清扫审核流程。
 
     返回 ``{enabled, threshold_hours, scanned, cleared, room_ids}`` 便于日志排查。
     """
@@ -76,10 +74,9 @@ async def _reconcile_stale_pending_clean_async(
     threshold_hours: int | None = None,
     db: AsyncSession | None = None,
 ) -> dict:
-    """扫全量 pending_clean/cleaning 房，把卡住太久的清回 available 并作废残留清扫任务。
+    """扫 pending_clean/cleaning 房，记录需人工核查的房号，保留房态与任务。
 
-    幂等：只动 room_status 仍为 pending_clean/cleaning 的房；清回 available 后审计留痕，
-    并把该房 pending/in_progress 的清扫任务置 cancelled（防日后误点旧卡触发房东计费）。
+    时间经过不构成完工证据；历史误操作不能靠自动取消任务来隐藏。
     受 ``STALE_PENDING_CLEAN_RECON_ENABLED`` kill switch 控制，关时直接跳过。
     """
     if db is None:
@@ -112,31 +109,14 @@ async def _reconcile_stale_pending_clean_async(
         return {"enabled": True, "threshold_hours": threshold, "scanned": scanned,
                 "cleared": 0, "room_ids": []}
 
-    # 房态清回 available（守卫：只动仍是 pending_clean/cleaning 的行，防并发）。
-    upd_rooms = await db.execute(
-        update(Room)
-        .where(Room.room_id.in_(stale_ids), Room.room_status.in_(_CLEANING_STATUSES))
-        .values(room_status=RoomStatus.available, updated_at=func.now())
-    )
-    cleared = upd_rooms.rowcount or 0
-    # 作废残留清扫任务，避免日后误点旧卡触发房东计费/再次漂移。
-    await db.execute(
-        update(Task)
-        .where(
-            Task.room_id.in_(stale_ids),
-            Task.task_type == TaskType.cleaning,
-            Task.status.in_((TaskStatus.pending, TaskStatus.in_progress)),
-        )
-        .values(status=TaskStatus.cancelled)
-    )
     await log_action_tx(
         db,
         operator_id="system",
-        action="auto_clear_stale_pending_clean",
+        action="flag_stale_pending_clean",
         resource_type="housekeeping",
         resource_id=None,
-        after_data={"threshold_hours": threshold, "cleared": cleared, "room_ids": stale_ids},
-        notes=f"自动清理卡住>{threshold}h 的待清扫房 {cleared} 间：{stale_ids}",
+        after_data={"threshold_hours": threshold, "cleared": 0, "review_required": len(stale_ids), "room_ids": stale_ids},
+        notes=f"待清扫超过 {threshold}h，须现场核查，保留房态与清扫任务",
     )
     await db.commit()
 
@@ -144,14 +124,14 @@ async def _reconcile_stale_pending_clean_async(
     try:
         from app.services.feishu_lead_alert import send_ops_alert
         await send_ops_alert(
-            f"🧹 房态自动纠错：清理了 {cleared} 间卡住>{threshold}h 的「待清扫」房"
-            f"（已回空置）：{', '.join(stale_ids)}"
+            f"保洁待核查：{len(stale_ids)} 间房待清扫超过 {threshold}h：{', '.join(stale_ids)}。"
+            "房态与任务已保留，请确认清扫完成后提交查房审核。"
         )
     except Exception:
         logger.exception("[stale-pending-clean] 告警发送失败（不影响清理）")
 
     summary = {"enabled": True, "threshold_hours": threshold, "scanned": scanned,
-               "cleared": cleared, "room_ids": stale_ids}
+               "cleared": 0, "review_required": len(stale_ids), "room_ids": stale_ids}
     logger.info("Stale-pending-clean scan complete: %s", summary)
     return summary
 

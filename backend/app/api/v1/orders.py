@@ -872,6 +872,13 @@ async def create_order(body: OrderCreate, db: DBSession, current_user: CurrentUs
     order_id = await unique_order_id(db)
     # ota_owner_revenue 不是 orders 列，是 metadata 字段，单独处理（见下方）。
     order_fields = body.model_dump(exclude={"rooms", "ota_owner_revenue", "auto_confirm", "allow_duplicate"})
+    if body.platform_order_id:
+        from app.services.order_identity_lock import check_platform_identity_available
+
+        try:
+            await check_platform_identity_available(db, body.platform_order_id, order_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
     order = Order(
         order_id=order_id,
         created_by=current_user["user_id"],
@@ -950,15 +957,30 @@ async def _create_standard_tasks(db, order: Order, creator_id: str):
     # 订单创建时只建「收押金」task。清扫任务不在此处占位 —— 由 staff_portal.handle_checkout
     # 在客人退房时按所选保洁员建带 assignee 的 high-priority 任务，避免历史遗留的孤儿
     # cleaning task（生产上观察到 5 条无 assignee 的问题来源）。
-    db.add(Task(
+    if (not order.deposit or order.deposit <= 0 or order.deposit_status not in (None, DepositStatus.not_collected)
+            or order.is_deleted or order.order_status in TERMINAL_STATUSES):
+        return
+    existing = await db.scalar(select(Task.task_id).where(
+        Task.order_id == order.order_id, Task.task_type == TaskType.collect_deposit,
+        Task.status != TaskStatus.cancelled,
+    ).limit(1))
+    if existing:
+        return
+    from app.services.task_lifecycle import business_day_deadline
+    task = Task(
         task_id="TSK-" + uuid.uuid4().hex[:12].upper(),
         task_type=TaskType.collect_deposit,
         title=f"收取押金 — {order.guest_name}",
         order_id=order.order_id,
         room_id=order.room_id,
         priority=TaskPriority.high,
+        deadline=business_day_deadline(order.check_in_date),
         created_by=creator_id,
-    ))
+    )
+    db.add(task)
+    await log_action_tx(db, creator_id, "task.create", "task", task.task_id,
+                        after_data={"order_id": order.order_id, "task_type": "collect_deposit",
+                                    "deadline": task.deadline.isoformat()})
 
 
 # ─── List ─────────────────────────────────────────────────────────────────────
@@ -1257,14 +1279,17 @@ async def update_order(order_id: str, body: OrderUpdate, db: DBSession, current_
                        background_tasks: BackgroundTasks):
     assert_can_write(current_user)
 
-    result = await db.execute(
-        select(Order)
+    query = (select(Order)
         .where(Order.order_id == order_id, Order.is_deleted == False)
         .options(selectinload(Order.rooms))
     )
+    if body.deposit is not None:
+        query = query.with_for_update()
+    result = await db.execute(query)
     order = result.scalar_one_or_none()
     if not order:
         raise HTTPException(status_code=404, detail="订单不存在")
+    previous_deposit = order.deposit
 
     managed_forbidden_fields = {
         "channel", "booking_type", "rooms", "room_id", "check_in_date",
@@ -1764,6 +1789,12 @@ async def update_order(order_id: str, body: OrderUpdate, db: DBSession, current_
         .options(selectinload(Order.rooms))
     )).scalar_one()
 
+    if body.deposit is not None and body.deposit != previous_deposit:
+        await _create_standard_tasks(db, refreshed, current_user["user_id"])
+        await db.flush()
+        from app.services.task_lifecycle import sync_order_tasks
+        await sync_order_tasks(db, refreshed, current_user["user_id"])
+
     after_snapshot = order_snapshot(refreshed)
     apply_snapshot_manual_locks(
         refreshed, before_snapshot, after_snapshot, source="human"
@@ -1990,6 +2021,8 @@ async def cancel_order(order_id: str, db: DBSession, current_user: CurrentUser):
 
     before_snapshot = order_snapshot(order)
     order.order_status = OrderStatus.cancelled
+    from app.services.task_lifecycle import sync_order_tasks
+    await sync_order_tasks(db, order, current_user["user_id"])
 
     # 续住关联组：被取消的单立刻解关联，别让组挂着退订孤儿单（Task 12）。
     # 解关联前先抓组成员快照——撤码要按「取消前」的成员关系判断共享码是否仍被
@@ -2093,10 +2126,10 @@ async def delete_order(order_id: str, db: DBSession, current_user: CurrentUser):
         if r.room_id:
             await _release_reserved_room(db, r.room_id)
 
-    # 同步删除该订单下的任务
-    tasks_result = await db.execute(select(Task).where(Task.order_id == order_id))
-    for task in tasks_result.scalars().all():
-        await db.delete(task)
+    # 保留运营记录。只有业务事实已证明过时的押金任务自动收口；维修/保洁
+    # 仍需工作人员核实，软删订单并不能证明房间已经打扫或修好。
+    from app.services.task_lifecycle import sync_order_tasks
+    await sync_order_tasks(db, order, current_user["user_id"])
 
     apply_snapshot_manual_locks(
         order, before_snapshot, order_snapshot(order), source="human"
@@ -2123,7 +2156,7 @@ async def delete_order(order_id: str, db: DBSession, current_user: CurrentUser):
         order_id,
         before_data=before_snapshot,
         after_data=after_snapshot,
-        notes="软删除订单 + 状态置 cancelled + 释放 reserved 房 + 清理关联任务 + 作废业主承担费用",
+        notes="软删除订单 + 状态置 cancelled + 释放 reserved 房 + 核对押金任务并保留任务记录 + 作废业主承担费用",
     )
     await db.commit()
 
@@ -3235,6 +3268,8 @@ async def collect_deposit(order_id: str, db: DBSession, current_user: CurrentUse
                 detail=f"续住组押金应收在 {holder.order_id} 段，请到该段收取，本段无需重复收押金。")
 
     order.deposit_status = DepositStatus.collected
+    from app.services.task_lifecycle import sync_order_tasks
+    await sync_order_tasks(db, order, current_user["user_id"])
     await db.flush()
     refreshed = (await db.execute(
         select(Order).where(Order.order_id == order_id).options(selectinload(Order.rooms))
@@ -3296,6 +3331,8 @@ async def return_deposit(
 
     order.deposit_returned = refund
     order.deposit_status = DepositStatus.withheld if refund == 0 else DepositStatus.returned
+    from app.services.task_lifecycle import sync_order_tasks
+    await sync_order_tasks(db, order, current_user["user_id"])
     if withhold > 0:
         meta = dict(order.metadata_) if order.metadata_ else {}
         meta["deposit_withhold_reason"] = body.withhold_reason.strip()
@@ -3352,6 +3389,8 @@ async def withhold_deposit(
         raise HTTPException(status_code=400, detail=f"当前押金状态为 {order.deposit_status.value}，需先收取后才能扣留")
 
     order.deposit_status = DepositStatus.withheld
+    from app.services.task_lifecycle import sync_order_tasks
+    await sync_order_tasks(db, order, current_user["user_id"])
     # Store reason in metadata
     meta = dict(order.metadata_) if order.metadata_ else {}
     meta["deposit_withhold_reason"] = body.reason

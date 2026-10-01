@@ -1,11 +1,12 @@
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Response
 from sqlalchemy import delete, func, select
 from sqlalchemy.orm import selectinload
 from typing import Optional
 from decimal import Decimal
-from datetime import datetime
+from datetime import date, datetime
 from dataclasses import dataclass
 import json
+import hashlib
 from pydantic import BaseModel, field_validator
 import uuid
 
@@ -18,7 +19,10 @@ from app.models.company_sponsored_stay import (
 )
 from app.models.room import Room
 from app.models.owner import Owner
-from app.models.expense import ExpenseCategory, EXPENSE_CATEGORY_LABELS
+from app.models.order import Order, OrderStatus
+from app.models.order_room import OrderRoom
+from app.models.monthly_close import MonthlyCloseCycle
+from app.models.expense import Expense, ExpenseCategory, EXPENSE_CATEGORY_LABELS
 from app.services.audit import log_action_tx
 from app.services.owner_settlement import (
     compute_room_month_owner_stat,
@@ -34,8 +38,33 @@ from app.services.service_fee_reconciliation import (
     plan_service_fee_reconciliation,
 )
 from app.services.settlement_preflight import run_settlement_preflight
+from app.services.monthly_close.financial_lock import acquire_month_financial_lock
+from app.services.monthly_close.migration import (
+    MonthlyCloseRolloutError,
+    require_cycle_write_control,
+)
+from app.services.monthly_close.workflow import get_or_create_cycle
 
 router = APIRouter(prefix="/settlements", tags=["settlements"])
+
+SETTLEMENT_RULESET_VERSION = "owner-settlement-rules-v3"
+SETTLEMENT_CALCULATION_VERSION = "owner-settlement-engine-v2"
+
+
+def _settlement_digest(value) -> str:
+    return hashlib.sha256(
+        json.dumps(
+            value,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            default=str,
+        ).encode("utf-8")
+    ).hexdigest()
+
+
+def _money(value) -> str:
+    return format(Decimal(str(value or 0)).quantize(Decimal("0.01")), ".2f")
 
 
 async def _lock_settlement_with_owner(db, settlement_id: str):
@@ -177,6 +206,265 @@ class SettlementFinancialSnapshot:
     items: tuple[SettlementItemSnapshot, ...]
 
 
+def _canonical_settlement_item_facts(
+    snapshot: SettlementFinancialSnapshot,
+    service_fee_refs: dict[str, str],
+) -> list[dict]:
+    """Normalize calculator output into the immutable approval representation."""
+    return [
+        {
+            "room_id": item.room_id,
+            "label": item.label,
+            "order_count": int(item.order_count),
+            "revenue": _money(item.revenue),
+            "commission": _money(item.commission),
+            "net_revenue": _money(item.net_revenue),
+            "externally_settled_income": _money(item.externally_settled_income),
+            "owner_expenses": _money(item.owner_expenses),
+            "share_ratio_snapshot": format(
+                Decimal(str(item.share_ratio_snapshot or 0)).quantize(
+                    Decimal("0.001")
+                ),
+                ".3f",
+            ),
+            "owner_net_amount": _money(item.owner_net_amount),
+            "cost_share_breakdown": _canonical_cost_share_breakdown(
+                item.cost_share_breakdown, service_fee_refs
+            ),
+        }
+        for item in snapshot.items
+    ]
+
+
+def _canonical_cost_share_breakdown(
+    breakdown: list | None, service_fee_refs: dict[str, str]
+) -> list:
+    entries = [
+        (
+            {
+                **{
+                    key: value
+                    for key, value in entry.items()
+                    if key != "expense_id"
+                },
+                "service_fee_key": service_fee_refs[entry["expense_id"]],
+            }
+            if entry.get("expense_id") in service_fee_refs
+            else entry
+        )
+        for entry in (breakdown or [])
+    ]
+
+    # JSON object keys are sorted separately; expense list order is not financial state.
+    return sorted(entries, key=lambda entry: json.dumps(entry, sort_keys=True, ensure_ascii=False, default=str))
+
+
+def _sponsorship_binding_snapshot(
+    income,
+    *,
+    room_id: str,
+    settlement_item_id: str,
+) -> dict:
+    root = income.root
+    return {
+        "sponsorship_id": root.sponsored_stay_id,
+        "settlement_item_id": settlement_item_id,
+        "room_id": room_id,
+        "source_order_id": root.source_order_id,
+        "segment_order_id": root.segment_order_id,
+        "effective_amount": _money(income.amount),
+        "payment_responsibility": getattr(
+            root.payment_responsibility, "value", root.payment_responsibility
+        ),
+        "status": getattr(root.status, "value", root.status),
+        "version": int(root.version),
+        "source_price_snapshot_id": root.source_price_snapshot_id,
+    }
+
+
+async def _existing_settlement_snapshot(
+    db,
+    settlement: OwnerSettlement,
+    year: int,
+    month: int,
+) -> dict:
+    """Bind every current fact that makes preserving a settlement safe."""
+    period_start = date(year, month, 1)
+    period_end = (
+        date(year + 1, 1, 1)
+        if month == 12
+        else date(year, month + 1, 1)
+    )
+    rooms = list(
+        await db.scalars(
+            select(Room)
+            .where(Room.owner_id == settlement.owner_id)
+            .order_by(Room.room_id)
+        )
+    )
+    room_ids = [room.room_id for room in rooms]
+    order_rows = list(
+        (
+            await db.execute(
+                select(Order, OrderRoom)
+                .join(OrderRoom, OrderRoom.order_id == Order.order_id)
+                .where(
+                    Order.is_deleted.is_(False),
+                    Order.order_status != OrderStatus.cancelled,
+                    OrderRoom.room_id.in_(room_ids),
+                    OrderRoom.check_out_date >= period_start,
+                    OrderRoom.check_out_date < period_end,
+                )
+                .order_by(Order.order_id, OrderRoom.position, OrderRoom.order_room_id)
+            )
+        ).all()
+    ) if room_ids else []
+    expenses = list(
+        await db.scalars(
+            select(Expense)
+            .where(
+                Expense.owner_id == settlement.owner_id,
+                Expense.is_deleted.is_(False),
+                Expense.expense_date >= period_start,
+                Expense.expense_date < period_end,
+            )
+            .order_by(Expense.expense_id)
+        )
+    )
+    service_fee_refs = {
+        expense.expense_id: (
+            f"{expense.order_id}:{expense.room_id}:{expense.category.value}"
+        )
+        for expense in expenses
+        if expense.is_service_fee
+    }
+    persisted_items = list(
+        await db.scalars(
+            select(OwnerSettlementItem)
+            .where(OwnerSettlementItem.settlement_id == settlement.settlement_id)
+            .order_by(OwnerSettlementItem.item_id)
+        )
+    )
+    current = await _build_settlement_financial_snapshot(
+        db, settlement.owner_id, year, month, rooms=rooms
+    )
+    sponsorship_by_room = await load_room_sponsorship_income(
+        db, room_ids, year, month, for_update=True
+    )
+    sponsorship_bindings = sorted(
+        (
+            {
+                **_sponsorship_binding_snapshot(
+                    income,
+                    room_id=room_id,
+                    settlement_item_id=income.root.settlement_item_id,
+                ),
+                "settlement_batch_id": income.root.settlement_batch_id,
+            }
+            for room_id in room_ids
+            for income in sponsorship_by_room.get(room_id, [])
+        ),
+        key=lambda item: (
+            item["sponsorship_id"],
+            item.get("settlement_batch_id") or "",
+            item.get("settlement_item_id") or "",
+        ),
+    )
+    return {
+        "settlement_id": settlement.settlement_id,
+        "owner_id": settlement.owner_id,
+        "status": getattr(settlement.status, "value", settlement.status),
+        "header": {
+            "settlement_id": settlement.settlement_id,
+            "owner_id": settlement.owner_id,
+            "billing_month": settlement.billing_month,
+            "total_net_revenue": _money(settlement.total_net_revenue),
+            "owner_amount": _money(settlement.owner_amount),
+            "deducted_expenses": _money(settlement.deducted_expenses),
+            "actual_owner_amount": _money(settlement.actual_owner_amount),
+            "status": getattr(settlement.status, "value", settlement.status),
+            "payment_date": (
+                settlement.payment_date.isoformat()
+                if settlement.payment_date is not None
+                else None
+            ),
+            "doc_url": settlement.doc_url,
+            "notes": settlement.notes,
+            "created_by": settlement.created_by,
+        },
+        "room_ids": room_ids,
+        "order_ids": sorted({order.order_id for order, _segment in order_rows}),
+        "order_room_ids": [segment.order_room_id for _order, segment in order_rows],
+        "item_ids": [item.item_id for item in persisted_items],
+        "items": [
+            {
+                "item_id": item.item_id,
+                "settlement_id": item.settlement_id,
+                "room_id": item.room_id,
+                "label": item.label,
+                "order_room_id": item.order_room_id,
+                "order_count": int(item.order_count),
+                "revenue": _money(item.revenue),
+                "commission": _money(item.commission),
+                "net_revenue": _money(item.net_revenue),
+                "externally_settled_income": _money(
+                    item.externally_settled_income
+                ),
+                "sponsorship_adjustment_id": item.sponsorship_adjustment_id,
+                "owner_expenses": _money(item.owner_expenses),
+                "share_ratio_snapshot": format(
+                    Decimal(str(item.share_ratio_snapshot or 0)).quantize(
+                        Decimal("0.001")
+                    ),
+                    ".3f",
+                ),
+                "owner_net_amount": _money(item.owner_net_amount),
+                "cost_share_breakdown": _canonical_cost_share_breakdown(
+                    item.cost_share_breakdown, service_fee_refs
+                ),
+            }
+            for item in persisted_items
+        ],
+        "expenses": [
+            {
+                "expense_id": (
+                    None if expense.is_service_fee else expense.expense_id
+                ),
+                "service_fee_key": service_fee_refs.get(expense.expense_id),
+                "category": expense.category.value,
+                "amount": _money(expense.amount),
+                "description": expense.description,
+                "expense_date": expense.expense_date.isoformat(),
+                "room_id": expense.room_id,
+                "order_id": expense.order_id,
+                "payer": getattr(expense.payer, "value", expense.payer),
+                "owner_id": expense.owner_id,
+                "is_service_fee": bool(expense.is_service_fee),
+            }
+            for expense in expenses
+        ],
+        "share_ratio_versions": {
+            room.room_id: format(
+                Decimal(str(room.owner_share_ratio or 0)).quantize(
+                    Decimal("0.001")
+                ),
+                ".3f",
+            )
+            for room in rooms
+        },
+        "service_fee_keys": sorted(service_fee_refs.values()),
+        "sponsorship_bindings": sponsorship_bindings,
+        "current_financial_snapshot": {
+            "total_revenue": _money(current.total_revenue),
+            "total_net_revenue": _money(current.total_net_revenue),
+            "owner_amount": _money(current.owner_amount),
+            "deducted_expenses": _money(current.deducted_expenses),
+            "actual_owner_amount": _money(current.actual_owner_amount),
+            "items": _canonical_settlement_item_facts(current, service_fee_refs),
+        },
+    }
+
+
 async def _build_settlement_financial_snapshot(
     db,
     owner_id: str,
@@ -273,7 +561,10 @@ def _money_fingerprint(value) -> str:
     return str(Decimal(str(value or 0)).quantize(Decimal("0.01")))
 
 
-def _item_fingerprint(item) -> tuple:
+def _item_fingerprint(item, service_fee_refs: dict[str, str] | None = None) -> tuple:
+    cost_share_breakdown = _canonical_cost_share_breakdown(
+        item.cost_share_breakdown, service_fee_refs or {}
+    )
     return (
         item.room_id or "",
         getattr(item, "label", None) or "",
@@ -289,7 +580,7 @@ def _item_fingerprint(item) -> tuple:
         ),
         _money_fingerprint(item.owner_net_amount),
         json.dumps(
-            item.cost_share_breakdown or [],
+            cost_share_breakdown,
             ensure_ascii=False,
             sort_keys=True,
             separators=(",", ":"),
@@ -302,6 +593,8 @@ def _financial_snapshot_drift(
     settlement: OwnerSettlement,
     stored_items: list[OwnerSettlementItem],
     current: SettlementFinancialSnapshot,
+    *,
+    service_fee_refs: dict[str, str] | None = None,
 ) -> dict | None:
     settlement_fields = [
         field
@@ -314,8 +607,12 @@ def _financial_snapshot_drift(
         if _money_fingerprint(getattr(settlement, field))
         != _money_fingerprint(getattr(current, field))
     ]
-    stored_fingerprint = sorted(_item_fingerprint(item) for item in stored_items)
-    current_fingerprint = sorted(_item_fingerprint(item) for item in current.items)
+    stored_fingerprint = sorted(
+        _item_fingerprint(item, service_fee_refs) for item in stored_items
+    )
+    current_fingerprint = sorted(
+        _item_fingerprint(item, service_fee_refs) for item in current.items
+    )
     items_changed = stored_fingerprint != current_fingerprint
     if not settlement_fields and not items_changed:
         return None
@@ -371,9 +668,255 @@ async def list_settlements(
     return response
 
 
+async def build_settlement_plan_snapshot(
+    db,
+    year: int,
+    month: int,
+    *,
+    overwrite: bool = False,
+) -> dict:
+    """Build the immutable financial and identity set approved by month close.
+
+    Missing deterministic service-fee rows are applied only in a savepoint so
+    the existing settlement calculator sees the exact future ledger while the
+    proposal builder itself leaves no business mutation behind.
+    """
+
+    current_date = today_cn()
+    if (year, month) >= (current_date.year, current_date.month):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "正式结算只能生成已结束的自然月；"
+                f"北京日期 {current_date.isoformat()} 尚未关闭 {year:04d}-{month:02d}"
+            ),
+        )
+    billing_month = f"{year:04d}-{month:02d}"
+    preflight = await run_settlement_preflight(db, year, month)
+    if preflight.blocking:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "settlement_preflight_failed",
+                "message": "月结体检发现未处理异常，请处理完成后再生成结算。",
+                "report": preflight.to_dict(),
+            },
+        )
+    preflight_snapshot = preflight.gate_dict()
+    preflight_hash = _settlement_digest(preflight_snapshot)
+    owners = list(await db.scalars(select(Owner).order_by(Owner.owner_id)))
+    existing_rows = list(
+        await db.scalars(
+            select(OwnerSettlement)
+            .where(OwnerSettlement.billing_month == billing_month)
+            .order_by(OwnerSettlement.owner_id, OwnerSettlement.settlement_id)
+        )
+    )
+    existing_by_owner = {row.owner_id: row for row in existing_rows}
+    plans: list[dict] = []
+    fee_plans = {}
+    nested = await db.begin_nested()
+    try:
+        for owner in owners:
+            existing = existing_by_owner.get(owner.owner_id)
+            if existing is not None and (
+                not overwrite or existing.status != SettlementStatus.pending
+            ):
+                continue
+            rooms = list(
+                await db.scalars(
+                    select(Room)
+                    .where(Room.owner_id == owner.owner_id)
+                    .order_by(Room.room_id)
+                )
+            )
+            if not rooms:
+                continue
+            fee_plan = await plan_service_fee_reconciliation(
+                db, owner.owner_id, year, month
+            )
+            if fee_plan.unresolved:
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "code": "service_fee_reconciliation_unresolved",
+                        "message": "服务费仍有无法确定的订单，不能生成结算方案。",
+                        "owner_id": owner.owner_id,
+                        "unresolved": [
+                            _unresolved_service_fee_detail(item)
+                            for item in fee_plan.unresolved
+                        ],
+                    },
+                )
+            fee_plans[owner.owner_id] = fee_plan
+            await apply_service_fee_reconciliation(db, fee_plan, operator_id=None)
+            snapshot = await _build_settlement_financial_snapshot(
+                db, owner.owner_id, year, month, rooms=rooms
+            )
+            service_fee_refs = {
+                row.expense_id: (
+                    f"{row.order_id}:{row.room_id}:{row.category.value}"
+                )
+                for row in await db.scalars(
+                    select(Expense).where(
+                        Expense.owner_id == owner.owner_id,
+                        Expense.is_service_fee.is_(True),
+                        Expense.is_deleted.is_(False),
+                        Expense.expense_date >= date(year, month, 1),
+                        Expense.expense_date
+                        < (
+                            date(year + 1, 1, 1)
+                            if month == 12
+                            else date(year, month + 1, 1)
+                        ),
+                    )
+                )
+            }
+            if snapshot.total_net_revenue == 0 and snapshot.deducted_expenses == 0:
+                continue
+            room_ids = sorted(room.room_id for room in rooms)
+            order_ids = sorted(
+                set(
+                    await db.scalars(
+                        select(Order.order_id)
+                        .join(OrderRoom, OrderRoom.order_id == Order.order_id)
+                        .where(
+                            Order.is_deleted.is_(False),
+                            Order.order_status != OrderStatus.cancelled,
+                            OrderRoom.room_id.in_(room_ids),
+                            OrderRoom.check_out_date >= date(year, month, 1),
+                            OrderRoom.check_out_date
+                            < (
+                                date(year + 1, 1, 1)
+                                if month == 12
+                                else date(year, month + 1, 1)
+                            ),
+                        )
+                    )
+                )
+            )
+            item_facts = _canonical_settlement_item_facts(
+                snapshot, service_fee_refs
+            )
+            identity_hash = _settlement_digest(
+                {
+                    "billing_month": billing_month,
+                    "owner_id": owner.owner_id,
+                    "items": item_facts,
+                    "order_ids": order_ids,
+                    "overwrite": overwrite,
+                }
+            )
+            settlement_id = f"STL-{identity_hash[:12].upper()}"
+            item_ids = [
+                f"SLI-{_settlement_digest({'settlement_id': settlement_id, 'index': index, 'item': item})[:12].upper()}"
+                for index, item in enumerate(item_facts)
+            ]
+            room_item_ids = {
+                item["room_id"]: item_id
+                for item_id, item in zip(item_ids, item_facts)
+                if item["room_id"] is not None
+            }
+            sponsorship_income_by_room = await load_room_sponsorship_income(
+                db, room_ids, year, month, for_update=True
+            )
+            sponsorship_bindings = sorted(
+                (
+                    _sponsorship_binding_snapshot(
+                        income,
+                        room_id=room_id,
+                        settlement_item_id=room_item_ids[room_id],
+                    )
+                    for room_id in room_ids
+                    for income in sponsorship_income_by_room.get(room_id, [])
+                ),
+                key=lambda item: (
+                    item["sponsorship_id"],
+                    item["settlement_item_id"],
+                ),
+            )
+            plans.append(
+                {
+                    "settlement_id": settlement_id,
+                    "owner_id": owner.owner_id,
+                    "status": SettlementStatus.pending.value,
+                    "room_ids": room_ids,
+                    "order_ids": order_ids,
+                    "item_ids": item_ids,
+                    "items": item_facts,
+                    "sponsorship_bindings": sponsorship_bindings,
+                    "total_revenue": _money(snapshot.total_revenue),
+                    "total_net_revenue": _money(snapshot.total_net_revenue),
+                    "owner_amount": _money(snapshot.owner_amount),
+                    "deducted_expenses": _money(snapshot.deducted_expenses),
+                    "actual_owner_amount": _money(snapshot.actual_owner_amount),
+                    "share_ratio_versions": {
+                        room.room_id: format(
+                            Decimal(str(room.owner_share_ratio or 0)).quantize(
+                                Decimal("0.001")
+                            ),
+                            ".3f",
+                        )
+                        for room in rooms
+                    },
+                    "service_fee_keys": sorted(
+                        f"{item.order_id}:{item.room_id}:{item.category.value}"
+                        for item in fee_plan.expected
+                    ),
+                    "replaces_settlement_id": (
+                        existing.settlement_id if existing is not None else None
+                    ),
+                }
+            )
+    finally:
+        await nested.rollback()
+
+    plans.sort(key=lambda item: (item["owner_id"], item["settlement_id"]))
+    replaced_settlement_ids = {
+        item["replaces_settlement_id"]
+        for item in plans
+        if item["replaces_settlement_id"] is not None
+    }
+    preserved_settlements = [
+        await _existing_settlement_snapshot(db, row, year, month)
+        for row in existing_rows
+        if row.settlement_id not in replaced_settlement_ids
+    ]
+    locked_settlements = [
+        item
+        for item in preserved_settlements
+        if item["status"] != SettlementStatus.pending.value
+    ]
+    total_amount = sum(
+        (Decimal(item["actual_owner_amount"]) for item in plans), Decimal("0.00")
+    )
+    result = {
+        "billing_month": billing_month,
+        "overwrite": overwrite,
+        "ruleset_version": SETTLEMENT_RULESET_VERSION,
+        "calculation_version": SETTLEMENT_CALCULATION_VERSION,
+        "preflight_hash": preflight_hash,
+        "preflight": preflight_snapshot,
+        "owner_ids": [item["owner_id"] for item in plans],
+        "settlement_ids": [item["settlement_id"] for item in plans],
+        "settlements": plans,
+        "locked_settlements": locked_settlements,
+        "preserved_settlements": preserved_settlements,
+        "total_amount": _money(total_amount),
+    }
+    result["plan_hash"] = _settlement_digest(result)
+    return result
+
+
 async def _generate_settlements_core(
     db, year: int, month: int, created_by: Optional[str] = None,
     overwrite: bool = False,
+    *,
+    expected_cycle_id: str,
+    expected_write_owner: str,
+    expected_control_version: int,
+    commit: bool = True,
+    approved_plan: dict | None = None,
 ) -> dict:
     """
     按房号维度生成业主月度结算单（含子明细）。
@@ -396,6 +939,35 @@ async def _generate_settlements_core(
         )
 
     billing_month = f"{year}-{str(month).zfill(2)}"
+    await acquire_month_financial_lock(db, billing_month)
+    locked_cycle = await require_cycle_write_control(
+        db,
+        expected_cycle_id,
+        expected_version=expected_control_version,
+        owner=expected_write_owner,
+    )
+    if locked_cycle.billing_month != billing_month:
+        raise MonthlyCloseRolloutError(
+            "write_control_cycle_mismatch",
+            "结算月份与写入控制周期不一致，请刷新后重试",
+        )
+    planned_by_owner: dict[str, dict] = {}
+    if approved_plan is not None:
+        fresh_plan = await build_settlement_plan_snapshot(
+            db, year, month, overwrite=overwrite
+        )
+        if fresh_plan != approved_plan:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "settlement_plan_stale",
+                    "message": "结算事实已经变化，请重新生成并审批方案。",
+                    "current_plan_hash": fresh_plan.get("plan_hash"),
+                },
+            )
+        planned_by_owner = {
+            item["owner_id"]: item for item in approved_plan["settlements"]
+        }
 
     # 生成前先做全月只读体检。必须放在删除旧 pending 结算之前，确保失败时不产生
     # “旧单已删、新单没生成”的半成品状态。
@@ -515,7 +1087,12 @@ async def _generate_settlements_core(
         if snapshot.total_net_revenue == 0 and snapshot.deducted_expenses == 0:
             continue
 
-        settlement_id = "STL-" + uuid.uuid4().hex[:12].upper()
+        planned = planned_by_owner.get(owner.owner_id)
+        settlement_id = (
+            planned["settlement_id"]
+            if planned is not None
+            else "STL-" + uuid.uuid4().hex[:12].upper()
+        )
         settlement = OwnerSettlement(
             settlement_id=settlement_id,
             owner_id=owner.owner_id,
@@ -528,13 +1105,17 @@ async def _generate_settlements_core(
             created_by=created_by,
         )
         db.add(settlement)
-        sponsorship_bindings: list[tuple[CompanySponsoredStay, OwnerSettlementItem]] = []
+        sponsorship_bindings: list[tuple[object, OwnerSettlementItem]] = []
         sponsorship_income_by_room = await load_room_sponsorship_income(
             db, [room.room_id for room in rooms], year, month, for_update=True
         )
-        for item in snapshot.items:
+        for item_index, item in enumerate(snapshot.items):
             settlement_item = OwnerSettlementItem(
-                item_id="SLI-" + uuid.uuid4().hex[:12].upper(),
+                item_id=(
+                    planned["item_ids"][item_index]
+                    if planned is not None
+                    else "SLI-" + uuid.uuid4().hex[:12].upper()
+                ),
                 settlement_id=settlement_id,
                 room_id=item.room_id,
                 label=item.label,
@@ -546,17 +1127,45 @@ async def _generate_settlements_core(
                 owner_expenses=item.owner_expenses,
                 share_ratio_snapshot=item.share_ratio_snapshot,
                 owner_net_amount=item.owner_net_amount,
-                cost_share_breakdown=item.cost_share_breakdown,
+                cost_share_breakdown=(
+                    planned["items"][item_index]["cost_share_breakdown"]
+                    if planned is not None
+                    else item.cost_share_breakdown
+                ),
             )
             db.add(settlement_item)
             if item.room_id is not None:
                 for income in sponsorship_income_by_room.get(item.room_id, []):
-                    sponsorship_bindings.append((income.root, settlement_item))
+                    sponsorship_bindings.append((income, settlement_item))
+        if planned is not None:
+            current_bindings = sorted(
+                (
+                    _sponsorship_binding_snapshot(
+                        income,
+                        room_id=item.room_id,
+                        settlement_item_id=item.item_id,
+                    )
+                    for income, item in sponsorship_bindings
+                ),
+                key=lambda entry: (
+                    entry["sponsorship_id"],
+                    entry["settlement_item_id"],
+                ),
+            )
+            if current_bindings != planned["sponsorship_bindings"]:
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "code": "settlement_plan_stale",
+                        "message": "公司承担住宿事实已经变化，请重新生成并审批方案。",
+                    },
+                )
         # Root consistency validation reads the referenced item from the database.
         # Flush the new batch/items first, still inside this single uncommitted
         # transaction, then attach and settle every included sponsorship root.
         await db.flush()
-        for root, item in sponsorship_bindings:
+        for income, item in sponsorship_bindings:
+            root = income.root
             if root.status != CompanySponsorshipStatus.confirmed:
                 raise ValueError(
                     "only confirmed sponsorships may enter a new settlement"
@@ -585,7 +1194,10 @@ async def _generate_settlements_core(
             "blocked_unresolved": blocked_unresolved,
         },
     )
-    await db.commit()
+    if commit:
+        await db.commit()
+    else:
+        await db.flush()
     return {
         "generated": generated,
         "regenerated": regenerated,
@@ -601,6 +1213,7 @@ async def _generate_settlements_core(
 async def generate_settlements(
     db: DBSession,
     current_user: CurrentUser,
+    response: Response,
     year: int = Query(...),
     month: int = Query(..., ge=1, le=12),
     overwrite: bool = Query(
@@ -613,8 +1226,45 @@ async def generate_settlements(
     if current_user["role"] != "admin":
         raise HTTPException(status_code=403, detail="仅管理员可生成结算")
 
-    result = await _generate_settlements_core(
-        db, year, month, current_user["user_id"], overwrite=overwrite)
+    billing_month = f"{year:04d}-{month:02d}"
+    cycle = await get_or_create_cycle(db, billing_month, current_user["user_id"])
+    observed_control_version = cycle.control_version
+    if cycle is not None and cycle.write_control_owner == "assistant":
+        from app.services.monthly_close.finalization import (
+            build_settlement_proposal,
+        )
+
+        proposal = await build_settlement_proposal(
+            db,
+            cycle,
+            current_user,
+            request_id=f"LEGACY-SETTLEMENT-{cycle.cycle_id}-{int(overwrite)}",
+            overwrite=overwrite,
+        )
+        response.status_code = 202
+        return {
+            "proposal_id": proposal.proposal_id,
+            "proposal_type": proposal.proposal_type,
+            "status": proposal.status,
+            "cycle_id": proposal.cycle_id,
+            "evidence_hash": proposal.evidence_hash,
+            "impact_snapshot": proposal.impact_snapshot,
+        }
+
+    try:
+        result = await _generate_settlements_core(
+            db,
+            year,
+            month,
+            current_user["user_id"],
+            overwrite=overwrite,
+            expected_cycle_id=cycle.cycle_id,
+            expected_write_owner="legacy",
+            expected_control_version=observed_control_version,
+        )
+    except MonthlyCloseRolloutError as exc:
+        await db.rollback()
+        raise HTTPException(status_code=409, detail=exc.to_detail()) from exc
     return result
 
 
@@ -703,9 +1353,32 @@ async def confirm_settlement(settlement_id: str, db: DBSession, current_user: Cu
     if current_user["role"] not in ("admin", "owner"):
         raise HTTPException(status_code=403, detail="无权确认结算")
 
+    # Read only the lock scope first.  All financial snapshot reads follow the
+    # global month -> owner -> settlement -> order lock order.
+    billing_month = await db.scalar(
+        select(OwnerSettlement.billing_month).where(
+            OwnerSettlement.settlement_id == settlement_id
+        )
+    )
+    if billing_month is None:
+        raise HTTPException(status_code=404, detail="结算记录不存在")
+    try:
+        await acquire_month_financial_lock(db, billing_month)
+    except ValueError:
+        # The existing plain-language invalid-month response below remains the
+        # public contract; malformed rows are serialized on a private key.
+        await acquire_month_financial_lock(db, "1970-01")
     settlement = await _lock_settlement_with_owner(db, settlement_id)
     if not settlement:
         raise HTTPException(status_code=404, detail="结算记录不存在")
+    if settlement.billing_month != billing_month:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "settlement_lock_scope_changed",
+                "message": "结算月份已变化，请刷新后重试",
+            },
+        )
     if settlement.status != SettlementStatus.pending:
         raise HTTPException(status_code=400, detail="仅待确认状态可确认")
 
@@ -757,6 +1430,14 @@ async def confirm_settlement(settlement_id: str, db: DBSession, current_user: Cu
 
     # 确认时重新体检，覆盖“生成后又导入账单/新增费用/改订单”的漂移窗口。
     preflight = await run_settlement_preflight(db, year, month)
+    # Preserve the existing confirmation error contract for planner ambiguities.
+    # The identical planner below still blocks these, with all related order IDs.
+    planner_codes = {
+        "service_fee_overlapping_stay_group", "service_fee_gapped_stay_group",
+        "service_fee_duplicate_final_nodes", "service_fee_wrong_expense_month",
+        "service_fee_duplicate_service_fee",
+    }
+    deferred_preflight_error = None
     if preflight.blocking:
         detail = {
             "code": "settlement_preflight_failed",
@@ -766,10 +1447,19 @@ async def confirm_settlement(settlement_id: str, db: DBSession, current_user: Cu
         if current_user["role"] != "owner":
             detail["message"] = "月结体检发现未处理异常，请处理完成并重新生成后再确认。"
             detail["report"] = preflight.to_dict()
-        raise HTTPException(
+        preflight_error = HTTPException(
             status_code=409,
             detail=detail,
         )
+        # A checkout moved after generation already has a precise snapshot-drift
+        # response. Preserve it, but still reject wrongly posted fees below if
+        # the stored financial snapshot happens to match.
+        if all(issue.code in planner_codes for issue in preflight.issues) or all(
+            issue.code == "service_fee_posted_wrong_month" for issue in preflight.issues
+        ):
+            deferred_preflight_error = preflight_error
+        else:
+            raise preflight_error
 
     # Confirmation is deliberately read-only: generation is the only path that
     # may repair missing fee rows.  The owner and settlement locks acquired above
@@ -814,8 +1504,34 @@ async def confirm_settlement(settlement_id: str, db: DBSession, current_user: Cu
     current_snapshot = await _build_settlement_financial_snapshot(
         db, settlement.owner_id, year, month
     )
+    period_start = date(year, month, 1)
+    period_end = (
+        date(year + 1, 1, 1)
+        if month == 12
+        else date(year, month + 1, 1)
+    )
+    service_fees = list(
+        await db.scalars(
+            select(Expense).where(
+                Expense.owner_id == settlement.owner_id,
+                Expense.is_service_fee.is_(True),
+                Expense.is_deleted.is_(False),
+                Expense.expense_date >= period_start,
+                Expense.expense_date < period_end,
+            )
+        )
+    )
+    service_fee_refs = {
+        expense.expense_id: (
+            f"{expense.order_id}:{expense.room_id}:{expense.category.value}"
+        )
+        for expense in service_fees
+    }
     drift = _financial_snapshot_drift(
-        settlement, stored_items, current_snapshot
+        settlement,
+        stored_items,
+        current_snapshot,
+        service_fee_refs=service_fee_refs,
     )
     if drift is not None:
         raise HTTPException(
@@ -832,7 +1548,18 @@ async def confirm_settlement(settlement_id: str, db: DBSession, current_user: Cu
                 ),
             },
         )
+    if deferred_preflight_error is not None:
+        raise deferred_preflight_error
 
+    from app.api.v1.export import _settlement_income_rows
+    import json
+    await db.refresh(settlement, ['items'])
+    income_rows, income_checks = await _settlement_income_rows(db, settlement, full_names=True, use_frozen=False)
+    settlement.income_detail_snapshot = json.loads(json.dumps({
+        'version': 1, 'rows': income_rows, 'checks': income_checks,
+        'confirmed_by': current_user['user_id'], 'billing_month': settlement.billing_month,
+        'sponsorship_adjustment_ids': [item.sponsorship_adjustment_id for item in settlement.items if item.sponsorship_adjustment_id],
+    }, default=str, ensure_ascii=False))
     settlement.status = SettlementStatus.confirmed
     await db.commit()
     return {"message": "结算已确认"}

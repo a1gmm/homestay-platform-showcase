@@ -6,12 +6,14 @@ import {
 } from "antd";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { financeApi, ServiceFeeConfigUpdate } from "@/lib/api";
+import { usePrivacyMode } from "@/hooks/usePrivacyMode";
 
 const { Text, Paragraph } = Typography;
 
 /** 财务页「费用标准设置」：业主服务费费率（保洁/续住/洗涤/日耗）。仅 admin 可见。
  *  改动即时生效——下一单退房记账即按新价，历史已记账支出不变。 */
 export default function ServiceFeeConfigCard() {
+  const privacyMode = usePrivacyMode();
   const [form] = Form.useForm();
   const qc = useQueryClient();
 
@@ -59,6 +61,7 @@ export default function ServiceFeeConfigCard() {
       />
       <Skeleton loading={isLoading} active>
         <Form
+          disabled={privacyMode}
           form={form}
           layout="horizontal"
           labelCol={{ span: 10 }}

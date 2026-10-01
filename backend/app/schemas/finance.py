@@ -120,6 +120,8 @@ class ExpenseOut(BaseModel):
     amount: Decimal
     description: str
     expense_date: date
+    payment_date: Optional[date] = None
+    paid_by: Optional[ExpensePayer] = None
     room_id: Optional[str]
     order_id: Optional[str]
     payer: ExpensePayer
@@ -142,7 +144,7 @@ class ByRoomSummaryItem(BaseModel):
     expense_company: Decimal      # 公司承担的支出
     expense_owner: Decimal        # 业主承担的支出
     owner_net_share: Decimal      # 业主应得 = (net_revenue - expense_owner) * share_ratio
-    company_net: Decimal          # 公司净利 = net_revenue - expense_company - owner_net_share
+    company_net: Decimal          # 收入减公司实际付款成本和业主应付；未知付款方沿用原公司承担口径
 
 
 # 单房明细「区间订单（收入来源）」：按 OrderRoom 段返回，口径同 summary_by_room 营收行。

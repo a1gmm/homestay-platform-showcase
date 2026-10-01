@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 from collections import Counter, defaultdict
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field, replace
 from datetime import date
 from decimal import Decimal
 from typing import Any
@@ -47,12 +47,22 @@ class SettlementPreflightIssue:
     recon_diff_id: str | None = None
     platform_order_id: str | None = None
     amount: Decimal | None = None
+    guest_name: str | None = None
+    room_name: str | None = None
+    check_in: str | None = None
+    check_out: str | None = None
+    expense_date: str | None = None
+    next_action: str | None = None
+    current_amount: Decimal | None = None
+    expected_amount: Decimal | None = None
+    difference: Decimal | None = None
 
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
         # HTTPException.detail 不经过 FastAPI response_model 的 Decimal 编码，必须在服务
         # 边界转成字符串；金额也因此保持两位小数，不被 JSON float 磨损。
-        data["amount"] = str(self.amount) if self.amount is not None else None
+        for key in ("amount", "current_amount", "expected_amount", "difference"):
+            data[key] = f"{getattr(self, key):.2f}" if getattr(self, key) is not None else None
         return data
 
 
@@ -62,6 +72,7 @@ class SettlementPreflightReport:
     blocking: bool
     counts: dict[str, int]
     issues: list[SettlementPreflightIssue]
+    explanations: list[SettlementPreflightIssue] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -69,7 +80,13 @@ class SettlementPreflightReport:
             "blocking": self.blocking,
             "counts": self.counts,
             "issues": [issue.to_dict() for issue in self.issues],
+            "explanations": [item.to_dict() for item in self.explanations],
         }
+
+
+    def gate_dict(self) -> dict[str, Any]:
+        """Approval/verification hashes pin blockers, not expected repair notices."""
+        return {key: value for key, value in self.to_dict().items() if key != "explanations"}
 
 
 def _month_window(year: int, month: int) -> tuple[date, date]:
@@ -166,10 +183,12 @@ async def _expense_issues(
                 amount=amount,
             ))
             continue
-        if is_owner_self_order(order):
+        from app.services.reconciliation_policy import service_cost_payer
+        service_category = expense.category.value in ("cleaning", "laundry", "daily_supplies")
+        if is_owner_self_order(order) or (service_category and service_cost_payer(order) == ExpensePayer.company):
             issues.append(SettlementPreflightIssue(
-                code="owner_self_owner_expense",
-                message="业主自住费用应由公司承担，请先把费用承担方改为公司。",
+                code="owner_self_owner_expense" if is_owner_self_order(order) else "company_reception_owner_expense",
+                message="业主自住费用应由公司承担，请先把费用承担方改为公司。" if is_owner_self_order(order) else "已确认公司承担的服务费仍扣给业主，请按接待确认记录更正承担方。",
                 order_id=expense.order_id,
                 room_id=expense.room_id,
                 expense_id=expense.expense_id,
@@ -248,6 +267,10 @@ async def run_settlement_preflight(
         *await _reconciliation_issues(db, billing_month),
         *await _duplicate_platform_issues(db, start, end),
     ]
+    from app.services.settlement_fee_review import review_service_fees
+    fee_issues, explanations = await review_service_fees(db, year, month)
+    issues.extend(SettlementPreflightIssue(**item) for item in fee_issues)
+    issues, explanations = await _describe_people(db, issues, [SettlementPreflightIssue(**item) for item in explanations])
     issues.sort(key=lambda issue: (
         issue.code,
         issue.order_id or "",
@@ -260,4 +283,26 @@ async def run_settlement_preflight(
         blocking=bool(issues),
         counts=counts,
         issues=issues,
+        explanations=explanations,
     )
+
+
+async def _describe_people(db, issues, explanations):
+    """Batch resolve display identities; never send phone/ID details to clients."""
+    from app.models.room import Room
+    values = [*issues, *explanations]
+    order_ids = {v.order_id for v in values if v.order_id}
+    room_ids = {v.room_id for v in values if v.room_id}
+    orders = {o.order_id: o for o in (await db.scalars(select(Order).where(Order.order_id.in_(order_ids)))).all()} if order_ids else {}
+    rooms = {r.room_id: r.room_name for r in (await db.scalars(select(Room).where(Room.room_id.in_(room_ids)))).all()} if room_ids else {}
+    stays = {(r.order_id, r.room_id): r for r in (await db.scalars(select(OrderRoom).where(OrderRoom.order_id.in_(order_ids)))).all()} if order_ids else {}
+    expense_ids = {v.expense_id for v in values if v.expense_id}
+    expense_dates = dict((await db.execute(select(Expense.expense_id, Expense.expense_date).where(Expense.expense_id.in_(expense_ids)))).all()) if expense_ids else {}
+    def enrich(v):
+        order = orders.get(v.order_id)
+        stay = stays.get((v.order_id, v.room_id))
+        return replace(v, expense_date=str(expense_dates[v.expense_id]) if v.expense_id in expense_dates else None, guest_name=order.guest_name if order else None, room_name=rooms.get(v.room_id),
+            check_in=str(stay.check_in_date) if stay and stay.check_in_date else None,
+            check_out=str(stay.check_out_date) if stay and stay.check_out_date else None,
+            next_action=v.next_action or v.message)
+    return [enrich(v) for v in issues], [enrich(v) for v in explanations]

@@ -2,7 +2,7 @@ import { Alert, Button, Empty, Space } from "antd";
 import { useRouter } from "next/navigation";
 
 import { canProcessMonthlyCloseStepEarly } from "@/lib/monthly-close";
-import type { MonthlyCloseCycle, MonthlyCloseInboxItem, MonthlyCloseIssue, MonthlyCloseStep } from "@/lib/monthly-close";
+import type { MonthlyCloseCycle, MonthlyCloseDurableReceipt, MonthlyCloseInboxItem, MonthlyCloseIssue, MonthlyCloseStep } from "@/lib/monthly-close";
 import { tokens } from "@/lib/design-tokens";
 import { SourceCollectionPanel } from "./SourceCollectionPanel";
 import { OtaStatementPanel } from "./OtaStatementPanel";
@@ -125,9 +125,9 @@ export function CurrentStepPanel({
   onClassifyInbox,
   onSetInboxSource,
   onConfirmInbox,
+  onPermanentDeleteInbox,
   onNotApplicable,
   onArchive,
-  onRunUtility,
   onImportOperatingExpenses,
   onReconcileServiceFees,
   onGenerateSettlements,
@@ -143,13 +143,13 @@ export function CurrentStepPanel({
   onSelectStep?: (stepKey: string) => void;
   onConfirm: () => Promise<unknown>;
   onUpload: (sourceType: string, file: File) => Promise<unknown>;
-  onReceiveInbox: (file: File) => Promise<MonthlyCloseInboxItem>;
+  onReceiveInbox: (file: File) => Promise<MonthlyCloseDurableReceipt>;
   onClassifyInbox: (itemId: string) => Promise<unknown>;
   onSetInboxSource: (itemId: string, sourceType: string) => Promise<unknown>;
   onConfirmInbox: (itemId: string) => Promise<unknown>;
+  onPermanentDeleteInbox?: (itemId: string) => Promise<unknown>;
   onNotApplicable: (sourceType: string, reason: string) => Promise<unknown>;
   onArchive: (documentId: string) => Promise<unknown>;
-  onRunUtility: () => Promise<unknown>;
   onImportOperatingExpenses: () => Promise<unknown>;
   onReconcileServiceFees: () => Promise<unknown>;
   onGenerateSettlements: () => Promise<unknown>;
@@ -174,8 +174,8 @@ export function CurrentStepPanel({
   const serviceReviewDocuments = step.step_key === "service_fees"
     ? cycle.sources
       .filter((source) => source.source_type === "cleaning_statement" || source.source_type === "linen_statement")
-      .flatMap((source) => source.documents)
-      .filter((document) => document.processing_status === "rejected")
+      .flatMap((source) => source.documents.map((document) => ({ document, sourceType: source.source_type })))
+      .filter(({ document }) => document.processing_status === "rejected")
     : [];
   const serviceReplacementDocumentIds = new Set(
     step.step_key === "service_fees"
@@ -269,6 +269,7 @@ export function CurrentStepPanel({
             onClassify={onClassifyInbox}
             onSetSource={onSetInboxSource}
             onConfirm={onConfirmInbox}
+            onPermanentDelete={onPermanentDeleteInbox}
           />
           <SourceCollectionPanel
             sources={cycle.sources}
@@ -299,12 +300,13 @@ export function CurrentStepPanel({
                 系统无法安全识别以下文件。请在本步骤确认工作表和列号，导入完成后再继续核对。
               </div>
               <Space direction="vertical" size={10} style={{ width: "100%" }}>
-                {serviceReviewDocuments.map((document) => (
+                {serviceReviewDocuments.map(({ document, sourceType }) => (
                   <div key={document.document_id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
                     <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>{document.filename}</span>
                     <ServiceMappingReview
                       billingMonth={cycle.billing_month}
                       document={document}
+                      sourceType={sourceType}
                       disabled={operationDisabled}
                       onFinished={onRefresh}
                     />
@@ -336,16 +338,8 @@ export function CurrentStepPanel({
               />
             </section>
           )}
-          {step.step_key === "utilities" && cycle.sources
-            .filter((source) => source.source_type === "utility_receipt" || source.source_type === "utility_expense")
-            .flatMap((source) => source.documents)
-            .some((document) => !document.engine_id) && (
-              <Button disabled={operationDisabled} loading={engineRunning} onClick={() => void onRunUtility()}>
-                使用已归档资料开始水电对账 →
-              </Button>
-            )}
           {utilityDocuments.length > 0 && (
-            <section aria-label="水电表格结构检查" style={{ border: `0.5px solid ${tokens.anyu.color.linen}`, borderRadius: 12, padding: 16 }}>
+            <section id="utility-expense" aria-label="水电表格结构检查" style={{ border: `0.5px solid ${tokens.anyu.color.linen}`, borderRadius: 12, padding: 16 }}>
               <div className="serif" style={{ fontSize: 18, marginBottom: 6 }}>水电原表格式检查</div>
               <div style={{ color: tokens.color.text.secondary, marginBottom: 12 }}>
                 可直接开始对账；若系统提示无法认列，在这里人工确认一次，以后同格式自动沿用。

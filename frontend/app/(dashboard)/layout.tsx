@@ -315,7 +315,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               children: group.entries.map((item) => ({
                 key: item.key,
                 icon: item.icon,
-                label: <Link href={item.key}>{item.full}</Link>,
+                // Do not download every visible module over a weak connection
+                // while the active room board is still loading/polling.
+                label: <Link href={item.key} prefetch={false}>{item.full}</Link>,
                 title: item.description,
               })),
             }))}

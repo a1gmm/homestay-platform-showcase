@@ -257,8 +257,9 @@ async def availability_calendar(
     # Multi-room: 多房订单的每行 OrderRoom 单独绘到对应房间行，使用 OrderRoom 自己的
     # check_in/out（每房可不同），不再用 Order 顶层日期。
     from app.models.order_room import OrderRoom
+    from app.services.room_presence import room_arrival_predicate
     rows_result = await db.execute(
-        select(Order, OrderRoom)
+        select(Order, OrderRoom, room_arrival_predicate().label("has_arrived"))
         .join(OrderRoom, OrderRoom.order_id == Order.order_id)
         .where(
             Order.is_deleted == False,
@@ -272,7 +273,7 @@ async def availability_calendar(
 
     # Compute group classification from complete groups, not the visible viewport.
     from app.core.free_room import free_room_kind
-    visible_orders = {order.order_id: order for order, _ in order_room_pairs}
+    visible_orders = {order.order_id: order for order, _, _ in order_room_pairs}
     group_ids = {o.stay_group_id for o in visible_orders.values() if o.stay_group_id}
     group_kind: dict[str, str] = {}
     if group_ids:
@@ -298,7 +299,7 @@ async def availability_calendar(
             "days": {}
         }
 
-    for order, orm in order_room_pairs:
+    for order, orm, has_arrived in order_room_pairs:
         if orm.room_id not in calendar:
             continue
         current = max(orm.check_in_date, month_start)
@@ -308,6 +309,13 @@ async def availability_calendar(
             order.payment_status.value if hasattr(order.payment_status, "value") else order.payment_status
         )
         trial_tag = trial_tag_for_notes(order.notes)
+        # 逐房展示状态不替换订单状态，保持拖拽和订单操作读取原始状态。
+        display_status = order.order_status.value
+        if order.order_status in (OrderStatus.checked_in, OrderStatus.pending_checkout):
+            if orm.checked_out_at is not None:
+                display_status = "checked_out"
+            elif not has_arrived:
+                display_status = "roomed_pending_checkin"
         while current < end:
             if month_start <= current <= month_end:
                 calendar[orm.room_id]["days"][current.isoformat()] = {
@@ -316,6 +324,7 @@ async def availability_calendar(
                     "stay_group_id": order.stay_group_id,  # 续住关联：同组相邻同房格连成一条横条
                     "guest_name": order.guest_name,
                     "status": order.order_status.value,
+                    "display_status": display_status,
                     "channel": channel_value,
                     "payment_status": payment_status_value,
                     # D2: 甘特条直接显示 ￥单晚价（daily_prices 优先，否则均摊）

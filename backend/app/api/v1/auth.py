@@ -147,15 +147,23 @@ async def handoff_create(body: HandoffCreateRequest, redis: RedisClient):
     try:
         code = await handoff_store(redis, body.model_dump(exclude_none=True))
     except Exception:
-        # Redis 不可用时返回 503;前端据此降级回「URL 携带 token」的老方式,保证登录不被 Redis 拖死。
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="登录交接暂不可用")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="登录交接暂不可用，请稍后重新登录",
+        ) from None
     return HandoffCreateResponse(code=code)
 
 
 @router.post("/handoff/exchange")
 async def handoff_exchange(body: HandoffExchangeRequest, redis: RedisClient):
     """用一次性交接码换回 token + 身份。无效/过期/已用返回 401。"""
-    data = await handoff_consume(redis, body.code)
+    try:
+        data = await handoff_consume(redis, body.code)
+    except Exception:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="登录交接暂不可用，请稍后重新登录",
+        ) from None
     if not data:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="交接码无效或已过期")
     return data

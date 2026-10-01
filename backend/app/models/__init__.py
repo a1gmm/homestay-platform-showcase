@@ -62,6 +62,7 @@ from app.models.utility_recon import (  # noqa
 from app.models.release_announcement import ReleaseAnnouncementReceipt
 
 __all__ = [
+    "CleaningWorkRemoval",
     "User", "Owner", "Room", "Order", "OrderRoom", "Payment", "Refund",
     "Expense", "Task",
     "PricingRecord", "OwnerSettlement", "AuditLog", "Guest", "RoomBlock",
@@ -94,6 +95,23 @@ from app.models.monthly_close import (
     MonthlyCloseSourceRequirement,
     MonthlyCloseStepConfirmation,
 )
+from app.models.monthly_close_control import (
+    MonthlyCloseApproval,
+    MonthlyCloseApprovalEvaluation,
+    MonthlyCloseConversation,
+    MonthlyCloseDocumentAnalysis,
+    MonthlyCloseEvent,
+    MonthlyCloseExecutionAttempt,
+    MonthlyCloseIssueInstance,
+    MonthlyCloseMessage,
+    MonthlyCloseOtaSettlementConsumption,
+    MonthlyCloseOutbox,
+    MonthlyCloseProcessingJob,
+    MonthlyCloseProposal,
+    MonthlyCloseRemediation,
+    MonthlyCloseRun,
+    MonthlyCloseVerification,
+)
 
 __all__ += [
     "MonthlyCloseCycle",
@@ -103,4 +121,36 @@ __all__ += [
     "MonthlyCloseServiceLine",
     "MonthlyCloseSourceRequirement",
     "MonthlyCloseStepConfirmation",
+    "MonthlyCloseConversation",
+    "MonthlyCloseDocumentAnalysis",
+    "MonthlyCloseMessage",
+    "MonthlyCloseOtaSettlementConsumption",
+    "MonthlyCloseRun",
+    "MonthlyCloseEvent",
+    "MonthlyCloseProcessingJob",
+    "MonthlyCloseIssueInstance",
+    "MonthlyCloseProposal",
+    "MonthlyCloseApproval",
+    "MonthlyCloseApprovalEvaluation",
+    "MonthlyCloseExecutionAttempt",
+    "MonthlyCloseVerification",
+    "MonthlyCloseRemediation",
+    "MonthlyCloseOutbox",
 ]
+
+from app.models.cleaning_work_record import CleaningWorkImport, CleaningWorkRecord
+__all__ += ["CleaningWorkImport", "CleaningWorkRecord"]
+
+from app.models.cleaning_work_resolution import CleaningWorkResolution
+__all__ += ["CleaningWorkResolution"]
+
+from app.models.cleaning_work_removal import CleaningWorkRemoval
+
+from app.models.financial_case import FinancialCaseSource, FinancialCaseProposal
+__all__ += ["FinancialCaseSource", "FinancialCaseProposal"]
+
+from app.models.monthly_close_task import MonthlyCloseTask
+__all__ += ["MonthlyCloseTask"]
+
+from app.services.monthly_close.task_invalidation import register_task_invalidation
+register_task_invalidation()

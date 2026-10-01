@@ -373,7 +373,8 @@ async def plan_service_fee_reconciliation(
             for order_room, _, _ in rows
         )
         owner_self = is_owner_self_order(final_order)
-        payer = ExpensePayer.company if owner_self else ExpensePayer.owner
+        from app.services.reconciliation_policy import service_cost_payer
+        payer = service_cost_payer(final_order)
         candidates = (
             (
                 ExpenseCategory.cleaning,

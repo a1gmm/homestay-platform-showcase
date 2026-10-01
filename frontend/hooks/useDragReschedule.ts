@@ -2,7 +2,7 @@
 
 import React, { useRef, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Button, message, notification } from "antd";
+import { App, Button, notification } from "antd";
 import { ordersApi } from "@/lib/api";
 import { invalidateOrderRelated } from "@/lib/order-cache";
 import { extractErrorMessage } from "@/lib/api-errors";
@@ -57,6 +57,7 @@ export interface DragSnapshot {
 // contextHolder 需由调用方渲染（撤销 toast 走独立 notification 实例）。
 export function useDragReschedule() {
   const qc = useQueryClient();
+  const { message } = App.useApp();
   const [api, contextHolder] = notification.useNotification();
 
   // dragging order id 用于 GanttView cell 视觉反馈

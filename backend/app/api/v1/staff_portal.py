@@ -184,6 +184,8 @@ async def handle_checkin(
         deposit_collected = True
 
     if deposit_collected:
+        from app.services.task_lifecycle import sync_order_tasks
+        await sync_order_tasks(db, _dep, current_user["user_id"])
         await log_action_tx(
             db, current_user["user_id"], "deposit.collect", "order", order.order_id,
             notes="管家办理入住时收取押金",
@@ -252,6 +254,9 @@ async def handle_checkout(
     if order.order_status == OrderStatus.cancelled:
         raise HTTPException(status_code=400, detail="订单已取消")
 
+    if order.order_status != OrderStatus.checked_in:
+        raise HTTPException(status_code=400, detail="订单尚未入住，无法办理退房")
+
     # 续住关联组：中间段（非末段）不许办退房——客人还没走，且撤码会撤掉共享门锁码把客人锁在外面，
     # 保洁费也只应在末段收。退房请到组内最后一段办（Task 11，与 orders.transition 同款闸）。
     from app.services import stay_group as _stay_group
@@ -269,6 +274,8 @@ async def handle_checkout(
         select(OrderRoom).where(OrderRoom.order_id == order.order_id)
     )).scalars().all()
     active_rooms = [r for r in all_order_rooms if r.room_id and r.checked_out_at is None]
+    from app.services.room_presence import checked_in_rooms
+    arrived_rooms = checked_in_rooms(all_order_rooms)
 
     if body.order_room_id:
         target = next((r for r in all_order_rooms if r.order_room_id == body.order_room_id), None)
@@ -278,12 +285,17 @@ async def handle_checkout(
             raise HTTPException(status_code=400, detail="该房间尚未排房，无法退房")
         if target.checked_out_at is not None:
             raise HTTPException(status_code=400, detail="该房间已退房")
+        if target not in arrived_rooms:
+            raise HTTPException(status_code=400, detail="该房间尚未入住，无法退房")
         checkout_rooms = [target]
     else:
-        # 不传 = 整单退房：退掉全部在住房（无在住房则走待排房占位分支）。
-        checkout_rooms = list(active_rooms)
+        # 不传 = 退掉全部已入住房间，尚未到店的房间保留。
+        checkout_rooms = list(arrived_rooms)
 
-    # 退完这批后，是否再无在住房 → 整单收尾（订单转 pending_checkout + 结算押金）。
+    if not checkout_rooms:
+        raise HTTPException(status_code=400, detail="没有已入住且尚未退房的房间")
+
+    # 未到店房间也保留在订单中；所有已排房行都退完，才整单收尾。
     remaining_after = [r for r in active_rooms if r not in checkout_rooms]
     is_final = len(remaining_after) == 0
     checkout_now = now_cn()
@@ -319,6 +331,8 @@ async def handle_checkout(
             raise HTTPException(status_code=400, detail="实退少于押金时必须填写扣款原因")
         _dep.deposit_returned = refund
         _dep.deposit_status = DepositStatus.withheld if refund == 0 else DepositStatus.returned
+        from app.services.task_lifecycle import sync_order_tasks
+        await sync_order_tasks(db, _dep, current_user["user_id"])
         if withhold > 0:
             meta = dict(_dep.metadata_) if _dep.metadata_ else {}
             meta["deposit_withhold_reason"] = body.deposit_withhold_reason.strip()
@@ -343,6 +357,8 @@ async def handle_checkout(
     # 单间退房只处理这一间，不碰订单里其它仍在住的房。
     room_ids = [r.room_id for r in checkout_rooms if r.room_id]
     tasks: list[Task] = []
+    from app.services.task_lifecycle import business_day_deadline
+    cleaning_deadline = business_day_deadline(checkout_now.date())
     cleaned_room_ids: list[str] = []  # 实际转入 pending_clean 的房间（#116 保洁通知用）
     if room_ids:
         for rid in room_ids:
@@ -363,6 +379,7 @@ async def handle_checkout(
                 room_id=rid,
                 assignee_id=cleaner.user_id if cleaner else None,
                 priority=TaskPriority.high,
+                deadline=cleaning_deadline,
                 status=TaskStatus.pending,
                 created_by=current_user["user_id"],
             ))
@@ -377,6 +394,7 @@ async def handle_checkout(
             room_id=None,
             assignee_id=cleaner.user_id if cleaner else None,
             priority=TaskPriority.high,
+            deadline=cleaning_deadline,
             status=TaskStatus.pending,
             created_by=current_user["user_id"],
         ))

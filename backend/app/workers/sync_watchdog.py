@@ -4,6 +4,7 @@
 services/bypms_pull_health.py 文档串。
 """
 import logging
+import asyncio
 from datetime import datetime, timedelta, timezone
 
 from app.core.database import AsyncSessionLocal
@@ -15,25 +16,25 @@ logger = logging.getLogger(__name__)
 
 async def _bypms_pull_watchdog_async(db=None) -> bool:
     from app.core.config import settings
-    from app.services.bypms_pull_health import alert_if_bypms_pull_stale
+    from app.services.bypms_pull_health import alert_if_bypms_sync_stale
     from app.services.feishu_lead_alert import send_sync_alert
 
     async def _run(session) -> bool:
-        return await alert_if_bypms_pull_stale(
+        return await alert_if_bypms_sync_stale(
             session,
             now=datetime.now(timezone.utc),
-            threshold=timedelta(minutes=settings.BYPMS_PULL_STALE_ALERT_MINUTES),
+            threshold=timedelta(minutes=settings.BYPMS_SYNC_STALE_ALERT_MINUTES),
             send=send_sync_alert,
-            re_alert_interval=timedelta(hours=settings.BYPMS_PULL_REALERT_HOURS),
+            re_alert_interval=timedelta(hours=1),
         )
 
     if db is not None:
-        return await _run(db)
+        return await asyncio.wait_for(_run(db), timeout=55)
     async with AsyncSessionLocal() as owned:
-        return await _run(owned)
+        return await asyncio.wait_for(_run(owned), timeout=55)
 
 
 @celery_app.task(name="app.workers.sync_watchdog.bypms_pull_watchdog")
 def bypms_pull_watchdog():
-    """宝禹拉取水位心跳（每 10 分钟）。staging 超 30 分钟无新拉取→同步八成停了，喊人。"""
+    """宝禹拉取水位心跳（每 2 分钟）。完整成功或抓取水位超阈值→同步八成停了，喊人。"""
     return run_async(_bypms_pull_watchdog_async())

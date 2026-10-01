@@ -6,6 +6,7 @@ import { useQuery } from "@tanstack/react-query";
 import { roomsApi } from "@/lib/api";
 import { tokens } from "@/lib/design-tokens";
 import type { RoomPricingPoint } from "@/lib/types";
+import { usePrivacyMode } from "@/hooks/usePrivacyMode";
 
 interface Props {
   // 打开哪个房间的 7 日定价；null 关闭
@@ -16,6 +17,7 @@ interface Props {
 
 // 7 日定价 Drawer — 甘特图行 hover 菜单触发，纯展示。自持查询。
 export function RoomPricingDrawer({ roomId, onClose, isMobile }: Props) {
+  const privacyMode = usePrivacyMode();
   const { data, isLoading } = useQuery<RoomPricingPoint[]>({
     queryKey: ["room-pricing", roomId, "7d"],
     queryFn: () => roomsApi.pricing(roomId!, 7).then((r) => r.data),
@@ -35,7 +37,7 @@ export function RoomPricingDrawer({ roomId, onClose, isMobile }: Props) {
         <Skeleton active paragraph={{ rows: 5 }} />
       ) : (data?.length ?? 0) === 0 ? (
         <div style={{ padding: 24, textAlign: "center", color: tokens.color.text.tertiary }}>
-          暂无定价数据。可在主页面点「刷新定价」批量触发计算。
+          {privacyMode ? "暂无定价数据。" : "暂无定价数据。可在主页面点「刷新定价」批量触发计算。"}
         </div>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>

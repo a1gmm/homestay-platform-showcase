@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.deps import get_db, require_role
 from app.schemas.bypms_sync import (
     BypmsSyncConflictsResponse,
+    BypmsOrderDiagnosis,
     BypmsSyncCyclesResponse,
     BypmsSyncOverview,
     BypmsSyncRetryResponse,
@@ -133,3 +134,13 @@ async def retry(
             status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=_RETRY_FAILED,
         ) from None
+
+
+@router.get("/order-diagnosis", response_model=BypmsOrderDiagnosis)
+async def order_diagnosis(
+    platform_order_id: str = Query(min_length=1, max_length=100, pattern=r"^[A-Za-z0-9_-]+$"),
+    _current=Depends(require_role("admin")),
+    db: AsyncSession = Depends(get_db),
+):
+    from app.services.bypms_order_diagnosis import diagnose_order
+    return await diagnose_order(db, platform_order_id, _utcnow())

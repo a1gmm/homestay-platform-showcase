@@ -34,7 +34,8 @@ def build_live_summary(diffs: list[ReconDiff]) -> dict:
     }
 
 
-async def review_batch(db: AsyncSession, batch_id: str, user_id: str) -> dict | None:
+async def review_batch_tx(db: AsyncSession, batch_id: str, user_id: str) -> dict | None:
+    """Record an explicit/verified review inside the caller's transaction."""
     batch = (await db.execute(
         select(ReconBatch).where(ReconBatch.batch_id == batch_id).with_for_update()
     )).scalar_one_or_none()
@@ -54,5 +55,13 @@ async def review_batch(db: AsyncSession, batch_id: str, user_id: str) -> dict | 
         db, user_id, "billing_recon.review", "recon_batch", batch.batch_id,
         after_data={"reviewed_at": reviewed_at},
     )
-    await db.commit()
+    await db.flush()
     return {"reviewed_at": reviewed_at, "reviewed_by": user_id}
+
+
+async def review_batch(db: AsyncSession, batch_id: str, user_id: str) -> dict | None:
+    result = await review_batch_tx(db, batch_id, user_id)
+    if result is None:
+        return None
+    await db.commit()
+    return result

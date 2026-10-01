@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { ordersApi, tasksApi } from "@/lib/api";
 import { todayCNString, todayCNYearMonth } from "@/lib/utils";
-import { Card, Col, Row, Skeleton, Space, Tooltip, Segmented } from "antd";
+import { Alert, Button, Card, Col, Row, Skeleton, Space, Tooltip, Segmented } from "antd";
 import {
   UserAddOutlined,
   LogoutOutlined,
@@ -221,9 +221,15 @@ export default function DashboardPage() {
     queryFn: () => ordersApi.list(checkinListParams).then((r) => r.data.items),
   });
 
-  const { data: overdueTasks } = useQuery({
-    queryKey: ["dashboard", "overdue-tasks"],
-    queryFn: () => tasksApi.list({ overdue_only: true }).then((r) => r.data.slice(0, 5)),
+  const {
+    data: overdueTasks,
+    isPending: attentionLoading,
+    isError: attentionError,
+    isFetching: attentionFetching,
+    refetch: refetchAttention,
+  } = useQuery({
+    queryKey: ["dashboard", "attention-tasks"],
+    queryFn: () => tasksApi.workspace({ status: "active", attention: "needs_attention", page_size: 5 }).then((r) => r.data.items),
   });
 
   // #6 渠道分布支持「单量 / 净收入」两个口径切换(净收入仅财务可见)。
@@ -280,8 +286,7 @@ export default function DashboardPage() {
     [comparisonData, canViewRevenue]
   );
 
-  const revenueMoM = comparisonData?.mom_change?.revenue;
-  const occupancyMoM = comparisonData?.mom_change?.occupancy;
+  const attentionCount = todayData?.task_attention?.needs_attention ?? todayData?.overdue_tasks ?? 0;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 20, paddingBottom: 24 }}>
@@ -361,15 +366,15 @@ export default function DashboardPage() {
           {/* #5 视觉分层:无逾期时(常态)弱化——灰底+中性色,不与净收入/OCC 抢视觉;
               有逾期才亮成 warn 抓眼。 */}
           <StatCard
-            title="逾期任务"
-            value={todayLoading ? "–" : todayData?.overdue_tasks ?? 0}
+            title="待关注任务"
+            value={todayLoading ? "–" : attentionCount}
             icon={<WarningOutlined />}
-            tone={(todayData?.overdue_tasks ?? 0) > 0 ? "warn" : "neutral"}
-            footer={(todayData?.overdue_tasks ?? 0) > 0 ? "需尽快处理" : "一切正常"}
+            tone={attentionCount > 0 ? "warn" : "neutral"}
+            footer={todayData?.task_attention ? `逾期 ${todayData.task_attention.overdue} · 无期限 ${todayData.task_attention.no_deadline} · 未指派 ${todayData.task_attention.unassigned}` : "含逾期、缺期限、未指派及积压任务"}
             loading={todayLoading}
-            onClick={() => setPeekKey("overdue")}
+            onClick={() => router.push("/tasks?attention=needs_attention")}
             style={
-              (todayData?.overdue_tasks ?? 0) > 0
+              attentionCount > 0
                 ? undefined
                 : { background: tokens.color.bg.subtle, boxShadow: "none" }
             }
@@ -464,25 +469,10 @@ export default function DashboardPage() {
                     </span>
                   </div>
                 </div>
-                {typeof occupancyMoM === "number" && (
-                  <div>
-                    <div style={{ fontSize: 12, color: tokens.color.text.secondary }}>较上月同期</div>
-                    <div
-                      className="tabular"
-                      style={{
-                        fontSize: 18,
-                        fontWeight: 500,
-                        marginTop: 2,
-                        color:
-                          occupancyMoM >= 0 ? tokens.color.status.active : tokens.color.status.warn,
-                      }}
-                    >
-                      {occupancyMoM >= 0 ? "▲" : "▼"} {Math.abs(occupancyMoM).toFixed(1)}%
-                    </div>
-                  </div>
-                )}
+                <div style={{ fontSize: 12, color: tokens.color.text.secondary }}>按实际入住、退房记录统计；房态页优先展示维修、锁房等人工状态。</div>
               </div>
             </div>
+            {(todayData?.overdue_checkout_count ?? 0) > 0 && <Alert style={{ marginTop: 12 }} type="warning" showIcon message={`${todayData?.overdue_checkout_count} 间超期未退房`} description={`${roomsFooter(todayData?.overdue_checkout_rooms, "请核实在住情况")}。请核实续住或办理退房，系统不会自动腾房。`} />}
           </Card>
         </Col>
 
@@ -496,11 +486,7 @@ export default function DashboardPage() {
                   prefix="¥"
                   icon={<DollarOutlined />}
                   tone="success"
-                  delta={
-                    typeof revenueMoM === "number"
-                      ? { value: revenueMoM, label: "较上月同期" }
-                      : undefined
-                  }
+                  footer="净收入为房费减佣金；同期图按房费口径展示"
                   loading={monthlyLoading}
                 />
               </Col>
@@ -510,8 +496,8 @@ export default function DashboardPage() {
               <StatCard
                 title={
                   <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
-                    本月入住率 OCC
-                    <Tooltip title="本月已售间夜 ÷ 可售间夜（房间数 × 当月天数）。与左侧「实时在住」口径不同——那是此刻在住房数占比。">
+                    离店归属入住率（整月）
+                    <Tooltip title="计划退房日在本月的每房段间夜（含未退房和待排房，排除已取消及占位价格单）÷（房间数 × 当月全部天数）。跨月房段整段归属计划退房月，因此可能超过 100%。下方同期对比只算月初至今，分母为已过天数；都不是左侧实时在住率。">
                       <QuestionCircleOutlined
                         style={{ fontSize: 12, color: tokens.color.text.tertiary, cursor: "help" }}
                       />
@@ -522,7 +508,7 @@ export default function DashboardPage() {
                 suffix="%"
                 icon={<RiseOutlined />}
                 tone="brand"
-                footer={`订单 ${monthlyData?.order_count ?? 0} 笔`}
+                footer={`${monthlyData?.total_nights ?? 0} 间夜 ÷（${todayData?.total_rooms ?? 0} 间 × ${new Date(year, month, 0).getDate()} 天）`}
                 loading={monthlyLoading}
               />
             </Col>
@@ -736,7 +722,7 @@ export default function DashboardPage() {
         <Col xs={24} lg={14}>
           <ChartCard
             title="本月至今 vs 上月同期"
-            subtitle="按同一天数对齐,避免月初虚高"
+            subtitle="按同一天数对齐；收入为佣金前房费，入住率按计划退房归属"
             height={isMobile ? 240 : 260}
             empty={comparisonBarData.length === 0}
           >
@@ -965,10 +951,10 @@ export default function DashboardPage() {
                 >
                   <Space size={8}>
                     <CheckSquareOutlined style={{ color: tokens.color.status.warn }} />
-                    <span style={{ fontWeight: 500 }}>逾期任务</span>
+                    <span style={{ fontWeight: 500 }}>待关注任务</span>
                   </Space>
                   <Link
-                    href="/tasks"
+                    href="/tasks?attention=needs_attention"
                     style={{
                       fontSize: 12,
                       color: tokens.color.brand.primary,
@@ -980,7 +966,18 @@ export default function DashboardPage() {
                     全部 <ArrowRightOutlined style={{ fontSize: 10 }} />
                   </Link>
                 </div>
-                {overdueTasks && overdueTasks.length > 0 ? (
+                {attentionLoading ? (
+                  <div role="status" aria-label="正在加载待关注任务">
+                    <Skeleton active title={false} paragraph={{ rows: 2 }} />
+                  </div>
+                ) : attentionError ? (
+                  <Alert
+                    type="warning"
+                    showIcon
+                    message="待关注任务加载失败，请重试。"
+                    action={<Button style={{ minHeight: 44 }} loading={attentionFetching} onClick={() => void refetchAttention()}>重试</Button>}
+                  />
+                ) : overdueTasks && overdueTasks.length > 0 ? (
                   <div style={{ display: "flex", flexDirection: "column" }}>
                     {overdueTasks.map((t: any) => (
                       <Link
@@ -1021,13 +1018,13 @@ export default function DashboardPage() {
                             {t.room_id ?? t.order_id ?? "全局任务"}
                           </div>
                         </div>
-                        <StatusBadge status={t.task_status ?? "pending"} size="sm" />
+                        <StatusBadge status={t.status ?? "pending"} size="sm" />
                       </Link>
                     ))}
                   </div>
                 ) : (
                   <div style={{ padding: "12px 0", fontSize: 13, color: tokens.color.text.tertiary }}>
-                    没有逾期任务 🎉
+                    暂无待关注任务
                   </div>
                 )}
               </Card>

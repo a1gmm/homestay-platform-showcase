@@ -66,7 +66,7 @@ export const NAV_ENTRIES: Record<NavKey, NavEntry> = {
   orders: { key: "/orders", label: "订单", full: "订单管理", description: "查询订单并办理入住、退房与收款", group: "today", icon: <FileTextOutlined /> },
   guests: { key: "/guests", label: "客人", full: "客人档案", description: "查询客人资料和历史入住记录", group: "today", icon: <TeamOutlined /> },
   finance: { key: "/finance", label: "财务", full: "财务管理", description: "查看收入、支出、费用和经营数据", group: "finance", icon: <DollarOutlined /> },
-  monthlyClose: { key: "/finance/monthly-close", label: "月结", full: "月结中心", description: "按固定九步完成每月全部对账与业主结算", group: "finance", icon: <FileDoneOutlined /> },
+  monthlyClose: { key: "/finance/monthly-close", label: "月结", full: "月结助理", description: "按资料和问题完成每月对账与业主结算", group: "finance", icon: <FileDoneOutlined /> },
   utilityRecon: { key: "/finance/utility-recon", label: "水电对账", full: "水电费对账", description: "核对房间水电账单和费用差异", group: "finance", parent: "monthlyClose", icon: <DollarOutlined /> },
   tasks: { key: "/tasks", label: "任务", full: "运营任务", description: "跟进保洁、维修和现场待办", group: "operations", icon: <CheckSquareOutlined /> },
   settlements: { key: "/settlements", label: "结算", full: "业主结算", description: "生成、核对和查看月度业主结算", group: "finance", icon: <FileDoneOutlined /> },
@@ -112,8 +112,8 @@ export const ROLE_LABEL: Record<string, string> = {
 /** 角色 → 可达导航项（桌面侧边栏顺序）。移动端集合必须与此一致（见 ROLE_NAV + 测试）。 */
 const NAV_BY_ROLE: Record<string, NavKey[]> = {
   admin: ["dashboard", "rooms", "orders", "guests", "finance", "tasks", "monthlyClose", "content", "assistant", "system"],
-  operator: ["dashboard", "rooms", "orders", "tasks", "content"],
-  finance: ["dashboard", "finance", "settlements"],
+  operator: ["dashboard", "rooms", "orders", "tasks", "monthlyClose", "content"],
+  finance: ["dashboard", "finance", "monthlyClose", "settlements"],
   owner: ["dashboard", "finance", "settlements"],
   // 保洁/管家有独立 staff 端口(layout 会重定向走)，此处仅纵深防御兜底。
   cleaner: ["dashboard", "tasks"],
@@ -199,9 +199,9 @@ export const ROLE_NAV: Record<string, RoleNav> = {
     fab: true,
     left: ["dashboard", "rooms"],
     right: ["orders", "tasks"],
-    more: ["content"],
+    more: ["monthlyClose", "content"],
   },
-  finance: { fab: false, left: ["dashboard", "finance", "settlements"], right: [], more: [] },
+  finance: { fab: false, left: ["dashboard", "finance", "settlements"], right: [], more: ["monthlyClose"] },
   owner: { fab: false, left: ["dashboard", "finance", "settlements"], right: [], more: [] },
   cleaner: { fab: false, left: ["dashboard", "tasks"], right: [], more: [] },
   keeper: { fab: false, left: ["dashboard", "tasks"], right: [], more: [] },

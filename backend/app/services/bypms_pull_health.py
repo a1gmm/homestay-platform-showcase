@@ -121,3 +121,63 @@ async def alert_if_bypms_pull_stale(
     await _set_marker(db, now)
     logger.warning("宝禹拉取水位告警：停摆 %d 分钟", minutes)
     return True
+
+
+_SYNC_TEMPLATE = "bypms-sync-health"
+
+
+async def alert_if_bypms_sync_stale(
+    db: AsyncSession, *, now: datetime, threshold: timedelta, send,
+    re_alert_interval: timedelta = timedelta(hours=1),
+) -> bool:
+    """Independent worker checks completed cycles, not only successful source fetches.
+
+    A PostgreSQL transaction lock prevents concurrent workers from duplicating alerts.
+    Only acknowledged delivery changes the durable incident marker. No order writes.
+    """
+    if db.bind.dialect.name == "postgresql":
+        await db.execute(text("SET LOCAL statement_timeout = '10s'"))
+        await db.execute(text("SET LOCAL lock_timeout = '2s'"))
+        if not await db.scalar(text("SELECT pg_try_advisory_xact_lock(260926731)")):
+            return False
+    row = (await db.execute(text(
+        "SELECT max(finished_at) AS completed FROM bypms_sync_cycles WHERE status='succeeded'"
+    ))).first()
+    completed = row[0] if row else None
+    if isinstance(completed, str):
+        completed = datetime.fromisoformat(completed)
+    completed = _aware(completed)
+    pull = await _watermark(db)
+    recent = lambda at: at is not None and -60 <= (now - at).total_seconds() <= threshold.total_seconds()
+    healthy = recent(completed) and recent(pull)
+    marker = (await db.execute(select(NotificationLog).where(
+        NotificationLog.template_name == _SYNC_TEMPLATE,
+    ).order_by(NotificationLog.created_at.desc()).limit(1))).scalars().first()
+    if healthy and marker is None:
+        return False
+    if not healthy and marker and now - _aware(marker.created_at) < re_alert_interval:
+        return False
+    def stamp(at):
+        return at.astimezone(timezone(timedelta(hours=8))).strftime('%m-%d %H:%M:%S') if at else '没有可确认记录'
+    if healthy:
+        body = ("宝禹同步已恢复\n"
+                f"最近完整成功：{stamp(completed)}（北京时间）。\n"
+                f"最近订单抓取：{stamp(pull)}。\n"
+                "完整同步已重新完成；订单锁定和业务差异仍需在同步管理页核对，不代表每笔差异都已解决。")
+    else:
+        body = ("宝禹同步需要检查\n"
+                f"最近完整成功：{stamp(completed)}；最近订单抓取：{stamp(pull)}（北京时间）。\n"
+                f"至少一项超过 {int(threshold.total_seconds() // 60)} 分钟或时间异常。\n"
+                "抓取正常也可能存在后续处理失败，请检查同步管理页的周期和失败步骤；核对前以宝禹后台为准。")
+    delivered = send(body)
+    if inspect.isawaitable(delivered):
+        delivered = await delivered
+    if delivered is not True:
+        logger.warning("BYPMS health notification not acknowledged; retain incident for retry")
+        return False
+    await db.execute(delete(NotificationLog).where(NotificationLog.template_name == _SYNC_TEMPLATE))
+    if not healthy:
+        db.add(NotificationLog(log_id="BH-" + uuid.uuid4().hex[:12].upper(),
+            template_name=_SYNC_TEMPLATE, content="STALE", status="marker", created_at=now))
+    await db.commit()
+    return True

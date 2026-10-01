@@ -35,6 +35,9 @@ class OwnerSettlement(Base):
     payment_date: Mapped[date | None] = mapped_column(Date)
     doc_url: Mapped[str | None] = mapped_column(String(500))
     notes: Mapped[str | None] = mapped_column(Text)
+    # Confirmation-time income evidence. Existing confirmed statements remain
+    # NULL and must pass a live comparison before their details can be exported.
+    income_detail_snapshot: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     created_by: Mapped[str | None] = mapped_column(String(20), ForeignKey("users.user_id"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

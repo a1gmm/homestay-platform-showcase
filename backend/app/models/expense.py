@@ -15,6 +15,13 @@ class ExpenseCategory(str, enum.Enum):
     supplies = "supplies"               # v2#7 复用为"采购费"（原"用品(旧)"，已启用）
     platform_fee = "platform_fee"       # 平台佣金，财务用
     tax = "tax"                         # 税，财务用
+    payroll = "payroll"                 # 工资，经营费用
+    social_insurance = "social_insurance" # 社保，经营费用
+    bank_fee = "bank_fee"               # 银行手续费
+    rent = "rent"                       # 租金
+    operating_expense = "operating_expense" # 已确认的其他经营费用
+    cleaning_supplier_cost = "cleaning_supplier_cost" # 保洁供应商实际成本
+    laundry_supplier_cost = "laundry_supplier_cost" # 洗涤供应商实际成本
     other = "other"                     # 其他费用（v2 仍使用）
     # —— v2-issue#1 新增（按王总参考 PMS 截图顺序）——
     public_utilities = "public_utilities"           # 公摊水费
@@ -62,6 +69,13 @@ EXPENSE_CATEGORY_LABELS: dict[ExpenseCategory, str] = {
     ExpenseCategory.supplies: "采购费",
     ExpenseCategory.platform_fee: "平台佣金",
     ExpenseCategory.tax: "税费",
+    ExpenseCategory.payroll: "工资",
+    ExpenseCategory.social_insurance: "社保",
+    ExpenseCategory.bank_fee: "银行手续费",
+    ExpenseCategory.rent: "租金",
+    ExpenseCategory.operating_expense: "经营费用",
+    ExpenseCategory.cleaning_supplier_cost: "保洁供应商成本",
+    ExpenseCategory.laundry_supplier_cost: "洗涤供应商成本",
     ExpenseCategory.other: "其他费用",
     ExpenseCategory.public_utilities: "公摊水费",
     ExpenseCategory.cold_water: "冷水（旧）",
@@ -96,6 +110,8 @@ class Expense(Base):
     amount: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
     description: Mapped[str] = mapped_column(String(200), nullable=False)
     expense_date: Mapped[date] = mapped_column(Date, nullable=False)
+    payment_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    paid_by: Mapped[ExpensePayer | None] = mapped_column(PgEnum(ExpensePayer, name="expense_payer"), nullable=True)
     room_id: Mapped[str | None] = mapped_column(String(10), ForeignKey("rooms.room_id"))
     order_id: Mapped[str | None] = mapped_column(String(20), ForeignKey("orders.order_id"))
     payer: Mapped[ExpensePayer] = mapped_column(PgEnum(ExpensePayer, name="expense_payer"), default=ExpensePayer.company)

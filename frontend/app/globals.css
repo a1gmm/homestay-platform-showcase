@@ -548,14 +548,15 @@ td.col-amount {
   .rooms-page-compact input { min-height: 44px; }
   .rooms-page-compact .rooms-page-actions.ant-space {
     display: grid !important;
-    grid-template-columns: minmax(240px, 1fr) auto auto;
+    grid-template-columns: minmax(0, 1fr) auto auto auto;
     gap: 8px !important;
     width: 100%;
   }
   .rooms-page-compact .rooms-page-actions .ant-space-item { min-width: 0; }
   .rooms-page-compact .rooms-page-actions .ant-select,
   .rooms-page-compact .rooms-page-actions .ant-input-affix-wrapper { width: 100% !important; }
-  .rooms-page-compact .rooms-page-actions .ant-input-affix-wrapper { min-height: 44px; }
+  .rooms-page-compact .rooms-page-actions .ant-select { height: 44px !important; }
+  .rooms-page-compact .rooms-page-actions .ant-input-affix-wrapper { min-height: 44px; height: 44px; box-sizing: border-box; }
   .rooms-page-compact .rooms-page-actions .ant-input-affix-wrapper > input.ant-input {
     min-height: 0 !important;
   }
@@ -586,7 +587,7 @@ td.col-amount {
     margin-bottom: 0 !important;
   }
   .rooms-page-compact .page-header-main { gap: 8px !important; }
-  .rooms-page-compact .page-header-extra { padding-bottom: 10px; }
+  .rooms-page-compact .page-header-extra { padding-bottom: 0; }
   .rooms-page-compact .page-header-copy {
     display: flex;
     align-items: baseline;
@@ -610,9 +611,10 @@ td.col-amount {
     white-space: nowrap;
   }
   .rooms-page-compact .rooms-page-actions.ant-space {
-    grid-template-columns: minmax(0, 1fr) 44px 44px;
+    grid-template-columns: minmax(0, 1fr) repeat(3, 44px);
   }
   .rooms-page-compact .rooms-page-actions .ant-space-item:first-child { grid-column: auto; }
+  .rooms-page-compact .rooms-page-filter-label { display: none; }
   .rooms-page-compact .rooms-page-actions .ant-btn {
     width: 44px;
     min-width: 44px;

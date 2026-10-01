@@ -35,6 +35,7 @@ import {
 } from "@/lib/status-display";
 import dayjs, { Dayjs } from "dayjs";
 import { StaySettlementLabel } from "@/components/ui/StaySettlementLabel";
+import { usePrivacyMode } from "@/hooks/usePrivacyMode";
 
 const WEEKDAY_LABEL = ["日", "一", "二", "三", "四", "五", "六"];
 
@@ -154,7 +155,7 @@ function blockDisplayStatusByDay(
       if (!cur) break;
       if (j > i && !isSameBlock(roomDays[days[j - 1]], cur)) break;
       blockDays.push(days[j]);
-      statuses.push(cur.status);
+      statuses.push(cur.display_status ?? cur.status);
       j++;
     }
     const unified = stayGroupBarStatus(statuses);
@@ -281,6 +282,7 @@ export function GanttView({
   focusMode = false,
   onToggleFocus,
 }: GanttViewProps) {
+  const privacyMode = usePrivacyMode();
   const todayStr = todayCNString();
 
   // 专注模式下按 ESC 退出全屏
@@ -500,10 +502,10 @@ export function GanttView({
           )}
           {onOpenBatch && (
             <Button icon={<FilterOutlined />} size="small" onClick={onOpenBatch}>
-              筛选 / 批量
+              {privacyMode ? "筛选订单" : "筛选 / 批量"}
             </Button>
           )}
-          {onCreateOrder && (
+          {!privacyMode && onCreateOrder && (
             <Button type="primary" icon={<PlusOutlined />} size="small" onClick={onCreateOrder}>
               新建订单
             </Button>
@@ -732,7 +734,8 @@ export function GanttView({
                 const day = parseInt(d.split("-")[2]);
                 const month = parseInt(d.split("-")[1]);
                 const isToday = d === todayStr;
-                const weekday = new Date(d).getDay();
+                const [year, monthNumber, dayNumber] = d.split("-").map(Number);
+                const weekday = new Date(year, monthNumber - 1, dayNumber).getDay();
                 const isWeekend = weekday === 0 || weekday === 6;
                 return (
                   <th
@@ -842,7 +845,7 @@ export function GanttView({
                     const barStatusByDay = blockDisplayStatusByDay(days, room.days);
 
                     // 行内轻量状态切换菜单（点状态标签弹出）
-                    const statusMenuItems: MenuProps["items"] = onQuickChangeRoomStatus
+                    const statusMenuItems: MenuProps["items"] = !privacyMode && onQuickChangeRoomStatus
                       ? [
                           // 维修/锁房时置顶「一键恢复上一个状态」
                           ...(RESTORABLE_STATUSES.includes(curStatus)
@@ -892,13 +895,13 @@ export function GanttView({
 
                     // 行右侧 hover 菜单（锁房三类置顶 —— 点房号直接锁房）
                     const menuItems = [
-                      ...(onLockRoom
+                      ...(!privacyMode && onLockRoom
                         ? [
                             ...buildLockMenuItems((bt) => onLockRoom(room.room_id, bt)),
                             { type: "divider" as const },
                           ]
                         : []),
-                      onEditRoom && {
+                      !privacyMode && onEditRoom && {
                         key: "edit",
                         icon: <EditOutlined />,
                         label: "编辑房间",
@@ -910,7 +913,7 @@ export function GanttView({
                         label: "7 日定价",
                         onClick: () => onShowPricing(room.room_id),
                       },
-                      onChangeRoomStatus && {
+                      !privacyMode && onChangeRoomStatus && {
                         key: "status",
                         icon: <TagsOutlined />,
                         label: "修改状态",
@@ -1102,7 +1105,7 @@ export function GanttView({
                           // 「即将到店/在住」的单不算离店，照常画条——保住 turnaround（走一个来一个）能看到新客。
                           const departedBooking =
                             !!booking &&
-                            (booking.status === "pending_checkout" || booking.status === "completed");
+                            (booking.display_status === "checked_out" || booking.status === "pending_checkout" || booking.status === "completed");
                           const nextIsToday = nextDay === todayStr;
                           // 保洁中叠标（王总 2026-07-21，方案B「叠在旧订单最后一格」）：
                           // 把小「保洁中」金标叠到刚退房订单条的最后一格上——订单条本身照旧
@@ -1116,15 +1119,13 @@ export function GanttView({
                           // 退化成整格金色「保洁中」，至少让前台知道这房还没清扫、不能进新客。
                           const prevIsDepartedBar =
                             !!prevBooking &&
-                            (prevBooking.status === "pending_checkout" ||
+                            (prevBooking.display_status === "checked_out" || prevBooking.status === "pending_checkout" ||
                               prevBooking.status === "completed");
                           const cleaningEmptyCell =
                             isCleaning && isToday && !booking && !prevIsDepartedBar;
                           const cellInteractive = !!(
-                            onOrderClick ||
-                            onCellClick ||
-                            onCellDragOver ||
-                            onCellDrop
+                            (booking?.order_id && onOrderClick) ||
+                            (!privacyMode && (onCellClick || onCellDragOver || onCellDrop))
                           );
 
                           const guestName = booking?.guest_name ?? "";
@@ -1171,7 +1172,7 @@ export function GanttView({
                           const statusTag = compStyle
                             ? compStyle.badge ?? null
                             : isChannelMode && !isBlock && !isCancelled
-                            ? BAR_STATUS_TAG[String(booking?.status ?? "")] ?? null
+                            ? (booking?.display_status === "checked_out" ? "已退房" : BAR_STATUS_TAG[String(booking?.display_status ?? booking?.status ?? "")]) ?? null
                             : null;
                           // 状态标背景：淡彩底上用极淡黑压一层即可
                           const tagScrim = "rgba(0,0,0,0.08)";
@@ -1187,6 +1188,7 @@ export function GanttView({
                           // completed（已完成）可拖，但落点只支持「对调另一单」订正历史房号，
                           // 落到空房不处理（后端 SWAP_ALLOWED_STATUSES 只放开对调，不放开单房换房）。
                           const canDrag = !!(
+                            !privacyMode &&
                             booking?.order_id &&
                             !isBlock &&
                             !["cancelled", "pending_checkout"].includes(
@@ -1233,17 +1235,17 @@ export function GanttView({
                               onClick={() => {
                                 if (booking?.order_id && onOrderClick) {
                                   onOrderClick(booking.order_id);
-                                } else if (!booking && onCellClick) {
+                                } else if (!privacyMode && !booking && onCellClick) {
                                   onCellClick(room.room_id, day, null);
                                 }
                               }}
                               onDragOver={
-                                onCellDragOver
+                                !privacyMode && onCellDragOver
                                   ? (e) => onCellDragOver(room.room_id, day, booking ?? null, e)
                                   : undefined
                               }
                               onDrop={
-                                onCellDrop
+                                !privacyMode && onCellDrop
                                   ? (e) => onCellDrop(room.room_id, day, booking ?? null, e)
                                   : undefined
                               }
@@ -1516,7 +1518,7 @@ export function GanttView({
                                 );
                                 // 时间段锁房灰条：点一下弹出「解除锁房」+ 起止/备注
                                 const blk = booking;
-                                if (isBlock && blk.block_id && onReleaseBlock) {
+                                if (isBlock && blk.block_id) {
                                   return (
                                     <Popover
                                       trigger="click"
@@ -1537,7 +1539,7 @@ export function GanttView({
                                               <div style={{ marginTop: 2 }}>备注：{blk.block_reason}</div>
                                             ) : null}
                                           </div>
-                                          <Button
+                                          {!privacyMode && onReleaseBlock && <Button
                                             danger
                                             size="small"
                                             block
@@ -1545,7 +1547,7 @@ export function GanttView({
                                             onClick={() => onReleaseBlock(blk.block_id as string)}
                                           >
                                             解除锁房
-                                          </Button>
+                                          </Button>}
                                         </div>
                                       }
                                     >

@@ -1021,7 +1021,7 @@ def run_miniapp_publish(
 
 
 @celery_app.task(
-    name="app.workers.miniapp_content_publish.dispatch_miniapp_publish_outbox"
+    name="app.workers.miniapp_content_publish.dispatch_miniapp_publish_outbox", ignore_result=True
 )
 def dispatch_miniapp_publish_outbox(batch_size: int = 50) -> dict[str, int]:
     summary = run_async(dispatch_publish_outbox(batch_size=batch_size))

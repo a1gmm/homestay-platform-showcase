@@ -15,8 +15,8 @@ import openpyxl
 from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
 
 from app.core.deps import DBSession, CurrentUser
-from app.models.order import Order, OrderStatus, Channel
-from app.models.settlement import OwnerSettlement
+from app.models.order import Order, OrderStatus, Channel, BookingType, StaySettlementKind
+from app.models.settlement import OwnerSettlement, SettlementStatus
 from app.models.expense import Expense
 from app.models.owner import Owner
 from app.models.room import Room
@@ -786,22 +786,146 @@ async def _settlement_export_context(db, settlement_id: str):
     return settlement, owner, rooms_map, desc_map
 
 
-async def _settlement_income_rows(db, settlement):
-    """按当前源数据重建收入行，并逐房核对结算快照。
+async def _append_frozen_income_corrections(db, settlement, frozen, rows, checks):
+    """Join append-only accounting evidence to the original guest/room snapshot.
 
-    结算单是不可变账务快照；源订单若在生成后被修改，拒绝导出看似精确但实际
-    对不上的明细，要求先重新生成待确认结算单。
+    Never reconstruct confirmation-time guest details from mutable orders. An
+    unexplained change in original items or missing evidence must still fail closed.
+    """
+    from fastapi import HTTPException
+    from app.models.company_sponsorship_adjustment import CompanySponsorshipAdjustment
+    from app.models.company_sponsored_stay import CompanySponsoredStay, PaymentResponsibility
+
+    def reject():
+        raise HTTPException(status_code=409, detail='结算更正记录与确认明细无法完整核对，请联系管理员核查更正单。')
+
+    items = {item.item_id: item for item in settlement.items}
+    corrections = {item.sponsorship_adjustment_id: item for item in settlement.items
+                   if item.sponsorship_adjustment_id}
+    if corrections and 'sponsorship_adjustment_ids' not in frozen:
+        # Equal aggregate deltas cannot establish which corrections were
+        # already included at confirmation, particularly a zero-sum pair.
+        reject()
+    included = set(frozen.get('sponsorship_adjustment_ids', []))
+    if not included <= corrections.keys():
+        reject()
+    original_totals = {}
+    current_totals = {}
+    for item in settlement.items:
+        if not item.room_id:
+            if item.sponsorship_adjustment_id:
+                reject()
+            continue
+        rid = item.room_id
+        current_totals[rid] = current_totals.get(rid, Decimal(0)) + Decimal(item.net_revenue)
+        if not item.sponsorship_adjustment_id or item.sponsorship_adjustment_id in included:
+            original_totals[rid] = original_totals.get(rid, Decimal(0)) + Decimal(item.net_revenue)
+    frozen_totals = {r['room_id']: r['snapshot'] for r in checks}
+    if original_totals != frozen_totals:
+        reject()
+    detail_totals = {rid: Decimal(0) for rid in frozen_totals}
+    for row in rows:
+        if row['room_id'] not in detail_totals:
+            reject()
+        detail_totals[row['room_id']] += row['net']
+    if detail_totals != frozen_totals:
+        reject()
+    if not corrections:
+        return
+    evidence = (await db.execute(
+        select(CompanySponsorshipAdjustment, CompanySponsoredStay)
+        .join(CompanySponsoredStay, CompanySponsoredStay.sponsored_stay_id == CompanySponsorshipAdjustment.sponsorship_id)
+        .where(CompanySponsorshipAdjustment.adjustment_id.in_(corrections))
+        .order_by(CompanySponsorshipAdjustment.created_at, CompanySponsorshipAdjustment.adjustment_id)
+    )).all()
+    if len(evidence) != len(corrections):
+        reject()
+    added = {rid: Decimal(0) for rid in frozen_totals}
+    for adjustment, root in evidence:
+        item = corrections[adjustment.adjustment_id]
+        original_item = items.get(root.settlement_item_id)
+        external = root.payment_responsibility == PaymentResponsibility.channel_settled
+        delta = Decimal(adjustment.delta)
+        expected_owner = (delta * Decimal(item.share_ratio_snapshot)).quantize(Decimal('0.01'))
+        if (original_item is None or original_item.sponsorship_adjustment_id
+                or root.settlement_batch_id != settlement.settlement_id
+                or item.room_id != original_item.room_id
+                or item.share_ratio_snapshot != original_item.share_ratio_snapshot
+                or Decimal(item.net_revenue) != delta
+                or Decimal(item.owner_expenses) != 0
+                or Decimal(item.externally_settled_income) != (delta if external else 0)
+                or Decimal(item.owner_net_amount) != (0 if external else expected_owner)):
+            reject()
+        if adjustment.adjustment_id in included:
+            continue
+        bases = [r for r in rows if not r.get('is_correction')
+                 and r['order_id'] == root.segment_order_id and r['room_id'] == item.room_id
+                 and str(r['check_in']) == str(root.segment_check_in_date)
+                 and str(r['check_out']) == str(root.segment_check_out_date)]
+        if len(bases) != 1:
+            reject()
+        base = bases[0]
+        payer = '渠道直结，公司不重复打款' if external else '公司承担，计入应付业主'
+        rows.append({**base, 'actual': Decimal(0), 'commission': Decimal(0),
+                     'subsidy': delta, 'net': delta, 'nights': 0,
+                     'note': f'确认后更正：{adjustment.reason}；{payer}',
+                     'is_correction': True, 'correction_reason': adjustment.reason,
+                     'correction_at': to_cn(adjustment.created_at).strftime('%Y-%m-%d %H:%M:%S'),
+                     'owner_delta': Decimal(item.owner_net_amount), 'payer': payer})
+        added[item.room_id] += delta
+    for row in checks:
+        rid = row['room_id']
+        row['original_snapshot'] = row['snapshot']
+        row['correction'] = added[rid]
+        row['snapshot'] = current_totals[rid]
+        row['current'] = detail_totals[rid] + added[rid]
+        row['diff'] = row['current'] - row['snapshot']
+        if row['diff']:
+            reject()
+
+
+async def _settlement_income_rows(db, settlement, *, full_names=False, use_frozen=True):
+    """优先读取确认时收入证据，并单列确认后更正、逐房核对当前结算。
+
+    未保存原始明细的历史结算只允许重建后金额完全一致的导出；金额变化时
+    拒绝把当前订单冒充为确认时的原始明细。
     """
     from calendar import monthrange
     from fastapi import HTTPException
+    import copy
+    frozen = getattr(settlement, 'income_detail_snapshot', None)
+    if use_frozen and frozen and settlement.status in (SettlementStatus.confirmed, SettlementStatus.paid):
+        if frozen.get('version') != 1:
+            raise HTTPException(status_code=409, detail='结算明细版本不支持，请联系管理员核查。')
+        rows = copy.deepcopy(frozen['rows'])
+        checks = copy.deepcopy(frozen['checks'])
+        for row in rows:
+            for key in ('actual', 'commission', 'subsidy', 'net'):
+                row[key] = Decimal(row[key])
+            if not full_names:
+                row['guest'] = (row['guest'][:1] + '**') if row['guest'] else ''
+        for row in checks:
+            for key in ('snapshot', 'current', 'diff'):
+                row[key] = Decimal(row[key])
+        await _append_frozen_income_corrections(db, settlement, frozen, rows, checks)
+        hidden = [r for r in rows if r.get('booking_type') == 'owner_self'
+                  or r.get('channel') in ('self_used', '业主自用')]
+        if any(any(Decimal(r[k]) != 0 for k in ('actual', 'commission', 'subsidy', 'net')) for r in hidden):
+            raise HTTPException(409, '历史自住明细含结算金额，请核实后导出。')
+        if hidden:
+            rows = [r for r in rows if r not in hidden]
+            for check in checks:
+                check['order_count'] = len({r['order_id'] for r in rows
+                    if r['room_id'] == check['room_id'] and r.get('order_id') and not r.get('is_correction')})
+        return rows, checks
 
     year, month = (int(x) for x in settlement.billing_month.split("-"))
     start = date(year, month, 1)
     end = date(year, month, monthrange(year, month)[1])
-    snapshot = {
-        i.room_id: Decimal(i.net_revenue).quantize(Decimal("0.01"))
-        for i in settlement.items if i.room_id
-    }
+    snapshot = {}
+    for item in settlement.items:
+        if item.room_id:
+            snapshot[item.room_id] = snapshot.get(item.room_id, Decimal(0)) + Decimal(item.net_revenue)
     room_ids = list(snapshot)
     q = (
         select(OrderRoom, Order, Room)
@@ -813,6 +937,8 @@ async def _settlement_income_rows(db, settlement):
             OrderRoom.check_out_date <= end,
             Order.is_deleted == False,
             Order.order_status != OrderStatus.cancelled,
+            Order.booking_type != BookingType.owner_self,
+            Order.channel != Channel.self_used,
         )
         .order_by(Room.room_name, OrderRoom.check_out_date, Order.order_id)
     )
@@ -831,7 +957,8 @@ async def _settlement_income_rows(db, settlement):
     row_indexes_by_room: dict[str, list[int]] = {rid: [] for rid in room_ids}
     order_ids_by_room: dict[str, set[str]] = {rid: set() for rid in room_ids}
     for orow, order, room in source_rows:
-        actual = Decimal(orow.actual_price or 0)
+        sponsored = order.stay_settlement_kind == StaySettlementKind.company_sponsored
+        actual = Decimal(0) if sponsored else Decimal(orow.actual_price or 0)
         per_room_net = effective_owner_revenue_for_room(
             orow.ota_owner_revenue, orow.actual_price, order.metadata_,
             room_counts.get(order.order_id),
@@ -843,14 +970,32 @@ async def _settlement_income_rows(db, settlement):
             if per_room_net is None else Decimal("0")
         )
         raw_net = actual - commission + subsidy
+        if sponsored:
+            commission = subsidy = raw_net = Decimal(0)
         raw_by_room[orow.room_id] += raw_net
         order_ids_by_room[orow.room_id].add(order.order_id)
         row_indexes_by_room[orow.room_id].append(len(rows))
+        notes = []
+        metadata = order.metadata_ or {}
+        if metadata.get('reconciliation_policy', {}).get('room_compensation') == 'none':
+            notes.append('公司接待，不补房费')
+        transfer = metadata.get('confirmed_room_transfer')
+        if isinstance(transfer, dict) and transfer.get('confirmed_by') and transfer.get('confirmed_at'):
+            nights = transfer.get('nights')
+            if isinstance(nights, list) and len(nights) == 2:
+                notes.append(f'同批客人换房，前 {nights[0]} 晚、后 {nights[1]} 晚分别归属对应房间；本行列本房段收入')
+            else:
+                notes.append('换房收入已按确认的房段分配')
+        if commission < 0:
+            notes.append('净收入高于本行房费，平台扣费为净额调整差值，不代表平台实际退款')
         rows.append({
             "order_id": order.order_id,
             "order_room_id": orow.order_room_id,
+            "booking_type": order.booking_type.value,
             "channel": CHANNEL_LABELS.get(order.channel.value, order.channel.value),
-            "guest": (order.guest_name[:1] + "**") if order.guest_name else "",
+            "guest": (order.guest_name or '') if full_names else ((order.guest_name[:1] + "**") if order.guest_name else ""),
+            "platform_order_id": order.platform_order_id or '',
+            "note": '；'.join(notes),
             "room_id": room.room_id,
             "room_name": room.room_name,
             "check_in": orow.check_in_date,
@@ -862,6 +1007,17 @@ async def _settlement_income_rows(db, settlement):
             "net": raw_net.quantize(Decimal("0.01")),
         })
 
+    from app.services.owner_settlement import load_room_sponsorship_income
+    sponsored_by_room = await load_room_sponsorship_income(db, room_ids, year, month)
+    for rid, entries in sponsored_by_room.items():
+        for entry in entries:
+            base = next((r for r in rows if r['room_id']==rid and r['order_id']==entry.order_id), None)
+            if base is None:
+                raise HTTPException(status_code=409, detail='公司补偿缺少对应房段，需核对后导出。')
+            base['subsidy'] += entry.amount
+            base['net'] += entry.amount
+            base['note'] = '含已确认公司补偿；渠道直结部分不重复打款'
+            raw_by_room[rid] += entry.amount
     check_rows = []
     for rid, snap in snapshot.items():
         current = raw_by_room[rid].quantize(Decimal("0.01"))
@@ -871,14 +1027,19 @@ async def _settlement_income_rows(db, settlement):
                 detail=(f"结算数据已变化（房间 {rid}：快照 {snap}，当前 {current}），"
                         "请先重新生成待确认结算单再导出。"),
             )
-        # 单行先舍入可能产生分尾差，将尾差落在该房最后一行，使明细逐行相加严格等于快照。
+        # Rounding is visible as its own line, never attributed to a guest.
         indexes = row_indexes_by_room[rid]
         if indexes:
             line_sum = sum((rows[i]["net"] for i in indexes), Decimal("0"))
-            rows[indexes[-1]]["net"] += snap - line_sum
+            rounding = snap - line_sum
+            if rounding:
+                rows.append(dict(order_id='',order_room_id='',channel='',guest='',room_id=rid,
+                    room_name=rows[indexes[0]]['room_name'],check_in='',check_out='',nights=0,
+                    actual=Decimal(0),commission=Decimal(0),subsidy=Decimal(0),net=rounding,
+                    note='逐单金额四舍五入尾差',platform_order_id=''))
         check_rows.append({
             "room_id": rid,
-            "room_name": "",
+            "room_name": next((r['room_name'] for r in rows if r['room_id']==rid),rid),
             "order_count": len(order_ids_by_room[rid]),
             "snapshot": snap,
             "current": current,
@@ -887,42 +1048,181 @@ async def _settlement_income_rows(db, settlement):
     return rows, check_rows
 
 
-def _append_income_detail_sheets(wb, income_rows: list[dict], check_rows: list[dict], rooms_map: dict):
-    ws = wb.create_sheet("收入明细")
-    headers = ["订单号", "房段ID", "渠道", "客人", "房间ID", "房号", "入住", "退房", "晚数",
-               "房费", "平台佣金", "平台补贴", "结算净收入"]
+def _append_income_detail_sheets(wb, income_rows: list[dict], check_rows: list[dict], rooms_map: dict, *, original=False):
+    ws = wb.create_sheet("确认时收入明细" if original else "收入明细")
+    headers = ["序号", "客人姓名", "房号", "入住日期", "退房日期", "晚数", "渠道",
+               "客人房费", "平台扣费", "平台补贴及公司补偿", "结算净收入", "说明", "平台订单号", "系统查询编号"]
     ws.append(headers)
     _style_header(ws, len(headers))
-    for r in income_rows:
+    for index, r in enumerate(income_rows, 1):
         ws.append([
-            r["order_id"], r["order_room_id"], r["channel"], r["guest"], r["room_id"],
-            r["room_name"], str(r["check_in"]), str(r["check_out"]), r["nights"],
-            float(r["actual"]), float(r["commission"]), float(r["subsidy"]), float(r["net"]),
+            index, r['guest'], r['room_name'], str(r['check_in']), str(r['check_out']), r['nights'], r['channel'],
+            float(r['actual']), float(max(r['commission'],Decimal(0))),
+            float(r['subsidy']-min(r['commission'],Decimal(0))), float(r['net']),
+            r.get('note',''), r.get('platform_order_id',''), r['order_id'],
         ])
     ws.append([])
-    ws.append(["合计", "", "", "", "", "", "", "", "",
+    ws.append(["合计", "", "", "", "", "", "",
                float(sum((r["actual"] for r in income_rows), Decimal("0"))),
-               float(sum((r["commission"] for r in income_rows), Decimal("0"))),
-               float(sum((r["subsidy"] for r in income_rows), Decimal("0"))),
+               float(sum((max(r["commission"],Decimal(0)) for r in income_rows), Decimal("0"))),
+               float(sum((r["subsidy"]-min(r['commission'],Decimal(0)) for r in income_rows), Decimal("0"))),
                float(sum((r["net"] for r in income_rows), Decimal("0")))])
+    ws.column_dimensions['N'].hidden=True
+    ws.freeze_panes='D2'
+    ws.auto_filter.ref=f'A1:M{len(income_rows)+1}'
+    ws.print_title_rows='1:1'
+    ws.sheet_properties.pageSetUpPr.fitToPage=True
+    ws.page_setup.orientation='landscape'
+    ws.page_setup.paperSize=ws.PAPERSIZE_A3
+    ws.page_setup.fitToWidth=1
+    ws.page_setup.fitToHeight=0
 
-    ck = wb.create_sheet("房号核对")
-    check_headers = ["房间ID", "房号", "订单数", "结算快照净收入", "当前明细净收入", "差额"]
+    ck = wb.create_sheet("确认时房号核对" if original else "房号核对")
+    corrected = any(r.get('is_correction') for r in income_rows)
+    check_headers = ["序号", "房号", "订单数", "更正后结算净收入" if corrected else "结算单净收入", "本表明细净收入", "差额"]
+    if corrected:
+        check_headers += ['确认时净收入', '确认后更正净额']
     ck.append(check_headers)
     _style_header(ck, len(check_headers))
-    for r in check_rows:
+    for index, r in enumerate(check_rows, 1):
         room = rooms_map.get(r["room_id"])
-        ck.append([r["room_id"], room[1] if room else r["room_id"], r["order_count"],
-                   float(r["snapshot"]), float(r["current"]), float(r["diff"])])
+        ck.append([index, r.get('room_name') or (room[1] if room else r["room_id"]), r["order_count"],
+                   float(r["snapshot"]), float(r["current"]), float(r["diff"])]
+                  + ([float(r["original_snapshot"]), float(r["correction"])] if corrected else []))
     ck.append(["合计", "", sum(r["order_count"] for r in check_rows),
                float(sum((r["snapshot"] for r in check_rows), Decimal("0"))),
                float(sum((r["current"] for r in check_rows), Decimal("0"))),
-               float(sum((r["diff"] for r in check_rows), Decimal("0")))])
+               float(sum((r["diff"] for r in check_rows), Decimal("0")))]
+              + ([float(sum(r['original_snapshot'] for r in check_rows)),
+                  float(sum(r['correction'] for r in check_rows))] if corrected else []))
 
     for sheet in (ws, ck):
         for col in sheet.columns:
             max_len = max((len(str(cell.value or "")) for cell in col), default=10)
             sheet.column_dimensions[col[0].column_letter].width = min(max_len + 4, 30)
+        for cells in sheet.iter_rows(min_row=2):
+            for cell in cells:
+                cell.alignment=Alignment(vertical='center',wrap_text=True)
+                if isinstance(cell.value,float):cell.number_format='#,##0.00;[Red]-#,##0.00'
+                # User content is data, never an Excel formula.
+                if isinstance(cell.value,str) and cell.data_type=='f':cell.data_type='s'
+    ws.column_dimensions['L'].width=42
+
+    if corrected:
+        original_checks = [{**r, 'snapshot': r['original_snapshot'],
+                            'current': r['original_snapshot'], 'diff': Decimal(0)} for r in check_rows]
+        _append_income_detail_sheets(wb, [r for r in income_rows if not r.get('is_correction')],
+                                    original_checks, rooms_map, original=True)
+        history = wb.create_sheet('确认后更正记录')
+        history.append(['序号', '更正时间（北京时间）', '客人姓名', '房号', '入住日期', '退房日期',
+                        '收入更正', '公司应付更正', '结算方式', '更正原因'])
+        _style_header(history, 10)
+        for index, row in enumerate((r for r in income_rows if r.get('is_correction')), 1):
+            history.append([index, row['correction_at'], row['guest'], row['room_name'],
+                            str(row['check_in']), str(row['check_out']), float(row['net']),
+                            float(row['owner_delta']), row['payer'], row['correction_reason']])
+        history.append(['合计', '', '', '', '', '',
+                        float(sum(r['net'] for r in income_rows if r.get('is_correction'))),
+                        float(sum(r['owner_delta'] for r in income_rows if r.get('is_correction')))])
+        history.freeze_panes = 'C2'
+        for index in range(1, 11):
+            history.column_dimensions[openpyxl.utils.get_column_letter(index)].width = 24 if index < 9 else 48
+        for cells in history.iter_rows(min_row=2):
+            for cell in cells:
+                cell.alignment = Alignment(vertical='center', wrap_text=True)
+                if isinstance(cell.value, (float, int)) and cell.column in (7, 8):
+                    cell.number_format = '#,##0.00;[Red]-#,##0.00'
+                if isinstance(cell.value, str) and cell.data_type == 'f':
+                    cell.data_type = 's'
+
+
+async def _append_settlement_fee_sheets(db, wb, settlement, rooms_map, *, full_names=False):
+    from app.services.settlement_fee_export import settlement_fee_rows
+    rows = await settlement_fee_rows(db, settlement, rooms_map, full_names=full_names)
+    summary = wb.create_sheet('费用汇总说明')
+    summary.append(['费用项目', '计费记录数', '免收记录数', '业主扣费合计', '核对方式'])
+    _style_header(summary, 5)
+    grouped = {}
+    for row in rows:
+        label = _statement_column_for(row['category'], row['description'])
+        group = grouped.setdefault(label, [0, 0, Decimal(0)])
+        group[0 if row['amount'] else 1] += 1
+        group[2] += row['amount']
+    for label, (charged, waived, amount) in sorted(grouped.items()):
+        explanation = '金额取本次结算逐笔扣费合计，可在“逐笔扣费依据”按姓名、房号和日期查找。'
+        if label == '保洁':
+            explanation += '正常保洁按实际退房计费，同房连续续住不按订单条数重复计算；续住打扫单独列示。'
+        if label == '日耗':
+            explanation += '连续续住在最终退房时合并计费，可能含上月入住晚数；公司承担费用不计入本表。'
+        summary.append([label, charged, waived, float(amount), explanation])
+    summary.append(['合计', '', '', float(sum((v[2] for v in grouped.values()), Decimal(0))),
+                    '记录数为费用明细条数，不等同于订单数或入住晚数。历史金额不按现行单价重算。'])
+    summary.freeze_panes = 'B2'
+    for col in 'ABCD':
+        summary.column_dimensions[col].width = 20
+    summary.column_dimensions['E'].width = 85
+    for cells in summary.iter_rows(min_row=2):
+        summary.row_dimensions[cells[0].row].height = 80
+        for cell in cells:
+            cell.alignment = Alignment(vertical='center', wrap_text=True)
+            if cell.column == 4:
+                cell.number_format = '#,##0.00'
+            if isinstance(cell.value, str) and cell.data_type == 'f':
+                cell.data_type = 's'
+    summary.print_title_rows = '1:1'
+    summary.page_setup.orientation = 'landscape'
+    summary.page_setup.fitToWidth = 1
+    summary.page_setup.fitToHeight = 0
+    sheet = wb.create_sheet('逐笔扣费依据')
+    sheet.append(['房号', '客人姓名', '费用发生日', '关联入住开始', '关联入住结束',
+                  '费用项目', '本次业主扣费', '计费说明'])
+    _style_header(sheet, 8)
+    totals = {}
+    for row in rows:
+        label = _statement_column_for(row['category'], row['description'])
+        totals[label] = totals.get(label, Decimal(0)) + row['amount']
+        sheet.append([row['room'], row['guest'], row['date'], row['check_in'], row['check_out'],
+                      label, float(row['amount']), row['explanation']])
+    sheet.append(['合计', '', '', '', '', '', float(sum(totals.values(), Decimal(0)))])
+    sheet.freeze_panes = 'C2'
+    sheet.auto_filter.ref = f'A1:H{len(rows)+1}'
+    for col in 'ABCDEFG':
+        sheet.column_dimensions[col].width = 20
+    sheet.column_dimensions['H'].width = 70
+    for cells in sheet.iter_rows(min_row=2):
+        for cell in cells:
+            cell.alignment = Alignment(vertical='center', wrap_text=True)
+            if cell.column == 7:
+                cell.number_format = '#,##0.00'
+            if isinstance(cell.value, str) and cell.data_type == 'f':
+                cell.data_type = 's'
+    sheet.print_title_rows = '1:1'
+    sheet.page_setup.orientation = 'landscape'
+    sheet.page_setup.fitToWidth = 1
+    sheet.page_setup.fitToHeight = 0
+
+
+def _append_package_guide(wb, settlement, owner, internal):
+    sheet=wb.create_sheet('结算说明',0)
+    sheet.append([f'{settlement.billing_month} · {owner.name if owner else "业主"}结算单'])
+    current_payable = sum((Decimal(i.owner_net_amount) for i in settlement.items), Decimal(0))
+    sheet.append(['本期应付业主（含更正）', float(current_payable)])
+    sheet.append(['状态',{'pending':'待确认','confirmed':'已确认，尚未登记打款','paid':'已登记打款','disputed':'有争议，待复核'}.get(settlement.status.value,'待复核')])
+    sheet.append(['怎么查账','分成明细查看每间房分成和扣费；收入明细按客人姓名、房号和日期查订单；房号核对查看两表合计是否一致。'])
+    sheet.append(['收入口径','按房段退房月份归属。平台到账日可能跨月；结算净收入不等于本月银行到账。'])
+    sheet.append(['费用口径','逐笔扣费依据按客人、房号和日期列出本次扣费，合计与分成明细一致；公司承担费用不扣给业主。自住记录不列入业主订单明细。'])
+    sheet.append(['次数与晚数','订单条数不等于正常打扫次数，连续续住不能重复收正常保洁；续住打扫单列。跨月续住的日耗按最终退房合并计费，因此不一定等于本月收入明细晚数乘单价。'])
+    sheet.append(['尾差说明','逐单四舍五入差额单独列示，不计到任何客人名下。'])
+    sheet.append(['文件用途','公司内部核账，含完整客人姓名' if internal else '对外结算，客人姓名已脱敏'])
+    sheet.append(['明细版本','确认时保存的明细；确认后更正单独列示，原明细不改写' if '确认后更正记录' in wb.sheetnames else '确认时保存的明细' if settlement.income_detail_snapshot and settlement.status in (SettlementStatus.confirmed,SettlementStatus.paid) else '依据当前订单重建，并已逐房核对结算金额；历史结算未补造确认时明细'])
+    if '确认后更正记录' in wb.sheetnames:
+        sheet.append(['更正说明', '收入明细 = 确认时收入明细 + 确认后更正记录；房号核对同时列示原金额、更正净额和当前合计。'])
+        sheet.append(['打款说明', '更正后应付金额不代表已补付或已追回；已登记打款状态仅表示已有打款登记，更正差额需另行核对处理。' if settlement.status == SettlementStatus.paid else '正数更正增加应付，负数更正减少应付；渠道直结部分不重复计入公司打款。'])
+    sheet.column_dimensions['A'].width=28
+    sheet.column_dimensions['B'].width=92
+    for row in sheet:
+        for cell in row:cell.alignment=Alignment(wrap_text=True,vertical='center')
+        sheet.row_dimensions[row[0].row].height=40
 
 
 @router.get("/settlements/{settlement_id}/statement")
@@ -941,6 +1241,7 @@ async def export_settlement_statement(
         db, settlement_id)
 
     wb = _build_statement_wb(settlement, owner, rooms_map, desc_map)
+    await _append_settlement_fee_sheets(db, wb, settlement, rooms_map)
     owner_name = (owner.name if owner else None) or settlement.owner_id
     return _to_streaming(wb, f"业主分成明细_{owner_name}_{settlement.billing_month}.xlsx")
 
@@ -950,6 +1251,7 @@ async def export_settlement_income_detail(
     settlement_id: str,
     db: DBSession,
     current_user: CurrentUser,
+    internal: bool = False,
 ):
     """导出逐订单房段收入，并保证合计与结算快照逐房一致。"""
     from fastapi import HTTPException
@@ -957,12 +1259,14 @@ async def export_settlement_income_detail(
     if current_user["role"] not in ("admin", "finance"):
         raise HTTPException(status_code=403, detail="无权导出结算明细")
     settlement, owner, rooms_map, _ = await _settlement_export_context(db, settlement_id)
-    income_rows, check_rows = await _settlement_income_rows(db, settlement)
+    if internal and current_user['role'] != 'admin':
+        raise HTTPException(status_code=403,detail='完整姓名仅供管理员内部核账')
+    income_rows, check_rows = await _settlement_income_rows(db, settlement, full_names=internal)
     wb = openpyxl.Workbook()
     wb.remove(wb.active)
     _append_income_detail_sheets(wb, income_rows, check_rows, rooms_map)
     owner_name = (owner.name if owner else None) or settlement.owner_id
-    return _to_streaming(wb, f"到账收入明细_{owner_name}_{settlement.billing_month}.xlsx")
+    return _to_streaming(wb, f"{'内部' if internal else '业主'}订单明细_{owner_name}_{settlement.billing_month}.xlsx")
 
 
 @router.get("/settlements/{settlement_id}/package")
@@ -970,6 +1274,7 @@ async def export_settlement_package(
     settlement_id: str,
     db: DBSession,
     current_user: CurrentUser,
+    internal: bool = False,
 ):
     """一键导出分成表、逐单收入和房号核对三张表。"""
     from fastapi import HTTPException
@@ -977,8 +1282,12 @@ async def export_settlement_package(
     if current_user["role"] not in ("admin", "finance"):
         raise HTTPException(status_code=403, detail="无权导出结算明细")
     settlement, owner, rooms_map, desc_map = await _settlement_export_context(db, settlement_id)
-    income_rows, check_rows = await _settlement_income_rows(db, settlement)
+    if internal and current_user['role'] != 'admin':
+        raise HTTPException(status_code=403,detail='完整姓名仅供管理员内部核账')
+    income_rows, check_rows = await _settlement_income_rows(db, settlement, full_names=internal)
     wb = _build_statement_wb(settlement, owner, rooms_map, desc_map)
     _append_income_detail_sheets(wb, income_rows, check_rows, rooms_map)
+    await _append_settlement_fee_sheets(db, wb, settlement, rooms_map, full_names=internal)
+    _append_package_guide(wb,settlement,owner,internal)
     owner_name = (owner.name if owner else None) or settlement.owner_id
     return _to_streaming(wb, f"完整结算包_{owner_name}_{settlement.billing_month}.xlsx")

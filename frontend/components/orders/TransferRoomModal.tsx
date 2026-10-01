@@ -278,7 +278,7 @@ export function TransferRoomModal({ order, orderRoomId: orderRoomIdProp, onClose
           </div>
 
           <div style={{ marginTop: 12, fontSize: 12, color: tokens.color.text.tertiary }}>
-            系统会原子地校验日期冲突 + 房态联动；加价后订单变「待收」，退房时收款。门锁密码需手动换发给客人。
+            确认后会检查新房是否与其他订单冲突，并更新房态。加价部分会计入待收房费；换房后请确认新房密码可用，再发给客人。
           </div>
         </>
       )}

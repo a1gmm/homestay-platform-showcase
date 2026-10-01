@@ -398,10 +398,11 @@ async def compute_room_period_owner_stat(
 
     exp_rows = (
         await db.execute(
-            select(Expense, Order.booking_type)
+            select(Expense, Order.booking_type, Order.metadata_)
             .outerjoin(Order, Order.order_id == Expense.order_id)
             .where(Expense.room_id == room.room_id)
             .where(Expense.is_deleted == False)
+            .where(or_(Expense.paid_by.is_(None), Expense.paid_by != ExpensePayer.owner))
             .where(or_(
                 Expense.order_id.is_(None),
                 not_(or_(
@@ -421,7 +422,18 @@ async def compute_room_period_owner_stat(
     ).scalars().all()
     rule_lookup: dict = {(r.booking_type, r.expense_category): r for r in rule_rows}
 
-    for expense, booking_type in exp_rows:
+    for expense, booking_type, order_metadata in exp_rows:
+        from app.services.reconciliation_policy import confirmed_cost_bearer
+        if confirmed_cost_bearer(order_metadata) == ExpensePayer.company:
+            continue
+        # Newly distinguished business costs are not owner service charges. A
+        # confirmed company-borne cost must not inherit a room's legacy rules.
+        if expense.payer == ExpensePayer.company and expense.category in {
+            ExpenseCategory.payroll, ExpenseCategory.social_insurance,
+            ExpenseCategory.bank_fee, ExpenseCategory.rent, ExpenseCategory.operating_expense,
+            ExpenseCategory.cleaning_supplier_cost, ExpenseCategory.laundry_supplier_cost,
+        } and not getattr(expense, "is_service_fee", False):
+            continue
         # 手工保洁明确标记为公司承担时，公司就是最终承担方；不得再被保洁 100%
         # 的硬规则或 RoomCostShareRule 重新分配给业主。系统自动服务费
         # (is_service_fee=True) 仍按既有规则由业主承担。
@@ -554,6 +566,7 @@ async def compute_owner_level_expenses(
             Expense.room_id.is_(None),
             Expense.is_deleted == False,
             Expense.payer == ExpensePayer.owner,
+            or_(Expense.paid_by.is_(None), Expense.paid_by != ExpensePayer.owner),
             extract("year", Expense.expense_date) == year,
             extract("month", Expense.expense_date) == month,
         )

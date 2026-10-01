@@ -8,7 +8,6 @@ every amount before any derived service line is persisted.
 from __future__ import annotations
 
 from decimal import Decimal
-import json
 from typing import Annotated, Literal
 
 import openai
@@ -16,6 +15,10 @@ from openai import AsyncOpenAI
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from app.core.config import settings
+from app.services.monthly_close.cleaning_work_log import (
+    WorkLogComparison,
+    parse_cleaning_work_log,
+)
 from app.services.monthly_close.service_statement import (
     ServiceStatementError,
     ServiceStatementMapping,
@@ -56,7 +59,10 @@ class ServiceMappingCoordinates(BaseModel):
             raise ValueError("date and room are required")
         if "amount" not in value and not {"quantity", "unit_price"} <= set(value):
             raise ValueError("amount or quantity and unit_price are required")
-        if any(not isinstance(index, int) or index < 0 or index >= 100 for index in value.values()):
+        if any(
+            not isinstance(index, int) or index < 0 or index >= 100
+            for index in value.values()
+        ):
             raise ValueError("column index out of range")
         if len(value.values()) != len(set(value.values())):
             raise ValueError("duplicate column index")
@@ -89,6 +95,7 @@ class ServiceStatementAnalysis(BaseModel):
     reasons: dict[str, str] = Field(default_factory=dict)
     needs_confirmation: bool = True
     sheets: list[dict] = Field(default_factory=list)
+    work_log: WorkLogComparison | None = None
 
 
 _PROMPT = """识别民宿保洁或布草供应商表格结构，只返回 JSON 对象，不要输出多余文字。
@@ -107,7 +114,10 @@ def parse_service_mapping_response(text: str) -> ServiceMappingSuggestion:
 
 
 async def ai_service_mapping(data: bytes, filename: str) -> ServiceMappingSuggestion:
-    if not settings.DEEPSEEK_API_KEY:
+    if (
+        not settings.MONTHLY_CLOSE_ASSISTANT_MODEL_ENABLED
+        or not settings.DEEPSEEK_API_KEY
+    ):
         raise ServiceMappingError("AI 暂不可用，可稍后重试或人工填写列号")
     sample = build_service_anonymous_sample(data, filename)
     client = AsyncOpenAI(
@@ -186,6 +196,22 @@ async def analyze_service_statement(
     billing_month: str | None = None,
 ) -> ServiceStatementAnalysis:
     sheets = build_workbook_preview(data, filename)
+    if source_type == "cleaning_statement":
+        entries = parse_cleaning_work_log(data, filename, billing_month)
+        if entries is not None:
+            result = _manual_analysis(sheets)
+            result.line_count = len(entries)
+            result.suggested_by = "deterministic"
+            result.needs_confirmation = False
+            result.reasons = {"mapping": "已按日期、正常打扫房间号和续住房间读取工作记录"}
+            result.work_log = WorkLogComparison(
+                record_count=len(entries),
+                normal_count=sum(entry.service_type == "cleaning" for entry in entries),
+                instay_count=sum(
+                    entry.service_type == "instay_cleaning" for entry in entries
+                ),
+            )
+            return result
     if mapping is not None:
         parsed = parse_service_statement(
             data,
@@ -194,9 +220,7 @@ async def analyze_service_statement(
             mapping=mapping.to_statement_mapping(),
             billing_month=billing_month,
         )
-        return _analysis(
-            parsed=parsed, suggested_by="administrator", sheets=sheets
-        )
+        return _analysis(parsed=parsed, suggested_by="administrator", sheets=sheets)
     try:
         parsed = parse_service_statement(
             data, filename, source_type, billing_month=billing_month

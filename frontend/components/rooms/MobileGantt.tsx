@@ -1,5 +1,7 @@
 "use client";
 
+import { usePrivacyMode } from "@/hooks/usePrivacyMode";
+
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Modal, Tag, Segmented } from "antd";
 import { tokens } from "@/lib/design-tokens";
@@ -112,7 +114,7 @@ export function blockDisplayStatusByDay(
       if (!cur) break;
       if (j > i && !isSameBlock(roomDays[days[j - 1]], cur)) break;
       blockDays.push(days[j]);
-      statuses.push(cur.status);
+      statuses.push(cur.display_status ?? cur.status);
       j++;
     }
     const unified = stayGroupBarStatus(statuses);
@@ -164,6 +166,7 @@ export function MobileGantt({
   onNextMonth,
   onToday,
 }: MobileGanttProps) {
+  const privacyMode = usePrivacyMode();
   const todayStr = todayCNString();
   const daysInMonth = new Date(calMonth.year, calMonth.month, 0).getDate();
   const days = useMemo(
@@ -547,7 +550,7 @@ export function MobileGantt({
                     // 已离店的单（已退房/已完成）不在「今天」盖住「保洁中」：客人已走、房在打扫，
                     // 该显示保洁中而非残留「待退房」条（与桌面 GanttView 同口径）。在住/将到店照常画。
                     const departedCell =
-                      !!cell && (cell.status === "pending_checkout" || cell.status === "completed");
+                      !!cell && (cell.display_status === "checked_out" || cell.status === "pending_checkout" || cell.status === "completed");
                     const isCleaningRoom = CLEANING_STATUSES.includes(
                       effectiveStatusById?.[room.room_id] ?? ""
                     );
@@ -560,7 +563,7 @@ export function MobileGantt({
                     // 今天格空、旁边也没有可叠标的已退房订单条（客人早已离店、房仍没清扫）——
                     // 退化成整格金色「保洁中」兜底，让前台知道这房还没清扫、不能进新客。
                     const prevIsDepartedBar =
-                      !!prev && (prev.status === "pending_checkout" || prev.status === "completed");
+                      !!prev && (prev.display_status === "checked_out" || prev.status === "pending_checkout" || prev.status === "completed");
                     const cleaningEmptyCell =
                       isToday && isCleaningRoom && !cell && !prevIsDepartedBar;
                     const bc = cell
@@ -583,7 +586,7 @@ export function MobileGantt({
                             // 有订单 → 订单详情抽屉；锁房/屏蔽或无回调 → 内置只读详情
                             if (cell.order_id && onOrderClick) onOrderClick(cell.order_id);
                             else openDetailFor(room.room_id, idx);
-                          } else if (onCellClick) {
+                          } else if (!privacyMode && onCellClick) {
                             // 空格 → 快速排房/开单
                             onCellClick(room.room_id, day);
                           }
@@ -599,7 +602,7 @@ export function MobileGantt({
                             cell && !isEnd
                               ? `1px solid ${bc?.body}`
                               : `0.5px solid ${tokens.anyu.color.linen}`,
-                          cursor: cell || onCellClick ? "pointer" : "default",
+                          cursor: cell || (!privacyMode && onCellClick) ? "pointer" : "default",
                           position: "relative",
                         }}
                       >

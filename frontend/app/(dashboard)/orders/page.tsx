@@ -1,6 +1,7 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useRef, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import dynamic from "next/dynamic";
 import { ordersApi, exportApi, batchApi } from "@/lib/api";
 import {
@@ -37,6 +38,7 @@ import { useOrders, type OrderFilters } from "@/hooks/useOrders";
 import { useRouter, useSearchParams } from "next/navigation";
 import OrderFiltersBar from "@/components/orders/OrderFilters";
 import { useIsMobile } from "@/lib/responsive";
+import { usePrivacyMode } from "@/hooks/usePrivacyMode";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -67,12 +69,42 @@ const segPricePending = (row: StayGroup) =>
   (row.segments ?? []).some((s) => s.order_status !== "cancelled" && s.price_pending);
 
 export default function OrdersPage() {
+  const privacyMode = usePrivacyMode();
   const isMobile = useIsMobile();
   const router = useRouter();
   const searchParams = useSearchParams();
   const [selectedOrder, setSelectedOrder] = useState<any>(null);
   const [detailOpen, setDetailOpen] = useState(false);
   const [paymentOpen, setPaymentOpen] = useState(false);
+  const linkedOrderId = searchParams.get("order_id");
+  const openedLinkedOrder = useRef<string | null>(null);
+  const linkedOrderQuery = useQuery({
+    queryKey: ["order", linkedOrderId],
+    queryFn: () => ordersApi.get(linkedOrderId!).then(r => r.data),
+    enabled: Boolean(linkedOrderId),
+    retry: false,
+  });
+  React.useEffect(() => {
+    if (!linkedOrderId) {
+      openedLinkedOrder.current = null;
+      return;
+    }
+    if (openedLinkedOrder.current === linkedOrderId) return;
+    setDetailOpen(false);
+    if (!linkedOrderQuery.data) return;
+    setSelectedOrder(linkedOrderQuery.data);
+    setDetailOpen(true);
+    openedLinkedOrder.current = linkedOrderId;
+  }, [linkedOrderId, linkedOrderQuery.data]);
+
+  const closeOrderDetail = () => {
+    setDetailOpen(false);
+    if (linkedOrderId) {
+      const params = new URLSearchParams(searchParams.toString());
+      params.delete("order_id");
+      router.replace(`/orders${params.size ? `?${params}` : ""}`, { scroll: false });
+    }
+  };
   // 支持 URL 参数预填筛选(从 dashboard KPI 卡片、新订单提示 toast 或外部链接跳转过来时)。
   const initialUrlFilters = tryFiltersFromSearchParams(
     new URLSearchParams(searchParams.toString()),
@@ -402,7 +434,7 @@ export default function OrdersPage() {
               // 弹窗内「保存,再记一笔」一口气录完）。已取消单不收款。
               // 续住组不给这个快捷项：每段房费/佣金各自独立，钱记错段直接坑 OTA 对账
               //（王总 2026-07-17 拍板）→ 走详情页「分段明细」点那一段。
-              ...(record.group_status !== "cancelled" && segCount(record) === 1
+              ...(!privacyMode && record.group_status !== "cancelled" && segCount(record) === 1
                 ? [
                     {
                       key: "payment",
@@ -422,6 +454,7 @@ export default function OrdersPage() {
           placement="bottomRight"
         >
           <Button
+            aria-label="订单更多操作"
             type="text"
             icon={<MoreOutlined />}
             onClick={(e) => e.stopPropagation()}
@@ -438,17 +471,19 @@ export default function OrdersPage() {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      {linkedOrderId && linkedOrderQuery.isError && <Alert type="error" showIcon message="无法打开这笔订单" description={extractErrorMessage(linkedOrderQuery.error, "订单可能已删除或暂时无法加载")} action={<Button onClick={() => linkedOrderQuery.refetch()}>重试</Button>} />}
       <PageHeader
         title="订单管理"
         subtitle={`共 ${total} 笔订单`}
         extra={
           <Space>
             <ReturnToMonthlyClose />
-            <Button icon={<DownloadOutlined />} loading={exporting} onClick={handleExport}>
+            <Button disabled={privacyMode} title={privacyMode ? "隐私演示模式禁止导出" : undefined} icon={<DownloadOutlined />} loading={exporting} onClick={handleExport}>
               导出
             </Button>
             <Button
               type="primary"
+              disabled={privacyMode}
               icon={<PlusOutlined />}
               onClick={() => router.push("/orders/new")}
             >
@@ -547,6 +582,7 @@ export default function OrdersPage() {
               size="small"
               icon={<CheckCircleOutlined />}
               loading={batchLoading}
+              disabled={privacyMode}
               onClick={() => handleBatchTransition("paid_pending_room")}
             >
               批量确认
@@ -581,7 +617,7 @@ export default function OrdersPage() {
               >
                 <Checkbox
                   checked={isSelected}
-                  disabled={batchLoading}
+                  disabled={privacyMode || batchLoading}
                   onClick={(e) => e.stopPropagation()}
                   onChange={(e) => {
                     if (e.target.checked) {
@@ -691,9 +727,9 @@ export default function OrdersPage() {
             >
               <EmptyState
                 title="还没有订单"
-                description="从右上角「新建订单」开始创建第一笔订单。"
+                description={privacyMode ? "当前没有匹配订单。隐私演示模式仅支持查看和筛选。" : "调整筛选条件，或从「新建订单」开始。"}
                 actionLabel="新建订单"
-                onAction={() => router.push("/orders/new")}
+                onAction={privacyMode ? undefined : () => router.push("/orders/new")}
               />
             </Card>
           )}
@@ -718,7 +754,7 @@ export default function OrdersPage() {
               onChange: (keys) => setSelectedRowKeys(keys),
               columnWidth: 44,
               // 批量提交中禁用所有 checkbox，防止用户勾选混入下一批次
-              getCheckboxProps: () => ({ disabled: batchLoading }),
+              getCheckboxProps: () => ({ disabled: privacyMode || batchLoading }),
             }}
             onRow={(record) => ({
               onClick: () => openDetail(record),
@@ -728,9 +764,9 @@ export default function OrdersPage() {
               emptyText: (
                 <EmptyState
                   title="还没有订单"
-                  description="从右上角「新建订单」开始创建第一笔订单。"
+                  description={privacyMode ? "当前没有匹配订单。隐私演示模式仅支持查看和筛选。" : "调整筛选条件，或从「新建订单」开始。"}
                   actionLabel="新建订单"
-                  onAction={() => router.push("/orders/new")}
+                  onAction={privacyMode ? undefined : () => router.push("/orders/new")}
                 />
               ),
             }}
@@ -757,7 +793,7 @@ export default function OrdersPage() {
         open={detailOpen}
         order={selectedOrder}
         payments={Array.isArray(payments) ? payments : []}
-        onClose={() => setDetailOpen(false)}
+        onClose={closeOrderDetail}
         onOpenPayment={() => {
           setDetailOpen(false);
           setPaymentFrom("detail");

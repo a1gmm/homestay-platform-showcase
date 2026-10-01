@@ -8,15 +8,18 @@ import asyncio
 import logging
 from datetime import datetime, timezone
 from typing import Literal
+from uuid import uuid4
 
 import openai
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.core.deps import get_db, require_role
+from app.core.deps import get_db, require_current_db_role, require_role
+from app.models.monthly_close import MonthlyCloseCycle, MonthlyCloseDocument
 from app.models.recon import ReconBatch, ReconDiff
 from app.services.billing_recon.ai_mapping import AiMappingError
 from app.services.billing_recon.analysis import (
@@ -28,27 +31,53 @@ from app.services.billing_recon.analysis import (
     analyze_mapping,
     build_layout_signature,
     materialize_mapping,
+    recognize_mapping_coordinates,
 )
 from app.services.billing_recon.engine import (
-    BillRejected, apply_diff_action, claim_match, run_recon, source_namespace,
+    BillRejected, ReconWriteControlled, apply_diff_action, claim_match,
+    lock_recon_write_control, run_recon, source_namespace,
 )
 from app.services.billing_recon.layout_templates import (
     coordinates_for_workbook,
     find_layout_template,
     save_layout_template,
 )
-from app.services.billing_recon.parser import BillParseError, load_workbook_rows
+from app.services.billing_recon.parser import (
+    BillParseError,
+    aggregate_orders,
+    extract_bill_rows,
+    infer_bill_month,
+    load_workbook_rows,
+)
 from app.services.billing_recon.upload import (
     ProcessingBatchState, get_or_create_processing_batch, mark_processing_batch_failed,
     upload_fingerprint, validate_bill_container,
 )
 from app.services.billing_recon.summary import build_live_summary, review_batch
 from app.services.audit import log_action_tx
+from app.services.monthly_close.adapters import build_ota_proposal
+from app.services.monthly_close.control import MonthlyCloseControlError
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/billing-recon", tags=["billing-recon"])
 
 _MAX_UPLOAD = 10 * 1024 * 1024
+
+
+def _direct_confirm_context() -> None:
+    """Keep the internal assistant intake marker out of the public request surface."""
+    return None
+
+
+def _direct_confirm_document_context() -> None:
+    """Keep the exact assistant document marker out of public confirmation."""
+    return None
+
+
+def _direct_analysis_ai_enabled() -> bool:
+    """Direct billing analysis retains its established optional AI fallback."""
+    return True
+
 
 _PlatformSuggestion = Literal[
     "ctrip_family", "meituan", "fliggy", "douyin", "tujia", "other",
@@ -124,6 +153,7 @@ def _suggestion_for_scope(scope: PlatformScope) -> _PlatformSuggestion:
 async def analyze_bill(
     file: UploadFile = File(...),
     mapping_json: str | None = Form(None),
+    allow_ai: bool = Depends(_direct_analysis_ai_enabled),
     current=Depends(require_role("admin")),
     db: AsyncSession = Depends(get_db),
 ) -> WorkbookAnalysisOut:
@@ -167,20 +197,34 @@ async def analyze_bill(
         platform_suggestion = _suggestion_for_scope(platform_scope)
         confidence: dict[str, float] = {}
     elif mapping_json is None:
-        # Keep this import lazy so the established test monkeypatch boundary remains
-        # app.services.billing_recon.ai_mapping.ai_column_mapping.
-        from app.services.billing_recon.ai_mapping import ai_column_mapping
+        deterministic_coordinates = recognize_mapping_coordinates(sheets)
+        if deterministic_coordinates is not None:
+            coordinates = deterministic_coordinates
+            platform_scope = PlatformScope.all_ota
+            platform_suggestion = "other"
+            confidence = {}
+        elif not allow_ai:
+            raise _api_error(
+                "MAPPING_INCOMPLETE",
+                "未识别出账单列，请人工填写订单号、客人、入住、离店和结算金额对应的列号",
+                422,
+                field="mapping_json",
+            )
+        else:
+            # Keep this import lazy so the established test monkeypatch boundary remains
+            # app.services.billing_recon.ai_mapping.ai_column_mapping.
+            from app.services.billing_recon.ai_mapping import ai_column_mapping
 
-        if not settings.DEEPSEEK_API_KEY:
-            raise _api_error("AI_UNAVAILABLE", "AI 暂不可用，可稍后重试", 503)
-        try:
-            suggestion = await ai_column_mapping(sheets)
-        except (openai.APIStatusError, openai.APIConnectionError, AiMappingError):
-            raise _api_error("AI_UNAVAILABLE", "AI 暂不可用，可稍后重试", 503) from None
-        coordinates = suggestion.coordinates
-        platform_suggestion = suggestion.platform_suggestion
-        platform_scope = _scope_for_suggestion(platform_suggestion)
-        confidence = suggestion.field_confidence
+            if not settings.DEEPSEEK_API_KEY:
+                raise _api_error("AI_UNAVAILABLE", "AI 暂不可用，可稍后重试", 503)
+            try:
+                suggestion = await ai_column_mapping(sheets)
+            except (openai.APIStatusError, openai.APIConnectionError, AiMappingError):
+                raise _api_error("AI_UNAVAILABLE", "AI 暂不可用，可稍后重试", 503) from None
+            coordinates = suggestion.coordinates
+            platform_suggestion = suggestion.platform_suggestion
+            platform_scope = _scope_for_suggestion(platform_suggestion)
+            confidence = suggestion.field_confidence
 
     analysis: MappingAnalysis = analyze_mapping(sheets, datemode, coordinates)
     return WorkbookAnalysisOut(
@@ -234,6 +278,106 @@ async def _batch_diffs(db: AsyncSession, batch_id: str) -> list[ReconDiff]:
     return list(rows.scalars().all())
 
 
+async def _batch_write_control(
+    db: AsyncSession, batch_id: str
+) -> tuple[ReconBatch | None, MonthlyCloseCycle | None, bool]:
+    """Lock the authoritative cycle before its exact batch to avoid lock inversion."""
+    subject = await db.scalar(
+        select(ReconBatch).where(ReconBatch.batch_id == batch_id)
+    )
+    if subject is None:
+        return None, None, False
+    cycle = await db.scalar(
+        select(MonthlyCloseCycle)
+        .where(MonthlyCloseCycle.billing_month == subject.bill_month)
+        .with_for_update(of=MonthlyCloseCycle)
+        .execution_options(populate_existing=True)
+    )
+    batch = await db.scalar(
+        select(ReconBatch)
+        .where(ReconBatch.batch_id == batch_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    if batch is None:
+        return None, None, False
+    if cycle is not None and cycle.billing_month != batch.bill_month:
+        return batch, None, False
+    linked = bool(
+        cycle is not None
+        and await db.scalar(
+            select(MonthlyCloseDocument.document_id).where(
+                MonthlyCloseDocument.cycle_id == cycle.cycle_id,
+                MonthlyCloseDocument.source_type == "ota_statement",
+                MonthlyCloseDocument.engine_type == "billing_recon",
+                MonthlyCloseDocument.engine_id == batch.batch_id,
+                MonthlyCloseDocument.is_active.is_(True),
+            ).limit(1)
+        )
+    )
+    return batch, cycle, linked
+
+
+def _assistant_controlled_error(cycle: MonthlyCloseCycle) -> HTTPException:
+    return _api_error(
+        "OTA_ASSISTANT_CONTROLLED",
+        f"{cycle.billing_month} 的OTA调整由月结方案控制，请在月结中心生成并审批方案",
+        409,
+    )
+
+
+async def _reject_assistant_controlled_write(
+    db: AsyncSession, batch_id: str
+) -> tuple[ReconBatch | None, MonthlyCloseCycle | None, bool]:
+    batch, cycle, linked = await _batch_write_control(db, batch_id)
+    if cycle is not None and cycle.write_control_owner == "assistant":
+        raise _assistant_controlled_error(cycle)
+    return batch, cycle, linked
+
+
+def _proposal_out(proposal) -> dict:
+    return {
+        "proposal_id": proposal.proposal_id,
+        "cycle_id": proposal.cycle_id,
+        "proposal_type": proposal.proposal_type,
+        "status": proposal.status,
+        "canonical_payload": proposal.canonical_payload,
+        "impact_snapshot": proposal.impact_snapshot,
+        "approval_policy_snapshot": proposal.approval_policy_snapshot,
+    }
+
+
+async def _delegate_assistant_decision(
+    db: AsyncSession,
+    diff: ReconDiff,
+    current: dict,
+    decision: dict,
+    request_id: str | None,
+):
+    _batch, cycle, linked = await _batch_write_control(db, diff.batch_id)
+    if cycle is None or cycle.write_control_owner != "assistant":
+        return None
+    if not linked:
+        raise _assistant_controlled_error(cycle)
+    try:
+        proposal = await build_ota_proposal(
+            db,
+            cycle.cycle_id,
+            diff.batch_id,
+            [],
+            current,
+            decisions=[{"diff_id": diff.diff_id, **decision}],
+            request_id=request_id or f"OTALEG:{uuid4().hex[:24]}",
+        )
+    except MonthlyCloseControlError as exc:
+        raise _api_error(
+            exc.code,
+            exc.message,
+            409,
+        ) from exc
+    return JSONResponse(status_code=201, content=_proposal_out(proposal))
+
+
 def _diff_class_counts(diffs: list[ReconDiff]) -> dict[str, int]:
     counts: dict[str, int] = {}
     for d in diffs:
@@ -272,9 +416,14 @@ async def confirm_bill(
     mapping_json: str = Form(...),
     platform_scope: str = Form(...),
     remember_layout: bool = Form(...),
-    current=Depends(require_role("admin")),
+    current=Depends(require_current_db_role("admin")),
     db: AsyncSession = Depends(get_db),
+    _assistant_intake_cycle_id: str | None = Depends(_direct_confirm_context),
+    _assistant_intake_document_id: str | None = Depends(
+        _direct_confirm_document_context
+    ),
 ):
+    caller_owned_transaction = _assistant_intake_cycle_id is not None
     data, fingerprint = await _read_bill_file(file)
     if fingerprint != file_fingerprint:
         raise _api_error("FILE_CHANGED", "确认的文件与分析结果不一致，请重新分析", 409, field="file")
@@ -306,6 +455,23 @@ async def confirm_bill(
         raise _api_error("MAPPING_OUT_OF_RANGE", "确认的汇总坐标无效", 422, field="summary_cell") from None
 
     source_key = source_namespace(scope, signature)
+    rows = extract_bill_rows(sheets[mapping.sheet], mapping, datemode)
+    bill_month = infer_bill_month(rows)
+    try:
+        await lock_recon_write_control(
+            db,
+            source_key=source_key,
+            bill_month=bill_month,
+            bill_nos=list(aggregate_orders(rows)),
+            assistant_intake_cycle_id=_assistant_intake_cycle_id,
+            assistant_intake_document_id=_assistant_intake_document_id,
+        )
+    except ReconWriteControlled as exc:
+        raise _api_error(
+            "OTA_ASSISTANT_CONTROLLED",
+            f"{exc.billing_month} 的OTA调整由月结方案控制，请在月结中心生成并审批方案",
+            409,
+        ) from exc
     processing = await get_or_create_processing_batch(
         db,
         fingerprint=fingerprint,
@@ -334,7 +500,22 @@ async def confirm_bill(
             db, data=data, filename=filename, user_id=current["user_id"], mapping=mapping,
             platform_scope=scope, source_key=source_key, layout_signature=signature,
             upload_fingerprint=fingerprint, processing_batch=processing_batch, enable_ai_enrichment=False,
+            assistant_intake_cycle_id=_assistant_intake_cycle_id,
+            assistant_intake_document_id=_assistant_intake_document_id,
+            commit=not caller_owned_transaction,
         )
+    except ReconWriteControlled as exc:
+        await db.rollback()
+        if processing.state is ProcessingBatchState.created:
+            stale_processing = await db.get(ReconBatch, processing_batch.batch_id)
+            if stale_processing is not None and stale_processing.status == "processing":
+                await db.delete(stale_processing)
+                await db.commit()
+        raise _api_error(
+            "OTA_ASSISTANT_CONTROLLED",
+            f"{exc.billing_month} 的OTA调整由月结方案控制，请在月结中心生成并审批方案",
+            409,
+        ) from exc
     except BillRejected as exc:
         # The same deterministic gate was checked above.  Preserve a safe code if
         # a parser-level race/edge condition reaches the engine.
@@ -343,9 +524,14 @@ async def confirm_bill(
         await mark_processing_batch_failed(db, processing_batch.batch_id)
         raise
 
-    # Persist response metadata separately from run_recon's durable batch/diffs.
+    # Direct billing-recon requests retain their historical durable boundary.  The
+    # monthly-close adapter owns one transaction spanning recon, document lineage,
+    # and its audit record, so internal assistant intake only flushes here.
     batch.mapping = {**(batch.mapping or {}), "warnings": analysis.warnings}
-    await db.commit()
+    if caller_owned_transaction:
+        await db.flush()
+    else:
+        await db.commit()
     await db.refresh(batch)
 
     batch_id = batch.batch_id
@@ -355,14 +541,21 @@ async def confirm_bill(
                 db, signature=signature, coordinates=coordinates, platform_scope=scope,
                 user_id=current["user_id"], sheet_names=list(sheets),
             )
-            await db.commit()
+            if caller_owned_transaction:
+                await db.flush()
+            else:
+                await db.commit()
         except Exception:  # noqa: BLE001 - template retention cannot undo reconciliation
+            if caller_owned_transaction:
+                raise
             await db.rollback()
             logger.warning("billing-recon layout template save failed", exc_info=True)
             batch = await db.get(ReconBatch, batch_id)
 
     diffs = await _batch_diffs(db, batch_id)
     try:
+        if caller_owned_transaction:
+            return {"batch": _batch_out(batch), "diffs": [_diff_out(d) for d in diffs]}
         from app.services.feishu_lead_alert import send_billing_recon_alert
 
         counts = _diff_class_counts(diffs)
@@ -380,7 +573,7 @@ async def confirm_bill(
 
 
 @router.post("/upload")
-async def upload_bill(current=Depends(require_role("admin"))):
+async def upload_bill(current=Depends(require_current_db_role("admin"))):
     """Close the unsafe one-step execution bypass without consuming an upload body."""
     raise _api_error(
         "CONFIRMATION_REQUIRED", "请先分析账单并确认字段映射后再开始对账", 409,
@@ -401,9 +594,10 @@ async def list_batches(current=Depends(require_role("admin")), db: AsyncSession 
 @router.post("/batches/{batch_id}/archive")
 async def archive_batch(
     batch_id: str,
-    current=Depends(require_role("admin")),
+    current=Depends(require_current_db_role("admin")),
     db: AsyncSession = Depends(get_db),
 ):
+    await _reject_assistant_controlled_write(db, batch_id)
     batch = (await db.execute(
         select(ReconBatch).where(ReconBatch.batch_id == batch_id).with_for_update()
     )).scalar_one_or_none()
@@ -446,9 +640,10 @@ async def batch_detail(batch_id: str, current=Depends(require_role("admin")), db
 @router.post("/batches/{batch_id}/review")
 async def review_recon_batch(
     batch_id: str,
-    current=Depends(require_role("admin")),
+    current=Depends(require_current_db_role("admin")),
     db: AsyncSession = Depends(get_db),
 ):
+    await _reject_assistant_controlled_write(db, batch_id)
     batch = (await db.execute(
         select(ReconBatch).where(ReconBatch.batch_id == batch_id).with_for_update()
     )).scalar_one_or_none()
@@ -474,13 +669,26 @@ async def review_recon_batch(
 async def diff_action(
     diff_id: str,
     payload: dict,
-    current=Depends(require_role("admin")),
+    current=Depends(require_current_db_role("admin")),
     db: AsyncSession = Depends(get_db),
 ):
     diff = await db.get(ReconDiff, diff_id)
     if diff is None:
         raise HTTPException(404, "差异不存在")
     action = str(payload.get("action", ""))
+    delegated = await _delegate_assistant_decision(
+        db,
+        diff,
+        current,
+        {
+            "decision": "action",
+            "action": action,
+            **({"reason": str(payload.get("reason", ""))} if action == "dismiss" else {}),
+        },
+        str(payload.get("request_id", "")).strip() or None,
+    )
+    if delegated is not None:
+        return delegated
     try:
         return await apply_diff_action(db, diff, action, current["user_id"])
     except ValueError as e:
@@ -491,7 +699,7 @@ async def diff_action(
 async def claim_diff(
     diff_id: str,
     payload: dict,
-    current=Depends(require_role("admin")),
+    current=Depends(require_current_db_role("admin")),
     db: AsyncSession = Depends(get_db),
 ):
     diff = await db.get(ReconDiff, diff_id)
@@ -500,6 +708,15 @@ async def claim_diff(
     order_id = str(payload.get("order_id", ""))
     if not order_id:
         raise HTTPException(400, "缺少 order_id")
+    delegated = await _delegate_assistant_decision(
+        db,
+        diff,
+        current,
+        {"decision": "claim", "order_id": order_id},
+        str(payload.get("request_id", "")).strip() or None,
+    )
+    if delegated is not None:
+        return delegated
     try:
         return await claim_match(db, diff, order_id, current["user_id"])
     except ValueError as e:

@@ -5,10 +5,10 @@ import dynamic from "next/dynamic";
 import { extractErrorMessage } from "@/lib/api-errors";
 import { useSearchParams } from "next/navigation";
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from "@tanstack/react-query";
-import { roomsApi, ordersApi, financeApi, roomBlocksApi, ownersApi } from "@/lib/api";
+import { roomsApi, ordersApi, financeApi, roomBlocksApi } from "@/lib/api";
 import { invalidateOrderRelated, invalidatePaymentRelated } from "@/lib/order-cache";
 import { planDragConfirm } from "@/lib/drag-reschedule";
-import type { RoomOut, RoomPricingPoint, CalendarRoom, OrderOut, PaymentOut, OwnerOut, OrderRoomOut } from "@/lib/types";
+import type { RoomOut, RoomPricingPoint, CalendarRoom, OrderOut, PaymentOut, OrderRoomOut } from "@/lib/types";
 import {
   Card, Space, Button, Row, Skeleton,
   Modal, Select, message, Input, Form, Segmented,
@@ -39,6 +39,7 @@ import { formatCompactRoomStatusSummary, formatRoomStatusSummary } from "@/lib/r
 import type { OrderStatus, PaymentCreate } from "@/lib/types";
 import { useIsCompactTouch, useIsMobile } from "@/lib/responsive";
 import { useRoomsFocus } from "@/hooks/useRoomsFocus";
+import { usePrivacyMode } from "@/hooks/usePrivacyMode";
 import { useAuthStore } from "@/lib/auth";
 import { groupByRoomType } from "@/lib/room-types";
 import { shiftWindow, GANTT_LOOKBACK_DAYS, windowFocusMonth, ymdLocal } from "@/lib/gantt-window";
@@ -71,6 +72,7 @@ const PaymentModal = dynamic(() => import("@/components/orders/PaymentModal").th
 const SHOW_PENDING_ROOM_STRIP = true;
 
 export default function RoomsPage() {
+  const privacyMode = usePrivacyMode();
   const isMobile = useIsMobile();
   const isCompactTouch = useIsCompactTouch();
   const isCompact = isMobile || isCompactTouch;
@@ -174,21 +176,6 @@ export default function RoomsPage() {
     queryFn: () => roomBlocksApi.list({ room_id: editRoom!.room_id }).then((r) => r.data),
     enabled: !!editRoom,
   });
-
-  // 业主下拉用；只在编辑弹窗用到，staleTime 长一点避免反复请求
-  const { data: owners } = useQuery<OwnerOut[]>({
-    queryKey: ["owners"],
-    queryFn: () => ownersApi.list().then((r) => r.data),
-    staleTime: 5 * 60 * 1000,
-  });
-  const ownerOptions = useMemo(
-    () =>
-      (owners ?? []).map((o) => ({
-        value: o.owner_id,
-        label: o.phone ? `${o.name} · ${o.phone}` : o.name,
-      })),
-    [owners]
-  );
 
   const { data: rawPricing } = useQuery<RoomPricingPoint[]>({
     queryKey: ["room-pricing", expandedRoomId],
@@ -336,6 +323,7 @@ export default function RoomsPage() {
   });
 
   const confirmDeleteRoom = (room: { room_id: string; room_name: string }) => {
+    if (privacyMode) return;
     Modal.confirm({
       title: `下线房间「${room.room_name}」？`,
       content:
@@ -459,6 +447,7 @@ export default function RoomsPage() {
 
   // ─── 甘特图行右侧 hover 菜单回调 ─────────────────────────────────────────
   const openRoomEditById = (roomId: string) => {
+    if (privacyMode) return;
     const r = rooms?.find((x) => x.room_id === roomId);
     if (!r) return;
     setEditingRoom(r);
@@ -490,6 +479,7 @@ export default function RoomsPage() {
 
   // 「点房号直接锁房」：从房卡/甘特图行一步打开锁房弹窗，复用既有锁房逻辑
   const lockRoomById = (roomId: string, blockType: BlockType) => {
+    if (privacyMode) return;
     const r = rooms?.find((x) => x.room_id === roomId);
     if (!r) return;
     setBlockingRoom(r);
@@ -497,6 +487,7 @@ export default function RoomsPage() {
   };
 
   const openStatusEditById = (roomId: string) => {
+    if (privacyMode) return;
     const r = rooms?.find((x) => x.room_id === roomId);
     if (!r) return;
     setEditRoom(r);
@@ -523,6 +514,7 @@ export default function RoomsPage() {
   };
 
   const openCreateAt = (init: QuickCreateInit | null) => {
+    if (privacyMode) return;
     setCreateInit(init);
     setCreateOpen(true);
   };
@@ -530,14 +522,14 @@ export default function RoomsPage() {
   // IA-2: 移动端 FAB 跳 /rooms?action=new → 自动打开新建订单 Modal
   const searchParams = useSearchParams();
   React.useEffect(() => {
-    if (searchParams.get("action") === "new") {
+    if (!privacyMode && searchParams.get("action") === "new") {
       setCreateOpen(true);
       // 清掉 query param 避免来回切换重新触发
       const url = new URL(window.location.href);
       url.searchParams.delete("action");
       window.history.replaceState({}, "", url.toString());
     }
-  }, [searchParams]);
+  }, [searchParams, privacyMode]);
 
   // 待排房卡片数（顶栏角标）
   const pendingCount = pendingRoomOrders?.length ?? 0;
@@ -546,7 +538,7 @@ export default function RoomsPage() {
     <div className={`rooms-page${isCompact ? " rooms-page-compact" : ""}`} style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       {contextHolder}
       <Modal
-        open={Boolean(swapConfirmation)}
+        open={!privacyMode && Boolean(swapConfirmation)}
         title={swapConfirmation?.title}
         okText={swapConfirmation?.kind === "warning" ? "知道了" : "确认对调"}
         cancelText="取消"
@@ -571,15 +563,17 @@ export default function RoomsPage() {
               onSelectOrder={openOrderDetailById}
               style={isCompact ? { width: "100%" } : undefined}
             />
-            {!isCompact && (
+            {(isCompact || view !== "gantt") && (
               <Button
                 icon={<FilterOutlined />}
+                aria-label={privacyMode ? "筛选订单" : "筛选 / 批量"}
+                title={privacyMode ? "筛选订单" : "筛选 / 批量"}
                 onClick={() => setBatchDrawerOpen(true)}
               >
-                筛选 / 批量
+                <span className="rooms-page-filter-label">{privacyMode ? "筛选订单" : "筛选 / 批量"}</span>
               </Button>
             )}
-            {!isCompact && (
+            {!isCompact && !privacyMode && (
               <Button
                 icon={<ThunderboltOutlined />}
                 onClick={async () => {
@@ -595,7 +589,7 @@ export default function RoomsPage() {
                 刷新定价
               </Button>
             )}
-            <Button
+            {!privacyMode && <Button
               aria-label="新建房间"
               title="新建房间"
               icon={<HomeOutlined />}
@@ -606,8 +600,8 @@ export default function RoomsPage() {
               }}
             >
               {isCompact ? null : "新建房间"}
-            </Button>
-            <Button
+            </Button>}
+            {!privacyMode && (isCompact || view !== "gantt") && <Button
               aria-label="新建订单"
               title="新建订单"
               type="primary"
@@ -615,7 +609,7 @@ export default function RoomsPage() {
               onClick={() => openCreateAt(null)}
             >
               {isCompact ? null : "新建订单"}
-            </Button>
+            </Button>}
           </Space>
         )}
       />
@@ -627,9 +621,9 @@ export default function RoomsPage() {
       <PendingRoomStrip
         orders={pendingRoomOrders}
         isLoading={pendingLoading}
-        onAssign={(o) => setAssignTarget(o)}
+        onAssign={(o) => { if (!privacyMode) setAssignTarget(o); }}
         onDetail={(o) => openOrderDetailFromKnown(o)}
-        draggable={!isCompact && view === "gantt"}
+        draggable={!privacyMode && !isCompact && view === "gantt"}
         collapsible={focusActive}
         onDragStart={(o, e) => {
           startDrag(o.order_id, "pending");
@@ -795,6 +789,7 @@ export default function RoomsPage() {
             openCreateAt({ room_id: roomId, check_in_date: date, check_out_date: `${y}-${m}-${d}` });
           }}
           onCellDragOver={(_roomId, _date, day, e) => {
+            if (privacyMode) return;
             // 原生 dragover 可能早于 React state 重渲染，必须读同步拖拽会话；
             // 否则首个 dragover 不 preventDefault，浏览器会直接吞掉后续 drop。
             if (!canDropOnCell(Boolean(day))) return;
@@ -802,6 +797,7 @@ export default function RoomsPage() {
             e.dataTransfer.dropEffect = "move";
           }}
           onCellDrop={(roomId, date, day, e) => {
+            if (privacyMode) return;
             e.preventDefault();
             const {
               orderId,
@@ -1153,6 +1149,7 @@ export default function RoomsPage() {
             clearDrag();
           }}
           onCellDragStart={(orderId, source, e) => {
+            if (privacyMode) return;
             startDrag(orderId, "gantt", source);
             e.dataTransfer.setData("text/order-id", orderId);
             e.dataTransfer.setData("text/source-type", "gantt");
@@ -1184,7 +1181,7 @@ export default function RoomsPage() {
 
       {/* Edit Status Modal — 既有功能保留 */}
       <RoomStatusModal
-        editRoom={editRoom}
+        editRoom={privacyMode ? null : editRoom}
         onClose={() => setEditRoom(null)}
         newStatus={newStatus}
         setNewStatus={setNewStatus}
@@ -1198,7 +1195,7 @@ export default function RoomsPage() {
 
       {/* Create / Edit Room Modal — 既有功能保留 */}
       <RoomEditModal
-        open={roomModalOpen}
+        open={!privacyMode && roomModalOpen}
         onClose={() => {
           setRoomModalOpen(false);
           setEditingRoom(null);
@@ -1214,49 +1211,50 @@ export default function RoomsPage() {
       {/* ─── 运营台新增 Modal/Drawer ───────────────────────────────────────── */}
 
       {/* 订单详情抽屉（OrderDetailModal 内部已是 Drawer） */}
-      <OrderDetailModal
+      {selectedOrderId && <OrderDetailModal
         open={!!selectedOrderId && !!selectedOrder}
         order={selectedOrder}
         payments={Array.isArray(selectedPayments) ? selectedPayments : []}
         onClose={() => setSelectedOrderId(null)}
         onOpenPayment={() => {
+          if (privacyMode) return;
           setPaymentOpen(true);
         }}
         transitionMutation={transitionMutation}
         cancelMutation={cancelMutation}
-      />
+      />}
 
       {/* 收款 Modal */}
-      <PaymentModal
-        open={paymentOpen}
+      {paymentOpen && !privacyMode && <PaymentModal
+        open={!privacyMode && paymentOpen}
         order={selectedOrder}
         payments={Array.isArray(selectedPayments) ? selectedPayments : []}
         onClose={() => setPaymentOpen(false)}
         onFinish={(values) => createPaymentMutation.mutate(values)}
         loading={createPaymentMutation.isPending}
-      />
+      />}
 
       {/* 选房 Modal — 待排房卡片「排房」按钮专用 */}
       <AssignRoomModal
-        order={assignTarget}
+        order={privacyMode ? null : assignTarget}
         onClose={() => setAssignTarget(null)}
       />
 
       {/* 新建订单 Modal — 顶栏「+新建订单」/ 甘特图空白格 */}
-      <QuickCreateOrderModal
-        open={createOpen}
+      {createOpen && !privacyMode && <QuickCreateOrderModal
+        open={!privacyMode && createOpen}
         initial={createInit}
         onClose={() => {
           setCreateOpen(false);
           setCreateInit(null);
         }}
-      />
+      />}
 
       {/* 筛选/批量抽屉 — 整页订单管理放在 80vw 抽屉里 */}
-      <BatchOrdersDrawer
+      {batchDrawerOpen && <BatchOrdersDrawer
         open={batchDrawerOpen}
         onClose={() => setBatchDrawerOpen(false)}
-      />
+      />}
 
       {/* 7 日定价 Drawer — 甘特图行 hover 菜单触发 */}
       <RoomPricingDrawer
@@ -1266,7 +1264,7 @@ export default function RoomsPage() {
       />
 
       {/* 锁房 Modal — issue#5 */}
-      <RoomBlockModal blocking={blocking} />
+      {!privacyMode && <RoomBlockModal blocking={blocking} />}
     </div>
   );
 }

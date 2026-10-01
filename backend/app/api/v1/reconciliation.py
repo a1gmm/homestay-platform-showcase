@@ -21,6 +21,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import bindparam, inspect, select, text
 
+from app.services.order_identity_lock import check_platform_identity_available
 from app.core.deps import CurrentUser, DBSession
 from app.services.audit import log_action_tx
 from app.services.reconciliation import (
@@ -341,6 +342,10 @@ async def link_order(
     if source is None:
         raise HTTPException(409, "bypms 原始价格源不存在，不能关联")
     raw, fetched_at = source
+    try:
+        await check_platform_identity_available(db, body.platform_order_id, o.order_id)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
     o.platform_order_id = body.platform_order_id
     meta = dict(o.metadata_ or {})
     meta["reconciliation_linked"] = {
@@ -453,6 +458,10 @@ async def _create_from_staging(
         assign_room = room_id
 
     order_id = await unique_order_id(db)
+    try:
+        await check_platform_identity_available(db, payload["platform_order_id"], order_id)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
     meta = dict(payload["metadata"])
     meta["imported_at"] = datetime.now(timezone.utc).isoformat()
     order = Order(
@@ -572,6 +581,10 @@ async def auto_fix(
             ).scalar_one_or_none()
             if o is None or o.is_deleted or o.platform_order_id:
                 raise HTTPException(409, "候选单状态已变化，跳过")
+            try:
+                await check_platform_identity_available(db, l["platform_order_id"], o.order_id)
+            except ValueError as exc:
+                raise HTTPException(409, str(exc)) from exc
             o.platform_order_id = l["platform_order_id"]
             source = await _staging_price_source(db, l["platform_order_id"])
             if source is None:

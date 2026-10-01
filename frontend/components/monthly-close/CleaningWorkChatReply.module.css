@@ -1,0 +1,21 @@
+.reply { min-width: 0; display: grid; gap: 16px; margin-top: 16px; overflow-wrap: anywhere; }
+.caption { margin: 0; font-weight: 500; }
+.list { margin: 0; padding-left: 22px; display: grid; gap: 16px; }
+.list li { padding-bottom: 12px; border-bottom: 1px solid var(--linen); line-height: 1.8; }
+.list small, .reply details > p { color: var(--stone); }
+.actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.actions button { min-height: 44px; padding: 8px 16px; border: 1px solid var(--linen); border-radius: 999px; background: var(--shell); color: var(--ink); font: inherit; cursor: pointer; }
+.actions button:disabled { opacity: .5; cursor: wait; }
+.actions button:hover:not(:disabled) { background: var(--sand); }
+.actions .primary { background: var(--ink); color: var(--shell); border-color: var(--ink); }
+.actions .primary:hover:not(:disabled) { background: var(--ink-hover); }
+.actions span { color: var(--stone); font-size: 12px; }
+.reply summary { min-height: 44px; line-height: 1.7; cursor: pointer; }
+@media (max-width: 640px) { .actions { align-items: stretch; } .actions button { flex: 1 1 auto; } }
+
+.metrics { margin: 0; display: grid; gap: 8px; }
+.metrics > div { display: grid; grid-template-columns: minmax(100px, 1fr) minmax(0, 2fr); gap: 12px; line-height: 1.8; }
+.metrics dt { color: var(--stone); }
+.metrics dd { margin: 0; white-space: pre-wrap; font-variant-numeric: tabular-nums; }
+.metrics small { display: block; color: var(--stone); }
+.reply summary:hover { color: var(--ink); background: var(--sand); }

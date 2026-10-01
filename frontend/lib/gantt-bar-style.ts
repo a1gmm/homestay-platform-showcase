@@ -86,6 +86,7 @@ const STYLE: Record<CompletionBucket, CompletionBarStyle> = {
 
 /** 给订单状态返回完成度色块样式。block（维修/锁房等）不走这里，由组件另行处理。 */
 export function getCompletionBarStyle(status?: string | null): CompletionBarStyle {
+  if (status === "checked_out") return { ...STYLE.checkout, badge: "已退房" };
   return STYLE[completionBucketOf(status)];
 }
 

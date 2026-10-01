@@ -93,8 +93,15 @@ export function ManualOverridePanel({ orderId, control }: ManualOverridePanelPro
     }
   };
 
+  const [expanded, setExpanded] = useState(false);
+  const hasConflicts = control.open_conflicts.length > 0;
+
   return (
     <div className="manual-control-panel">
+      {!hasConflicts && <Button type="text" aria-expanded={expanded} onClick={() => setExpanded(!expanded)} style={{ width: "100%", textAlign: "left", minHeight: 44 }}>
+        同步正常 · {control.locked_fields.length ? `${control.locked_fields.length} 项人工接管` : "跟随宝寓"} · {expanded ? "收起" : "查看详情"}
+      </Button>}
+      {(hasConflicts || expanded) && <>
       <section aria-labelledby="sync-conflicts-heading" className="manual-control-section">
         <div className="manual-control-heading-row">
           <div>
@@ -183,6 +190,7 @@ export function ManualOverridePanel({ orderId, control }: ManualOverridePanelPro
         )}
       </section>
 
+      </>}
       <div className="manual-control-live" aria-live="polite" role="status">
         {status}
       </div>

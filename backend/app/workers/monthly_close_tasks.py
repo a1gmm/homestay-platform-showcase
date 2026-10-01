@@ -20,6 +20,35 @@ _SERVICE_FEE_REPAIR_RETRY_KW = dict(
 )
 
 
+def _monthly_close_automation_allowed(action) -> bool:
+    """Re-check both the feature boundary and the non-user worker identity."""
+    from app.services.monthly_close.permissions import (
+        MonthlyCloseFeature,
+        MonthlyClosePermissionDenied,
+        MonthlyCloseSystemActor,
+        assert_monthly_close_feature_enabled,
+        assert_monthly_close_system_action_allowed,
+    )
+
+    try:
+        assert_monthly_close_feature_enabled(MonthlyCloseFeature.low_risk_automation)
+        assert_monthly_close_system_action_allowed(
+            MonthlyCloseSystemActor(
+                actor_id=(
+                    "monthly_close_monitor"
+                    if action.value in {"scan", "notify"}
+                    else "monthly_close_processor"
+                ),
+                verified=True,
+            ),
+            action,
+        )
+    except MonthlyClosePermissionDenied as exc:
+        logger.warning("monthly-close automation skipped: %s", exc.code)
+        return False
+    return True
+
+
 def _repair_months(as_of: date) -> list[tuple[int, int]]:
     previous_month_last_day = as_of.replace(day=1) - timedelta(days=1)
     return [
@@ -92,6 +121,13 @@ def repair_incurred_service_fees() -> dict:
 
 @celery_app.task(name="app.workers.monthly_close_tasks.scan_monthly_close_alerts")
 def scan_monthly_close_alerts() -> None:
+    from app.services.monthly_close.permissions import MonthlyCloseSystemAction
+
+    if not _monthly_close_automation_allowed(
+        MonthlyCloseSystemAction.scan
+    ) or not _monthly_close_automation_allowed(MonthlyCloseSystemAction.notify):
+        return
+
     async def _run() -> None:
         from app.services.monthly_close.monitor import scan_monthly_close_alerts as scan
 
@@ -99,3 +135,55 @@ def scan_monthly_close_alerts() -> None:
             await scan(db)
 
     run_async(_run())
+
+
+@celery_app.task(name="app.workers.monthly_close_tasks.process_monthly_close_job")
+def process_monthly_close_job(job_id: str) -> dict[str, str]:
+    """Resolve durable processing state from a broker-delivered job reference."""
+    from app.services.monthly_close.permissions import MonthlyCloseSystemAction
+
+    if not _monthly_close_automation_allowed(
+        MonthlyCloseSystemAction.classify_safe
+    ):
+        return {"job_id": job_id, "processing_status": "automation_disabled"}
+    from app.services.monthly_close import processing
+
+    return run_async(processing.process_monthly_close_job_async(job_id))
+
+
+@celery_app.task(name="app.workers.monthly_close_tasks.dispatch_monthly_close_outbox", ignore_result=True)
+def dispatch_monthly_close_outbox(batch_size: int = 50) -> dict[str, int]:
+    """Publish pending durable job references; failures remain in the outbox."""
+    from app.services.monthly_close.permissions import MonthlyCloseSystemAction
+
+    if not _monthly_close_automation_allowed(
+        MonthlyCloseSystemAction.classify_safe
+    ):
+        return {"published": 0, "failed": 0, "skipped_disabled": 1}
+    from app.services.monthly_close.processing import dispatch_processing_outbox
+
+    return run_async(dispatch_processing_outbox(batch_size=batch_size))
+
+
+@celery_app.task(
+    name="app.workers.monthly_close_tasks.reconcile_stale_assistant_runs"
+)
+def reconcile_stale_assistant_runs() -> dict[str, int]:
+    """Converge assistant runs orphaned by worker/process termination."""
+    from app.services.monthly_close.permissions import MonthlyCloseSystemAction
+
+    if not _monthly_close_automation_allowed(
+        MonthlyCloseSystemAction.classify_safe
+    ):
+        return {"recovered": 0, "skipped_disabled": 1}
+
+    async def _run() -> dict[str, int]:
+        from app.services.monthly_close.assistant import (
+            reconcile_stale_assistant_runs as reconcile,
+        )
+
+        async with AsyncSessionLocal() as db:
+            recovered = await reconcile(db)
+            return {"recovered": recovered}
+
+    return run_async(_run())

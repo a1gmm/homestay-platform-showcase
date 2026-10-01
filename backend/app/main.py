@@ -13,6 +13,7 @@ from app.core.database import engine
 from app.core.keepalive import start_keepalive, stop_keepalive
 from app.core.monthly_close_upload_limit import MonthlyCloseIntakeBodyLimitMiddleware
 from app.core.privacy_mode import PrivacyModeMiddleware
+from app.core.response_compression import OperationalReadCompressionMiddleware
 
 # Ensure app loggers write to stdout at INFO level. Without this, uvicorn's default
 # logging config swallows our request-timing middleware output, so Railway logs only
@@ -30,6 +31,16 @@ from app.api.v1 import auth, orders, rooms, finance, tasks, dashboard, audit, gu
 from app.api.v1 import release_announcements as release_announcements_api
 from app.api.v1.miniapp_content_errors import install_content_exception_handlers
 from app.api.v1 import bypms_sync
+
+
+_PUBLIC_MONTHLY_CLOSE_INTAKE_PREFIX = "/api/v1/monthly-close/intake/"
+
+
+def _redacted_request_path(path: str) -> str:
+    """Keep bearer-style intake tokens out of application request logs."""
+    if path.startswith(_PUBLIC_MONTHLY_CLOSE_INTAKE_PREFIX):
+        return f"{_PUBLIC_MONTHLY_CLOSE_INTAKE_PREFIX}[redacted]"
+    return path
 
 if settings.SENTRY_DSN:
     sentry_sdk.init(
@@ -494,6 +505,8 @@ app.add_middleware(
 )
 app.add_middleware(MonthlyCloseIntakeBodyLimitMiddleware)
 app.add_middleware(PrivacyModeMiddleware)
+# add_middleware wraps the preceding middleware: redact JSON before compressing.
+app.add_middleware(OperationalReadCompressionMiddleware)
 
 install_content_exception_handlers(app)
 
@@ -503,10 +516,17 @@ async def request_logging_middleware(request: Request, call_next):
     start = time.perf_counter()
     response = await call_next(request)
     duration_ms = (time.perf_counter() - start) * 1000
+    # Aggregate time to response headers only; no SQL, identities or credentials.
+    # DevTools can compare this with TTFB/download time when diagnosing weak links.
+    existing_timing = response.headers.get("Server-Timing")
+    app_timing = f"app;dur={duration_ms:.1f}"
+    response.headers["Server-Timing"] = (
+        f"{existing_timing}, {app_timing}" if existing_timing else app_timing
+    )
     logger.info(
         "%s %s → %d (%.1fms)",
         request.method,
-        request.url.path,
+        _redacted_request_path(request.url.path),
         response.status_code,
         duration_ms,
     )
@@ -557,6 +577,8 @@ app.include_router(miniapp_content_guides.router, prefix=settings.API_PREFIX)
 app.include_router(miniapp_content_owner.router, prefix=settings.API_PREFIX)
 app.include_router(utility_recon.router, prefix=settings.API_PREFIX)
 app.include_router(monthly_close.router, prefix=settings.API_PREFIX)
+from app.api.v1 import financial_case
+app.include_router(financial_case.router, prefix=settings.API_PREFIX)
 app.include_router(assistant.router, prefix=settings.API_PREFIX)
 app.include_router(release_announcements_api.router, prefix=settings.API_PREFIX)
 app.include_router(bypms_sync.router, prefix=settings.API_PREFIX)

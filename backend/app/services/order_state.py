@@ -207,6 +207,9 @@ async def apply_order_transition(db, order: Order, target_status: OrderStatus) -
 
     before_status = order.order_status.value
     order.order_status = target_status
+    if target_status == OrderStatus.cancelled:
+        from app.services.task_lifecycle import sync_order_tasks
+        await sync_order_tasks(db, order)
 
     # 确认订单时自动跳过「待排房」：若该单所有房间行都已排房（如甘特图上建单即带房、
     # 平台单预排房），直接续推到「待入住」，免去对已排好房订单还要人工点一次「确认排房」。

@@ -28,6 +28,7 @@ export function useBypmsOverview() {
   return useQuery({
     queryKey: bypmsSyncQueryKeys.overview(),
     queryFn: () => bypmsSyncApi.overview().then((response) => response.data),
+    refetchInterval: 30_000,
   });
 }
 
@@ -35,6 +36,7 @@ export function useBypmsCycles(filters: BypmsAdminCyclesFilters = {}) {
   return useQuery({
     queryKey: bypmsSyncQueryKeys.cycles(filters),
     queryFn: () => bypmsSyncApi.cycles(filters).then((response) => response.data),
+    refetchInterval: 30_000,
   });
 }
 
@@ -83,5 +85,15 @@ export function useRequestBypmsRetry() {
     // The invoking UI owns the single contextual toast. The global
     // MutationCache would otherwise reinterpret our fixed Error as a network failure.
     meta: { silent: true },
+  });
+}
+
+
+export function useBypmsOrderDiagnosis(platformOrderId: string) {
+  return useQuery({
+    queryKey: [...BYPMS_SYNC_ROOT_KEY, "order-diagnosis", platformOrderId],
+    queryFn: () => bypmsSyncApi.diagnose(platformOrderId).then((response) => response.data),
+    enabled: Boolean(platformOrderId),
+    refetchInterval: 30_000,
   });
 }

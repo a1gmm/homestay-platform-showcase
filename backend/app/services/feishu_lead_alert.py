@@ -251,11 +251,11 @@ async def send_lock_battery_alert(text: str) -> None:
     )
 
 
-async def send_sync_alert(text: str) -> None:
+async def send_sync_alert(text: str) -> bool:
     """发送宝禹同步告警（拉取水位看门狗）到同步告警群（SYNC_ALERT——与 ota-sync 待办群
     同一机器人，Cyrus + 前台都在）。未配置则跳过（优雅降级，只 log）。"""
-    await _post_to_feishu(
-        text,
+    return await _deliver(
+        {"msg_type": "text", "content": {"text": text}},
         url=settings.FEISHU_SYNC_ALERT_WEBHOOK_URL,
         secret=settings.FEISHU_SYNC_ALERT_WEBHOOK_SECRET,
     )

@@ -2,12 +2,19 @@
 
 import React, { useState } from "react";
 import { extractErrorMessage } from "@/lib/api-errors";
-import { useSearchParams } from "next/navigation";
+import { useTasksWorkspace } from "@/hooks/useTasksWorkspace";
+import { usePrivacyMode } from "@/hooks/usePrivacyMode";
+import { readPrivacyMode, PrivacyModeReadOnlyError } from "@/lib/privacy-mode";
+import type { TaskOut } from "@/lib/types";
+import { taskDisplayStatus as displayStatus, isActiveTask } from "@/lib/task-workspace";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import dayjs from "dayjs";
 import { tasksApi, staffApi } from "@/lib/api";
 import {
   Card,
+  Alert,
+  DatePicker,
+  Pagination,
   List,
   Tag,
   Button,
@@ -61,36 +68,16 @@ const STATUS_CONFIG: Record<string, { color: string; label: string }> = {
   done: { color: "success", label: "已完成" },
 };
 
-// 衍生展示态:保洁提交完工后, task.status 仍是 in_progress 但 review_status=pending_review,
-// 前台/管家应该看到"待审核"而不是"进行中",否则不知道该去查房。
-function displayStatus(task: any): string {
-  if (task.review_status === "pending_review") return "pending_review";
-  if (task.review_status === "rejected") return "in_progress";  // 打回了,保洁继续做
-  return task.status;
-}
-
 export default function TasksPage() {
   const isMobile = useIsMobile();
   const qc = useQueryClient();
-  const searchParams = useSearchParams();
-  // 支持 URL 参数预填筛选(从 dashboard 跳转过来时)。
-  const [statusFilter, setStatusFilter] = useState<string | undefined>(
-    () => searchParams.get("status") || undefined
-  );
-  const [overdueOnly, setOverdueOnly] = useState(
-    () => searchParams.get("overdue") === "true"
-  );
-
-  const { data: tasks, isLoading } = useQuery({
-    queryKey: ["tasks", statusFilter, overdueOnly],
-    queryFn: () =>
-      tasksApi
-        .list({
-          status: statusFilter || undefined,
-          overdue_only: overdueOnly || undefined,
-        })
-        .then((r) => r.data),
-  });
+  const privacyMode = usePrivacyMode();
+  const [editingTask, setEditingTask] = useState<TaskOut | null>(null);
+  const [editDeadline, setEditDeadline] = useState<string | null>(null);
+  const [editAssignee, setEditAssignee] = useState<string | null>(null);
+  const workspace = useTasksWorkspace();
+  const { statusFilter, setStatusFilter, overdueOnly, setOverdueOnly } = workspace;
+  const { isLoading, isError, error, refetch } = workspace.query;
 
   // 保洁姓名 lookup: TaskOut 只有 assignee_id, 显示需要 cleaner.display_name。
   // 走 /staff/cleaners 而非 /auth/users: 后者仅 admin 可读, operator 进任务页会 403 x4;
@@ -112,6 +99,7 @@ export default function TasksPage() {
   // 导致前台看似完成实际房态没恢复(2026-05-29 孙鹏飞反馈"前台不显示保洁状态"的 root cause)。
   const completeMutation = useMutation({
     mutationFn: (task: any) => {
+      if (readPrivacyMode()) return Promise.reject(new PrivacyModeReadOnlyError());
       const isCleaningPendingReview =
         task.task_type === "cleaning" && task.review_status === "pending_review";
       if (isCleaningPendingReview) {
@@ -131,8 +119,10 @@ export default function TasksPage() {
   });
 
   const rejectMutation = useMutation({
-    mutationFn: ({ taskId, reason }: { taskId: string; reason: string }) =>
-      tasksApi.review(taskId, false, reason),
+    mutationFn: ({ taskId, reason }: { taskId: string; reason: string }) => {
+      if (readPrivacyMode()) return Promise.reject(new PrivacyModeReadOnlyError());
+      return tasksApi.review(taskId, false, reason);
+    },
     onSuccess: () => {
       message.success("已打回,保洁可重做");
       qc.invalidateQueries({ queryKey: ["tasks"] });
@@ -141,17 +131,33 @@ export default function TasksPage() {
   });
 
   const deleteMutation = useMutation({
-    mutationFn: (taskId: string) => tasksApi.delete(taskId),
+    mutationFn: (taskId: string) => {
+      if (readPrivacyMode()) return Promise.reject(new PrivacyModeReadOnlyError());
+      return tasksApi.delete(taskId);
+    },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["tasks"] });
     },
   });
 
-  const taskList = Array.isArray(tasks) ? tasks : [];
-  const pending = taskList.filter((t) => t.status !== "done").length;
-  const overdue = taskList.filter(
-    (t) => t.deadline && new Date(t.deadline) < new Date() && t.status !== "done"
-  ).length;
+  const detailsMutation = useMutation({
+    mutationFn: () => {
+      if (readPrivacyMode()) return Promise.reject(new PrivacyModeReadOnlyError());
+      if (!editingTask) return Promise.reject(new Error("请选择任务"));
+      return tasksApi.update(editingTask.task_id, { deadline: editDeadline, assignee_id: editAssignee });
+    },
+    onSuccess: () => {
+      setEditingTask(null);
+      qc.invalidateQueries({ queryKey: ["tasks"] });
+      qc.invalidateQueries({ queryKey: ["dashboard"] });
+      message.success("任务安排已保存");
+    },
+    onError: (e: unknown) => message.error(extractErrorMessage(e, "保存失败")),
+  });
+
+  const taskList = workspace.items;
+  const pending = workspace.active;
+  const overdue = workspace.overdue;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
@@ -159,7 +165,7 @@ export default function TasksPage() {
         title="运营任务"
         subtitle={
           <>
-            待处理 <b style={{ color: tokens.color.text.primary }}>{pending}</b> 项
+            未完成 <b style={{ color: tokens.color.text.primary }}>{pending}</b> 项
             {overdue > 0 && (
               <>
                 {" "}
@@ -170,15 +176,29 @@ export default function TasksPage() {
         }
       />
 
+      {privacyMode && <Alert type="info" showIcon message="隐私演示模式：任务操作已禁用" />}
+      {!isLoading && !isError && workspace.needs_attention > 0 && <Alert type="warning" showIcon
+        message={`待核查 ${workspace.needs_attention} 项`}
+        description={`未设截止时间 ${workspace.no_deadline} 项 · 未分配负责人 ${workspace.unassigned} 项 · 积压 7 天以上 ${workspace.aged} 项。没有逾期不代表任务已处理，请补全安排并核实历史任务。`} />}
+
       {/* Summary cards */}
       <Row gutter={[12, 12]}>
         {Object.entries(STATUS_CONFIG).map(([k, v]) => {
-          const count = taskList.filter((t) => displayStatus(t) === k).length;
+          const count = workspace.counts[k] || 0;
           const active = statusFilter === k;
           return (
             <Col key={k} xs={12} sm={6}>
               <div
-                onClick={() => setStatusFilter(statusFilter === k ? undefined : k)}
+                role="button"
+                tabIndex={0}
+                aria-pressed={active}
+                onKeyDown={event => {
+                  if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
+                    setStatusFilter(statusFilter === k ? "active" : k);
+                  }
+                }}
+                onClick={() => setStatusFilter(statusFilter === k ? "active" : k)}
                 className="card-hoverable"
                 style={{
                   background: tokens.color.bg.container,
@@ -222,22 +242,39 @@ export default function TasksPage() {
         }}
       >
         <Select
-          placeholder="全部状态"
-          allowClear
+          aria-label="任务状态"
+          placeholder="未完成任务"
           value={statusFilter}
           onChange={setStatusFilter}
           style={{ width: 140 }}
-          options={Object.entries(STATUS_CONFIG).map(([k, v]) => ({ value: k, label: v.label }))}
+          options={[
+            { value: "active", label: "未完成任务" },
+            { value: "all", label: "全部任务" },
+            ...Object.entries(STATUS_CONFIG).map(([k, v]) => ({ value: k, label: v.label })),
+            { value: "cancelled", label: "已取消" },
+          ]}
         />
+        <Input aria-label="搜索任务" placeholder="房号 / 订单号 / 任务名称" allowClear value={workspace.keyword} onChange={e => workspace.setKeyword(e.target.value)} style={{ width: isMobile ? "100%" : 240 }} />
+        <Select aria-label="任务负责人" placeholder="全部负责人" allowClear value={workspace.assignee} onChange={workspace.setAssignee} style={{ minWidth: 140 }} options={[{ value: "unassigned", label: "未分配" }, ...(cleaners || []).map(u => ({ value: u.user_id, label: u.display_name }))]} />
+        <DatePicker aria-label="任务截止日期" placeholder="截止日期" value={workspace.deadline ? dayjs(workspace.deadline) : null} onChange={value => workspace.setDeadline(value?.format("YYYY-MM-DD"))} />
+        <Select aria-label="任务待核查原因" placeholder="全部核查原因" allowClear value={workspace.attention}
+          onChange={workspace.setAttention} style={{ minWidth: 150 }} options={[
+            { value: "needs_attention", label: "需核查 / 补全" },
+            { value: "no_deadline", label: "未设截止时间" },
+            { value: "unassigned", label: "未分配负责人" },
+            { value: "aged", label: "积压 7 天以上" },
+          ]} />
         <Space>
-          <Switch size="small" checked={overdueOnly} onChange={setOverdueOnly} />
+          <Switch aria-label="仅显示逾期" size="small" checked={overdueOnly} onChange={setOverdueOnly} />
           <Text style={{ fontSize: 13 }}>仅显示逾期</Text>
         </Space>
       </div>
 
       {/* Task list */}
       <Skeleton loading={isLoading} active>
-        {taskList.length === 0 ? (
+        {isError ? (
+          <Alert type="error" showIcon message="任务加载失败" description={extractErrorMessage(error, "请重试，不能将加载失败视为没有待办。")} action={<Button onClick={() => refetch()}>重试</Button>} />
+        ) : taskList.length === 0 ? (
           <div
             style={{
               background: tokens.color.bg.container,
@@ -249,9 +286,9 @@ export default function TasksPage() {
           </div>
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            {taskList.map((task: any) => {
+            {workspace.visibleItems.map((task: any) => {
               const isOverdue =
-                task.deadline && new Date(task.deadline) < new Date() && task.status !== "done";
+                task.deadline && new Date(task.deadline) < new Date() && isActiveTask(task);
               const isDone = task.status === "done";
               const priority = PRIORITY_CONFIG[task.priority] || PRIORITY_CONFIG.medium;
               const dispStatus = displayStatus(task);
@@ -260,13 +297,13 @@ export default function TasksPage() {
               const isRejected = task.review_status === "rejected";
               // 清扫任务必须保洁提交后才能审核完成;非清扫任务管家随时可勾完成。
               const checkboxDisabled =
-                isDone || (isCleaning && !isPendingReview);
-              const checkboxTooltip = isDone
+                privacyMode || isDone || task.status === "cancelled" || (isCleaning && !isPendingReview);
+              const checkboxTooltip = privacyMode ? "隐私演示模式下不可操作" : isDone
                 ? "已完成"
                 : isCleaning && !isPendingReview
                 ? "保洁尚未提交完工,不能直接完成"
                 : isCleaning && isPendingReview
-                ? "查房通过(房间恢复可入住,订单完成)"
+                ? "查房通过（房间恢复可入住）"
                 : "标记完成";
               const assigneeName = task.assignee_id ? userNameById[task.assignee_id] : null;
 
@@ -337,6 +374,11 @@ export default function TasksPage() {
                           </Tag>
                         )}
                       </Space>
+                      {isActiveTask(task) && (!task.deadline || !task.assignee_id) && (
+                        <div style={{ fontSize: 12, color: tokens.color.text.secondary }}>
+                          需补全：{[!task.deadline && "截止时间", !task.assignee_id && "负责人"].filter(Boolean).join("、")}
+                        </div>
+                      )}
 
                       {isMobile ? (
                         <div style={{ display: "flex", flexDirection: "column", gap: 2, marginTop: 4 }}>
@@ -428,10 +470,17 @@ export default function TasksPage() {
                     {/* Status tag + actions */}
                     <Space direction="vertical" align="end" size={6}>
                       <StatusBadge status={dispStatus} size="sm" />
-                      {isCleaning && isPendingReview && (
+                      {isActiveTask(task) && <Button size="small" disabled={privacyMode}
+                        onClick={() => {
+                          setEditingTask(task);
+                          setEditDeadline(task.deadline || null);
+                          setEditAssignee(task.assignee_id || null);
+                        }}>安排任务</Button>}
+                      {isCleaning && isPendingReview && isActiveTask(task) && (
                         <Button
                           size="small"
                           danger
+                          disabled={privacyMode}
                           onClick={() => {
                             let reason = "";
                             Modal.confirm({
@@ -469,12 +518,14 @@ export default function TasksPage() {
                       <Popconfirm
                         title="删除任务"
                         description="确认删除该运营任务？此操作不可恢复。"
+                        disabled={privacyMode}
                         onConfirm={() => deleteMutation.mutate(task.task_id || task.id)}
                       >
                         <Button
                           type="link"
                           danger
                           size="small"
+                          disabled={privacyMode}
                           style={{ padding: isMobile ? "4px 8px" : 0, minHeight: isMobile ? 44 : "auto" }}
                           aria-label={`删除任务 ${task.title}`}
                         >
@@ -489,6 +540,24 @@ export default function TasksPage() {
           </div>
         )}
       </Skeleton>
+      {!isError && workspace.total > 30 && <Pagination current={workspace.page} pageSize={30} total={workspace.total} onChange={workspace.setPage} showSizeChanger={false} showTotal={total => `共 ${total} 项`} />}
+      <Modal title="安排任务" open={Boolean(editingTask)} onCancel={() => setEditingTask(null)}
+        onOk={() => detailsMutation.mutate()} confirmLoading={detailsMutation.isPending}
+        okText="保存安排" cancelText="取消" okButtonProps={{ disabled: privacyMode }}>
+        <Space direction="vertical" style={{ width: "100%" }}>
+          <Text>{editingTask?.title}</Text>
+          <Text type="secondary">根据实际安排填写负责人和截止时间；保存不会将任务标为完成。</Text>
+          <Select aria-label="安排负责人" placeholder="选择负责人" allowClear disabled={privacyMode}
+            style={{ width: "100%" }} value={editAssignee} onChange={value => setEditAssignee(value || null)}
+            options={[
+              ...(editAssignee && !userNameById[editAssignee] ? [{ value: editAssignee, label: editAssignee }] : []),
+              ...(cleaners || []).map(u => ({ value: u.user_id, label: u.display_name })),
+            ]} />
+          <DatePicker aria-label="安排截止时间" showTime disabled={privacyMode} style={{ width: "100%" }}
+            value={editDeadline ? dayjs(editDeadline) : null}
+            onChange={value => setEditDeadline(value?.toISOString() || null)} />
+        </Space>
+      </Modal>
     </div>
   );
 }

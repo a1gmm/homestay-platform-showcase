@@ -27,6 +27,7 @@ celery_app = Celery(
         "app.workers.sync_watchdog",
         "app.workers.miniapp_content_publish",
         "app.workers.monthly_close_tasks",
+        "app.workers.monthly_close_task_runner",
     ],
 )
 
@@ -41,6 +42,9 @@ celery_app.conf.update(
     broker_transport_options={"visibility_timeout": 3600},
     task_routes={
         "app.workers.miniapp_content_publish.*": {"queue": "content_publish"},
+        "app.workers.monthly_close_tasks.process_monthly_close_job": {
+            "queue": "celery"
+        },
     },
     task_annotations={
         "app.workers.miniapp_content_publish.run_miniapp_publish": {
@@ -48,9 +52,19 @@ celery_app.conf.update(
             "reject_on_worker_lost": True,
             "soft_time_limit": 840,
             "time_limit": 900,
-        }
+        },
+        "app.workers.monthly_close_tasks.process_monthly_close_job": {
+            "acks_late": True,
+            "reject_on_worker_lost": True,
+            "soft_time_limit": 840,
+            "time_limit": 900,
+        },
     },
     beat_schedule={
+        "monthly-close-durable-task-poll": {
+            "task": "app.workers.monthly_close_task_runner.poll_monthly_close_tasks",
+            "schedule": timedelta(seconds=10),
+        },
         "daily-overdue-check": {
             "task": "app.workers.reminder_tasks.check_overdue_tasks",
             "schedule": crontab(hour=8, minute=0),  # 每天 8AM Shanghai 一次（闲置房定不出去会反复报，降频）
@@ -73,6 +87,14 @@ celery_app.conf.update(
             "task": "app.workers.monthly_close_tasks.scan_monthly_close_alerts",
             "schedule": crontab(hour=9, minute=15),
         },
+        "monthly-close-processing-outbox-dispatch": {
+            "task": "app.workers.monthly_close_tasks.dispatch_monthly_close_outbox",
+            "schedule": timedelta(seconds=10),
+        },
+        "monthly-close-assistant-stale-run-recovery": {
+            "task": "app.workers.monthly_close_tasks.reconcile_stale_assistant_runs",
+            "schedule": timedelta(minutes=1),
+        },
         # 每天 8:00 Shanghai 发「今日续住房打扫申请」卡到打扫申请群，保洁自助拿门锁码
         # （PRD 打扫申请群-飞书自助）。daily_guard 防 beat 重启刷屏。
         "daily-cleaning-request-card": {
@@ -86,9 +108,9 @@ celery_app.conf.update(
             "task": "app.workers.monthly_close_tasks.repair_incurred_service_fees",
             "schedule": crontab(hour=2, minute=30),
         },
-        # 每月 1 号凌晨 3 点自动生成上月业主结算
-        "monthly-owner-settlements": {
-            "task": "app.workers.settlement_tasks.generate_monthly_settlements",
+        # 每月 1 号凌晨 3 点只开启上月月结。业主结算必须在资料核对和管理员确认后生成。
+        "monthly-close-cycle-initialization": {
+            "task": "app.workers.settlement_tasks.initialize_monthly_close_cycle",
             "schedule": crontab(day_of_month=1, hour=3, minute=0),
         },
         # 2026-06-17 重新启用：判定条件已重写以适配 2026-06-05「确认收款挪到退房后」改版。
@@ -138,12 +160,12 @@ celery_app.conf.update(
         #     "task": "app.workers.lock_tasks.lock_callback_heartbeat",
         #     "schedule": crontab(minute=5),
         # },
-        # 每 10 分钟查宝禹拉取水位：staging 超 30 分钟无新拉取 → 同步八成停了（401/崩溃/
+        # 每 2 分钟查宝禹完整周期和拉取水位：默认超过 10 分钟无进展 → 告警（401/崩溃/
         # 进程没跑都逮得住——检测活在 ota-sync 之外），发同步告警群并按周期重报（7-30 停摆
         # 19h 事故，详见 services/bypms_pull_health.py）。
         "bypms-pull-watchdog": {
             "task": "app.workers.sync_watchdog.bypms_pull_watchdog",
-            "schedule": crontab(minute="*/10"),
+            "schedule": crontab(minute="*/2"),
         },
         # 每天 4:20 Shanghai 幂等重登记回调地址：自愈 token/域名漂移致的回调静默失效（7-12 根因）。
         "reregister-lock-webhook": {
@@ -216,3 +238,7 @@ def _fail_if_embedded_beat_has_no_schedule(argv: list[str]) -> None:
 
 
 _fail_if_embedded_beat_has_no_schedule(sys.argv)
+
+# API startup owns migrations; workers may deploy first and must wait read-only.
+from app.workers.schema_readiness import register_worker_schema_guard
+register_worker_schema_guard()

@@ -14,12 +14,13 @@ import statistics
 from typing import List, Optional, Dict, Tuple
 from urllib.parse import quote
 
-from sqlalchemy import select, func
+from sqlalchemy import select, func, union_all
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.room import Room
 from app.models.order import Order, OrderStatus, BookingType
 from app.models.pricing import PricingRecord
+from app.models.order_room import OrderRoom
 import uuid
 
 logger = logging.getLogger(__name__)
@@ -64,31 +65,26 @@ def propose_listing_base(median: float, round_to: int = 10) -> int:
     return max(round_to, round(median / round_to) * round_to)
 
 # ─── Holiday Calendar ────────────────────────────────────────────────────────
-# Key: "MM-DD", Value: multiplier
-# TODO: move to database table for admin configuration
-HOLIDAYS: Dict[str, float] = {
-    # 元旦
-    "01-01": 1.3,
-    # 春节 (approximate — shifts yearly, update annually)
-    "01-28": 1.8, "01-29": 2.0, "01-30": 2.0, "01-31": 1.8,
-    "02-01": 1.8, "02-02": 2.0, "02-03": 2.0, "02-04": 1.8, "02-05": 1.8,
-    # 清明
-    "04-04": 1.3, "04-05": 1.4, "04-06": 1.3,
-    # 五一
-    "05-01": 1.4, "05-02": 1.5, "05-03": 1.4, "05-04": 1.3, "05-05": 1.3,
-    # 端午
-    "06-10": 1.3, "06-11": 1.3,
-    # 中秋
-    "09-15": 1.3, "09-16": 1.3, "09-17": 1.3,
-    # 国庆
-    "10-01": 1.8, "10-02": 1.8, "10-03": 1.8,
-    "10-04": 1.6, "10-05": 1.5, "10-06": 1.4, "10-07": 1.3,
-}
+# Exact dates from 国办发明电〔2025〕7号. Multipliers are our pricing policy,
+# not government-prescribed rates. Unknown years never reuse lunar dates.
+HOLIDAY_CALENDAR_SOURCE = "https://www.gov.cn/zhengce/zhengceku/202511/content_7047091.htm"
+HOLIDAY_CALENDAR_YEARS = frozenset({2026})
+HOLIDAYS: Dict[str, float] = {}
+for _start, _multipliers in (
+    (date(2026, 1, 1), (1.3, 1.3, 1.3)),
+    (date(2026, 2, 15), (1.8, 2.0, 2.0, 1.8, 1.8, 2.0, 2.0, 1.8, 1.8)),
+    (date(2026, 4, 4), (1.3, 1.4, 1.3)),
+    (date(2026, 5, 1), (1.4, 1.5, 1.4, 1.3, 1.3)),
+    (date(2026, 6, 19), (1.3, 1.3, 1.3)),
+    (date(2026, 9, 25), (1.3, 1.3, 1.3)),
+    (date(2026, 10, 1), (1.8, 1.8, 1.8, 1.6, 1.5, 1.4, 1.3)),
+):
+    for _offset, _multiplier in enumerate(_multipliers):
+        HOLIDAYS[(_start + timedelta(days=_offset)).isoformat()] = _multiplier
 
-# 本地特色节庆乘数 (mm-dd → multiplier)。默认空，部署时按所在城市本地旺季手动填入,
-# 例如本地啤酒节 / 文化节 / 春运返乡热门城市节后第一周等。和 HOLIDAYS 国家法定节假日
-# 取大值合并(见 get_holiday_multiplier)。
+# Local festivals also require an explicit year (YYYY-MM-DD).
 LOCATION_HOLIDAYS: Dict[str, float] = {}
+
 
 # ─── Competitor price cache (per city+date, refreshed daily) ─────────────────
 _competitor_cache: Dict[str, Tuple[date, List[dict]]] = {}
@@ -116,7 +112,7 @@ def get_day_of_week_multiplier(d: date) -> float:
 
 def get_holiday_multiplier(d: date) -> float:
     """Holiday premium based on calendar — national + per-deployment local festivals."""
-    key = d.strftime("%m-%d")
+    key = d.isoformat()
     return max(HOLIDAYS.get(key, 1.0), LOCATION_HOLIDAYS.get(key, 1.0))
 
 
@@ -156,28 +152,67 @@ def get_occupancy_multiplier(occ_rate: float) -> float:
 
 # ─── Real Occupancy Calculation ──────────────────────────────────────────────
 
-async def get_real_occupancy(
-    session: AsyncSession,
-    check_date: date,
-    total_rooms: int,
-) -> float:
-    """
-    Calculate actual occupancy rate for a given date by counting
-    active orders that overlap with that date.
-    """
-    if total_rooms <= 0:
-        return 0.5  # fallback
+async def get_occupancy_for_range(
+    session: AsyncSession, start_date: date, days: int, total_rooms: int,
+) -> Dict[date, float]:
+    """Count distinct active rooms per night with one bounded interval query.
 
-    occupied = await session.scalar(
-        select(func.count()).select_from(Order).where(
-            Order.is_deleted == False,
-            Order.order_status.not_in([OrderStatus.cancelled]),
-            Order.room_id.isnot(None),
-            Order.check_in_date <= check_date,
-            Order.check_out_date > check_date,
-        )
+    Room segments are authoritative after a split/transfer. Legacy orders are
+    used only when they have no segments at all, including unassigned segments.
+    Merge overlapping intervals per room before the difference-array sweep so
+    duplicate/continuation rows cannot inflate demand.
+    """
+    if days <= 0:
+        return {}
+    if total_rooms <= 0:
+        return {start_date + timedelta(days=i): 0.5 for i in range(days)}
+    end_date = start_date + timedelta(days=days)
+    active = (Order.is_deleted.is_(False), Order.order_status != OrderStatus.cancelled,
+              Room.is_deleted.is_not(True))
+    segments = (
+        select(OrderRoom.room_id, OrderRoom.check_in_date, OrderRoom.check_out_date)
+        .join(Order, Order.order_id == OrderRoom.order_id)
+        .join(Room, Room.room_id == OrderRoom.room_id)
+        .where(*active, OrderRoom.check_in_date < end_date,
+               OrderRoom.check_out_date > start_date)
     )
-    return min((occupied or 0) / total_rooms, 1.0)
+    legacy = (
+        select(Order.room_id, Order.check_in_date, Order.check_out_date)
+        .join(Room, Room.room_id == Order.room_id)
+        .where(*active, Order.check_in_date < end_date, Order.check_out_date > start_date,
+               ~select(OrderRoom.order_room_id).where(
+                   OrderRoom.order_id == Order.order_id).exists())
+    )
+    by_room: Dict[str, List[Tuple[int, int]]] = {}
+    for room_id, check_in, check_out in (await session.execute(union_all(segments, legacy))).all():
+        lo = max(0, (check_in - start_date).days)
+        hi = min(days, (check_out - start_date).days)
+        if lo < hi:
+            by_room.setdefault(room_id, []).append((lo, hi))
+    changes = [0] * (days + 1)
+    for intervals in by_room.values():
+        merged = []
+        for lo, hi in sorted(intervals):
+            if merged and lo <= merged[-1][1]:
+                merged[-1] = (merged[-1][0], max(merged[-1][1], hi))
+            else:
+                merged.append((lo, hi))
+        for lo, hi in merged:
+            changes[lo] += 1
+            changes[hi] -= 1
+    occupied = 0
+    rates = {}
+    for offset in range(days):
+        occupied += changes[offset]
+        rates[start_date + timedelta(days=offset)] = min(occupied / total_rooms, 1.0)
+    return rates
+
+
+async def get_real_occupancy(
+    session: AsyncSession, check_date: date, total_rooms: int,
+) -> float:
+    """Booked room occupancy for the half-open night [date, date + 1)."""
+    return (await get_occupancy_for_range(session, check_date, 1, total_rooms))[check_date]
 
 
 # ─── Competitor Scraping (with caching) ──────────────────────────────────────
@@ -307,6 +342,7 @@ def calculate_recommended_price(
             "base_price": base_price,
             "day_of_week": round(dow_m, 3),
             "holiday": round(holiday_m, 3),
+            "holiday_calendar_known": check_date.year in HOLIDAY_CALENDAR_YEARS,
             "lead_time": round(lead_m, 3),
             "occupancy": round(occ_m, 3),
             "occupancy_rate": round(occ_rate, 3),
@@ -325,15 +361,20 @@ async def upsert_pricing_record(
     check_date: date,
     result: dict,
     keyword: str,
+    *,
+    records_by_date: Optional[Dict[date, PricingRecord]] = None,
 ) -> PricingRecord:
     """Insert or update pricing record for a room+date."""
-    existing = await session.execute(
-        select(PricingRecord).where(
-            PricingRecord.room_id == room.room_id,
-            PricingRecord.effective_date == check_date,
+    if records_by_date is None:
+        existing = await session.execute(
+            select(PricingRecord).where(
+                PricingRecord.room_id == room.room_id,
+                PricingRecord.effective_date == check_date,
+            )
         )
-    )
-    record = existing.scalar_one_or_none()
+        record = existing.scalar_one_or_none()
+    else:
+        record = records_by_date.get(check_date)
     if record is None:
         record = PricingRecord(
             pricing_id="PRC-" + uuid.uuid4().hex[:12].upper(),
@@ -342,6 +383,8 @@ async def upsert_pricing_record(
             price=Decimal(str(result["recommended"])),
         )
         session.add(record)
+        if records_by_date is not None:
+            records_by_date[check_date] = record
 
     record.recommended_price = Decimal(str(result["recommended"]))
     record.base_price = room.base_price
@@ -372,7 +415,7 @@ async def calculate_room_pricing_for_range(
     Calculate pricing for a room over a date range.
     Returns number of days priced.
     """
-    if not room.base_price:
+    if not room.base_price or days <= 0:
         return 0
 
     # No default city — if room.city is unset the competitor scraper short-circuits to []
@@ -399,8 +442,16 @@ async def calculate_room_pricing_for_range(
 
     # Get total room count for occupancy calculation
     total_rooms = await session.scalar(
-        select(func.count()).select_from(Room)
-    ) or 1
+        select(func.count()).select_from(Room).where(Room.is_deleted.is_not(True))
+    ) or 0
+    occupancy = await get_occupancy_for_range(session, start_date, days, total_rooms)
+    records_by_date = {record.effective_date: record for record in await session.scalars(
+        select(PricingRecord).where(
+            PricingRecord.room_id == room.room_id,
+            PricingRecord.effective_date >= start_date,
+            PricingRecord.effective_date < start_date + timedelta(days=days),
+        )
+    )}
 
     # Room-level price rule overrides
     weekend_markup = float(getattr(room, "weekend_markup", 0) or 0)
@@ -415,7 +466,7 @@ async def calculate_room_pricing_for_range(
         check_date = start_date + timedelta(days=delta)
 
         # Real occupancy from orders
-        occ_rate = await get_real_occupancy(session, check_date, total_rooms)
+        occ_rate = occupancy[check_date]
 
         result = calculate_recommended_price(
             base_price=effective_base,
@@ -439,7 +490,9 @@ async def calculate_room_pricing_for_range(
                 for h in sorted_hotels[mid_start:mid_end]
             ]
 
-        await upsert_pricing_record(session, room, check_date, result, search_keyword)
+        await upsert_pricing_record(
+            session, room, check_date, result, search_keyword, records_by_date=records_by_date,
+        )
         priced += 1
 
     return priced

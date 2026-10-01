@@ -1,14 +1,17 @@
-"""水电对账上传的原子事务编排。"""
+"""水电对账上传的确定性计划和事务编排。"""
 
+from dataclasses import dataclass
+from decimal import Decimal
 from hashlib import sha256
+from typing import Any, Callable
 from uuid import uuid4
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.utility_recon import UtilityReconBatch, UtilityReconRow, UtilityReconSuggestion, UtilityReconUpload
-from .contracts import PreflightResult, WorkbookInput
-from .matcher import reconcile_month
+from .contracts import NormalizedRow, PreflightResult, WorkbookInput
+from .matcher import ReconciliationResult, reconcile_month
 from .normalize import normalize_table
 from .workbook import inspect_workbooks_with_ai
 
@@ -29,13 +32,111 @@ def _summary_json(summary) -> dict:
     }
 
 
-async def run_upload(
-    db: AsyncSession,
+def planned_batch_fact(result: ReconciliationResult) -> dict:
+    """Canonical initial batch fact shared by persistence and verification."""
+    summary = _summary_json(result.raw)
+    return {
+        "anomaly_counts": {
+            kind: sum(item.kind == kind for item in result.suggestions)
+            for kind in sorted({item.kind for item in result.suggestions})
+        },
+        "corrected_difference": str(result.raw.total_difference),
+        "corrected_summary": summary,
+        "raw_difference": str(result.raw.total_difference),
+        "raw_expense_total": str(result.raw.expense_total),
+        "raw_receipt_total": str(result.raw.receipt_total),
+        "raw_summary": summary,
+        "status": "open",
+        "version": 1,
+    }
+
+
+def persisted_batch_fact(batch: UtilityReconBatch) -> dict:
+    """Canonical authoritative fields re-read from one exact stored batch."""
+    return {
+        "anomaly_counts": batch.anomaly_counts,
+        "corrected_difference": str(batch.corrected_difference),
+        "corrected_summary": batch.corrected_summary,
+        "raw_difference": str(batch.raw_difference),
+        "raw_expense_total": str(batch.raw_expense_total),
+        "raw_receipt_total": str(batch.raw_receipt_total),
+        "raw_summary": batch.raw_summary,
+        "status": batch.status,
+        "version": batch.version,
+    }
+
+
+def canonical_utility_row_fact(row: Any) -> dict[str, Any]:
+    """Serialize every persisted row field that can affect review or recalculation."""
+    warnings = getattr(row, "normalization_warnings", None)
+    if warnings is None:
+        warnings = getattr(row, "warnings", ())
+    return {
+        "amount": str(row.amount) if row.amount is not None else None,
+        "business_date": row.business_date.isoformat() if row.business_date else None,
+        "category": row.category,
+        "customer_name": row.customer_name,
+        "disposition": row.disposition,
+        "exclusion_reason": row.exclusion_reason,
+        "floor": row.floor,
+        "month": row.month,
+        "normalization_warnings": list(warnings),
+        "raw_values": {
+            key: str(value) if value is not None else None
+            for key, value in row.raw_values.items()
+        },
+        "room": row.room,
+        "side": row.side,
+        "source_filename": row.source_filename,
+        "source_row_number": row.source_row_number,
+        "source_sheet": row.source_sheet,
+    }
+
+
+def canonical_utility_suggestion_fact(
+    suggestion: Any,
+    *,
+    row_reference: Callable[[str], str] | None = None,
+) -> dict[str, Any]:
+    """Serialize every persisted suggestion field with stable source-row references."""
+    reference = row_reference or (lambda value: value)
+    patch = {
+        key: reference(value) if key == "row_id" else value
+        for key, value in suggestion.patch.items()
+    }
+    decided_at = getattr(suggestion, "decided_at", None)
+    return {
+        "confidence": suggestion.confidence,
+        "decided_at": decided_at.isoformat() if decided_at else None,
+        "decided_by": getattr(suggestion, "decided_by", None),
+        "evidence": suggestion.evidence,
+        "impact": getattr(suggestion, "impact", {}) or {},
+        "kind": suggestion.kind,
+        "patch": patch,
+        "related_row_refs": sorted(reference(row_id) for row_id in suggestion.related_row_ids),
+        "status": getattr(suggestion, "status", "pending"),
+    }
+
+
+@dataclass(frozen=True)
+class UtilityUploadPlan:
+    """Immutable deterministic output shared by preview and persistence paths."""
+
+    preflight: PreflightResult
+    fingerprints: dict[str, str]
+    fingerprint_key: str
+    normalized: tuple[NormalizedRow, ...]
+    excluded_count: int
+    unparseable_count: int
+    results: tuple[ReconciliationResult, ...]
+
+
+async def plan_upload(
     files: list[WorkbookInput],
-    actor_id: str,
     *,
     preflight: PreflightResult | None = None,
-) -> list[UtilityReconBatch]:
+) -> UtilityUploadPlan:
+    """Run the existing normalizer/matcher without database side effects."""
     preflight = preflight or await inspect_workbooks_with_ai(files)
     if len(preflight.files) != len(files):
         raise ValueError("preflight does not match uploaded files")
@@ -44,14 +145,7 @@ async def run_upload(
         for inspected, item in zip(preflight.files, files, strict=True)
     }
     fingerprint_key = sha256(f"{fingerprints['receipt']}:{fingerprints['expense']}".encode()).hexdigest()
-    existing = (await db.execute(
-        select(UtilityReconUpload).where(UtilityReconUpload.file_fingerprints["pair"].as_string() == fingerprint_key)
-    )).scalar_one_or_none()
-    if existing:
-        result = await db.execute(select(UtilityReconBatch).where(UtilityReconBatch.upload_id == existing.upload_id))
-        return list(result.scalars().all())
-
-    normalized = []
+    normalized: list[NormalizedRow] = []
     excluded_count = 0
     unparseable_count = 0
     target_month = (
@@ -65,32 +159,86 @@ async def run_upload(
             normalized.extend(result.valid + result.excluded + result.unparseable)
             excluded_count += len(result.excluded)
             unparseable_count += len(result.unparseable)
+    return UtilityUploadPlan(
+        preflight=preflight,
+        fingerprints=fingerprints,
+        fingerprint_key=fingerprint_key,
+        normalized=tuple(normalized),
+        excluded_count=excluded_count,
+        unparseable_count=unparseable_count,
+        results=tuple(
+            reconcile_month(
+                month, [row for row in normalized if row.month == month]
+            )
+            for month in preflight.common_months
+        ),
+    )
+
+
+async def run_upload_tx(
+    db: AsyncSession,
+    files: list[WorkbookInput],
+    actor_id: str,
+    *,
+    preflight: PreflightResult | None = None,
+    plan: UtilityUploadPlan | None = None,
+) -> list[UtilityReconBatch]:
+    """Persist one plan without committing; the caller owns atomicity."""
+    plan = plan or await plan_upload(files, preflight=preflight)
+    existing = (await db.execute(
+        select(UtilityReconUpload).where(
+            UtilityReconUpload.file_fingerprints["pair"].as_string()
+            == plan.fingerprint_key
+        )
+    )).scalar_one_or_none()
+    if existing:
+        result = await db.execute(
+            select(UtilityReconBatch).where(
+                UtilityReconBatch.upload_id == existing.upload_id
+            )
+        )
+        return list(result.scalars().all())
+
     upload = UtilityReconUpload(
         upload_id=_id("URU"),
-        receipt_filename=next(item.filename for item in preflight.files if item.role == "receipt"),
-        expense_filename=next(item.filename for item in preflight.files if item.role == "expense"),
-        file_fingerprints={**fingerprints, "pair": fingerprint_key},
-        role_mapping={item.filename: item.role for item in preflight.files},
-        receipt_months=next(item.months for item in preflight.files if item.role == "receipt"),
-        expense_months=next(item.months for item in preflight.files if item.role == "expense"),
-        common_months=preflight.common_months,
-        preflight_stats={"excluded": excluded_count, "unparseable": unparseable_count},
+        receipt_filename=next(item.filename for item in plan.preflight.files if item.role == "receipt"),
+        expense_filename=next(item.filename for item in plan.preflight.files if item.role == "expense"),
+        file_fingerprints={**plan.fingerprints, "pair": plan.fingerprint_key},
+        role_mapping={item.filename: item.role for item in plan.preflight.files},
+        receipt_months=next(item.months for item in plan.preflight.files if item.role == "receipt"),
+        expense_months=next(item.months for item in plan.preflight.files if item.role == "expense"),
+        common_months=plan.preflight.common_months,
+        preflight_stats={
+            "excluded": plan.excluded_count,
+            "unparseable": plan.unparseable_count,
+        },
         status="completed",
         created_by=actor_id,
     )
     db.add(upload)
+    # PostgreSQL must see the immutable upload parent before batches that carry
+    # only its scalar id.  Do not rely on ORM UOW ordering for detached id-only
+    # objects across the utility write path.
+    await db.flush()
     batches: list[UtilityReconBatch] = []
-    for month in preflight.common_months:
-        month_rows = [row for row in normalized if row.month == month]
-        result = reconcile_month(month, month_rows)
+    for result in plan.results:
+        month = result.month
+        month_rows = [row for row in plan.normalized if row.month == month]
+        batch_fact = planned_batch_fact(result)
         batch = UtilityReconBatch(
             batch_id=_id("URB"), upload_id=upload.upload_id, month=month,
-            raw_receipt_total=result.raw.receipt_total, raw_expense_total=result.raw.expense_total,
-            raw_difference=result.raw.total_difference, corrected_difference=result.raw.total_difference,
-            raw_summary=_summary_json(result.raw), corrected_summary=_summary_json(result.raw),
-            anomaly_counts={kind: sum(item.kind == kind for item in result.suggestions) for kind in {item.kind for item in result.suggestions}},
+            raw_receipt_total=Decimal(batch_fact["raw_receipt_total"]),
+            raw_expense_total=Decimal(batch_fact["raw_expense_total"]),
+            raw_difference=Decimal(batch_fact["raw_difference"]),
+            corrected_difference=Decimal(batch_fact["corrected_difference"]),
+            raw_summary=batch_fact["raw_summary"],
+            corrected_summary=batch_fact["corrected_summary"],
+            anomaly_counts=batch_fact["anomaly_counts"],
+            status=batch_fact["status"],
+            version=batch_fact["version"],
         )
         db.add(batch)
+        await db.flush()
         batches.append(batch)
         row_id_map: dict[str, str] = {}
         for row in month_rows:
@@ -114,6 +262,19 @@ async def run_upload(
                 related_row_ids=[row_id_map[row_id] for row_id in item.related_row_ids], patch=stored_patch,
                 evidence=item.evidence, confidence=item.confidence, impact={}, status="pending",
             ))
+    await db.flush()
+    return batches
+
+
+async def run_upload(
+    db: AsyncSession,
+    files: list[WorkbookInput],
+    actor_id: str,
+    *,
+    preflight: PreflightResult | None = None,
+) -> list[UtilityReconBatch]:
+    """Legacy committing wrapper around the caller-owned transaction primitive."""
+    batches = await run_upload_tx(db, files, actor_id, preflight=preflight)
     await db.commit()
     for batch in batches:
         await db.refresh(batch)

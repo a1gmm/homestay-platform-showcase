@@ -1,3 +1,4 @@
+import { createChatStreamReader, type AssistantProgress } from "./monthly-close-chat-stream";
 import axios, { AxiosError, InternalAxiosRequestConfig } from "axios";
 import type {
   OrderCreate,
@@ -62,6 +63,7 @@ import type {
   BypmsAdminSyncConflictsResponse,
   BypmsAdminSyncCyclesResponse,
   BypmsAdminSyncOverview,
+  BypmsOrderDiagnosis,
   BypmsAdminSyncRetryResponse,
 } from "./types";
 import type {
@@ -76,12 +78,19 @@ import { getAuthSessionAccessToken, getAuthSessionRefreshToken, getPersistedAuth
 import type { UtilityBatch, UtilityBatchDetail, UtilityPreflight } from "./utility-recon";
 import type {
   MonthlyCloseCycle,
+  MonthlyCloseDurableReceipt,
   MonthlyCloseInboxItem,
   MonthlyCloseIntakeLink,
   MonthlyCloseIntakeLinkCreated,
   MonthlyCloseLayoutMemory,
   MonthlyCloseLayoutMetrics,
   MonthlyCloseOverview,
+  MonthlyCloseProposalView,
+  MonthlyCloseProjection,
+  MonthlyCloseEventPage,
+  MonthlyCloseProjectedDocument,
+  AssistantReply,
+  FinancialCaseUploadReceipt,
   MonthlyClosePublicIntake,
   MonthlyCloseSourceClassification,
   OperatingExpenseAnalysis,
@@ -91,6 +100,7 @@ import type {
   UtilityStatementAnalysis,
   UtilityStatementMapping,
 } from "./monthly-close";
+import { parseMonthlyCloseEventStream } from "./monthly-close";
 import type {
   ReleaseAnnouncementClient,
   ReleaseAnnouncementList,
@@ -101,6 +111,17 @@ import {
   readPrivacyMode,
 } from "./privacy-mode";
 
+declare module "axios" {
+  interface AxiosRequestConfig {
+    /** Binds a monthly-close request (including a 401 retry) to its initiating account. */
+    monthlyCloseSessionId?: string | null;
+  }
+}
+
+function monthlyCloseScopedRequestConfig(signal?: AbortSignal) {
+  return { signal, monthlyCloseSessionId: getPersistedAuthSessionId() };
+}
+
 export const api = axios.create({
   baseURL: process.env.NEXT_PUBLIC_API_URL || "/api/v1",
   withCredentials: true,
@@ -109,6 +130,10 @@ export const api = axios.create({
   // longer is almost certainly a real outage.
   timeout: 25000,
 });
+
+// All expired-token requests share this operation. It must never wait forever
+// on a stalled cross-border connection and hold the entire workspace hostage.
+export const AUTH_REFRESH_TIMEOUT_MS = 15_000;
 
 export const dashboardReleaseAnnouncementClient: ReleaseAnnouncementClient = {
   unread: async () =>
@@ -132,6 +157,9 @@ export { extractErrorMessage, isDuplicateOrderError } from "./api-errors";
 
 // Attach access token from localStorage (fallback for non-cookie auth)
 api.interceptors.request.use((config) => {
+  if ("monthlyCloseSessionId" in config && config.monthlyCloseSessionId !== getPersistedAuthSessionId()) {
+    throw new Error("账号已切换，旧会话的月结操作已停止，请重新查看当前方案。");
+  }
   if (readPrivacyMode()) {
     config.headers["X-Privacy-Mode"] = "1";
     if (!isPrivacyRequestAllowed(config.method, config.url, config.responseType)) {
@@ -155,7 +183,8 @@ async function performRefresh(): Promise<string> {
   if (!refresh_token) throw new Error("No refresh token");
   const { data } = await axios.post<{ access_token: string; refresh_token: string }>(
     "/api/v1/auth/refresh",
-    { refresh_token }
+    { refresh_token },
+    { timeout: AUTH_REFRESH_TIMEOUT_MS, withCredentials: true },
   );
   if (!sessionId || !updateAuthSessionTokens(sessionId, data.access_token, data.refresh_token)) throw new Error("Auth session changed during refresh");
   return data.access_token;
@@ -181,9 +210,20 @@ const AUTH_ENDPOINT_RE =
 const PUBLIC_ENDPOINT_RE = /\/hosting-leads($|\?|\/)/;
 
 api.interceptors.response.use(
-  (res) => res,
+  (res) => {
+    if ("monthlyCloseSessionId" in res.config && res.config.monthlyCloseSessionId !== getPersistedAuthSessionId()) {
+      throw new Error("账号已切换，请在当前账号重新核对月结状态。");
+    }
+    return res;
+  },
   async (error: AxiosError) => {
     const original = error.config as InternalAxiosRequestConfig & { _retry?: boolean };
+    const assertMonthlyCloseSession = () => {
+      if (original && "monthlyCloseSessionId" in original && original.monthlyCloseSessionId !== getPersistedAuthSessionId()) {
+        throw new Error("账号已切换，旧会话的月结操作已停止，请重新查看当前方案。");
+      }
+    };
+    assertMonthlyCloseSession();
     const isAuthEndpoint = !!original?.url && AUTH_ENDPOINT_RE.test(original.url);
     const isPublicEndpoint = !!original?.url && PUBLIC_ENDPOINT_RE.test(original.url);
     if (
@@ -212,15 +252,24 @@ api.interceptors.response.use(
           });
         }
         const newAccessToken = await refreshInflight;
+        assertMonthlyCloseSession();
         original.headers["Authorization"] = `Bearer ${newAccessToken}`;
         return api(original);
-      } catch {
+      } catch (refreshError) {
+        assertMonthlyCloseSession();
         // 刷新失败:可能是另一标签刚轮换过(本标签的 refresh token 已作废)。
         // 再读一次 localStorage,若已有新 access token 就重放,否则才登出 (#50)。
         const fresh = typeof window !== "undefined" ? getAuthSessionAccessToken() : null;
         if (fresh && usedAuth && `Bearer ${fresh}` !== usedAuth) {
           original.headers["Authorization"] = `Bearer ${fresh}`;
           return api(original);
+        }
+        // A transport outage is not evidence that the credentials are invalid.
+        // Release all waiting callers, keep the session, and allow the next
+        // request to try again once connectivity returns.
+        if (axios.isAxiosError(refreshError) &&
+          (!refreshError.response || refreshError.response.status >= 500)) {
+          return Promise.reject(refreshError);
         }
         clearAuthAndRedirect();
       }
@@ -648,6 +697,8 @@ export const ownersApi = {
 
 // ─── Tasks ────────────────────────────────────────────────────────────────────
 export const tasksApi = {
+  workspace: (params?: { status?: string; keyword?: string; assignee_id?: string; deadline?: string; overdue_only?: boolean; attention?: string; page?: number; page_size?: number }) =>
+    api.get<import("./types").TaskWorkspace>("/tasks/workspace", { params }),
   list: (params?: { status?: string; order_id?: string; assignee_id?: string; overdue_only?: boolean }) =>
     api.get<TaskOut[]>("/tasks", { params }),
   create: (data: TaskCreate) => api.post<TaskOut>("/tasks", data),
@@ -732,6 +783,44 @@ export const settlementsApi = {
 
 // ─── 管理员固定九步月结 ────────────────────────────────────────────────────
 export const monthlyCloseApi = {
+  getTask: (billingMonth: string, signal?: AbortSignal) =>
+    api.get<{ task: import("./monthly-close-task").MonthlyCloseTask | null }>(`/monthly-close/${billingMonth}/task`, monthlyCloseScopedRequestConfig(signal)),
+  updateTask: (billingMonth: string, input: import("./monthly-close-task").MonthlyCloseTaskCommand, signal?: AbortSignal) =>
+    api.post<{ task: import("./monthly-close-task").MonthlyCloseTask }>(`/monthly-close/${billingMonth}/task`, input, monthlyCloseScopedRequestConfig(signal)),
+  downloadTaskArtifact: (path: string, signal?: AbortSignal) => api.get<Blob>(path, { responseType: "blob", ...monthlyCloseScopedRequestConfig(signal) }),
+  getProjection: (billingMonth: string) =>
+    api.get<MonthlyCloseProjection>(`/monthly-close/${billingMonth}/projection`),
+  listEvents: async (billingMonth: string, cursor: string) => {
+    const response = await api.get<string>(`/monthly-close/${billingMonth}/events`, {
+      headers: { Accept: "text/event-stream", ...(cursor ? { "Last-Event-ID": cursor } : {}) },
+      responseType: "text",
+    });
+    return { ...response, data: parseMonthlyCloseEventStream(response.data, cursor) as MonthlyCloseEventPage };
+  },
+  listMessages: (billingMonth: string) =>
+    api.get<{ replies: AssistantReply[] }>(`/monthly-close/${billingMonth}/messages`),
+  postMessage: (billingMonth: string, text: string, attachmentIds: string[] = [], contextRunId?: string) =>
+    api.post<AssistantReply>(`/monthly-close/${billingMonth}/messages`, {
+      text,
+      attachment_ids: attachmentIds,
+      ...(contextRunId ? { context_run_id: contextRunId } : {}),
+    }),
+  postMessageStream: async (billingMonth: string, text: string, attachmentIds: string[], contextRunId: string | undefined, onProgress: (progress: AssistantProgress) => void, signal?: AbortSignal) => {
+    const reader = createChatStreamReader(onProgress);
+    const response = await api.post<string>(`/monthly-close/${billingMonth}/messages`, {
+      text, attachment_ids: attachmentIds, ...(contextRunId ? { context_run_id: contextRunId } : {}),
+    }, {
+      headers: { Accept: "text/event-stream" }, responseType: "text", timeout: 90000, signal,
+      onDownloadProgress: (progress) => {
+        const xhr = progress.event?.target as XMLHttpRequest | undefined;
+        if (typeof xhr?.responseText === "string") reader.accept(xhr.responseText);
+      },
+    });
+    reader.accept(response.data);
+    return { ...response, data: reader.finish() };
+  },
+  getProjectionDocument: (billingMonth: string, documentId: string) =>
+    api.get<MonthlyCloseProjectedDocument>(`/monthly-close/${billingMonth}/projection/documents/${documentId}`),
   list: () => api.get<MonthlyCloseCycle[]>("/monthly-close"),
   overview: () => api.get<MonthlyCloseOverview[]>("/monthly-close/overview"),
   get: (billingMonth: string) =>
@@ -767,16 +856,32 @@ export const monthlyCloseApi = {
   receiveInbox: (billingMonth: string, file: File) => {
     const form = new FormData();
     form.append("file", file);
-    return api.post<MonthlyCloseInboxItem>(`/monthly-close/${billingMonth}/inbox`, form, {
+    return api.post<MonthlyCloseDurableReceipt>(`/monthly-close/${billingMonth}/inbox`, form, {
       timeout: BILLING_RECON_UPLOAD_TIMEOUT_MS,
     });
   },
+  receiveFinancialCaseFile: (billingMonth: string, file: File, onProgress?: (percent: number) => void) => {
+    const form = new FormData();
+    form.append("file", file);
+    return api.post<FinancialCaseUploadReceipt>(`/monthly-close/${billingMonth}/financial-case/files`, form, {
+      timeout: BILLING_RECON_UPLOAD_TIMEOUT_MS,
+      onUploadProgress: (event) => {
+        if (event.total) onProgress?.(Math.min(100, Math.round(event.loaded / event.total * 100)));
+      },
+    });
+  },
+  exportReviewChecklist: (billingMonth: string) =>
+    api.post<Blob>(`/monthly-close/${billingMonth}/financial-case/review-checklist`, {}, { responseType: "blob" }),
+  exportFinancialCase: (billingMonth: string, reportMonths: string[]) =>
+    api.get<Blob>(`/monthly-close/${billingMonth}/financial-case/export`, { params: { months: reportMonths.join(",") }, responseType: "blob" }),
   classifyInbox: (billingMonth: string, itemId: string) =>
     api.post<MonthlyCloseInboxItem>(`/monthly-close/${billingMonth}/inbox/${itemId}/classify`),
   setInboxSource: (billingMonth: string, itemId: string, sourceType: string) =>
     api.patch<MonthlyCloseInboxItem>(`/monthly-close/${billingMonth}/inbox/${itemId}`, { source_type: sourceType }),
   confirmInbox: (billingMonth: string, itemId: string) =>
     api.post<MonthlyCloseInboxItem>(`/monthly-close/${billingMonth}/inbox/${itemId}/confirm`),
+  deleteInbox: (billingMonth: string, itemId: string) =>
+    api.delete(`/monthly-close/${billingMonth}/inbox/${itemId}`),
   listIntakeLinks: (billingMonth: string) =>
     api.get<MonthlyCloseIntakeLink[]>(`/monthly-close/${billingMonth}/intake-links`),
   createIntakeLink: (billingMonth: string, input: { label: string; source_type: string | null }) =>
@@ -788,7 +893,7 @@ export const monthlyCloseApi = {
   uploadPublicIntake: (token: string, file: File) => {
     const form = new FormData();
     form.append("file", file);
-    return api.post<{ receipt_id: string; status: string; message: string }>(`/monthly-close/intake/${token}`, form, {
+    return api.post<{ receipt_code: string; status: string; message: string }>(`/monthly-close/intake/${token}`, form, {
       timeout: BILLING_RECON_UPLOAD_TIMEOUT_MS,
     });
   },
@@ -811,6 +916,14 @@ export const monthlyCloseApi = {
     { mapping },
     { timeout: BILLING_RECON_UPLOAD_TIMEOUT_MS },
   ),
+  previewCleaningResolution: (month: string, documentId: string, selection: import("./monthly-close").CleaningWorkResolutionSelection) =>
+    api.post<import("./monthly-close").CleaningWorkResolutionPreview>(`/monthly-close/${month}/documents/${documentId}/work-log/resolution/preview`, selection, { timeout: BILLING_RECON_UPLOAD_TIMEOUT_MS }),
+  confirmCleaningResolution: (month: string, documentId: string, preview: import("./monthly-close").CleaningWorkResolutionPreview, requestId: string) =>
+    api.post<{ comparison: import("./monthly-close").CleaningWorkComparison }>(`/monthly-close/${month}/documents/${documentId}/work-log/resolution/confirm`, { ...preview.selection, preview_hash: preview.preview_hash, request_id: requestId }, { timeout: BILLING_RECON_UPLOAD_TIMEOUT_MS }),
+  previewCleaningWork: (month: string, documentId: string) =>
+    api.post<import("./monthly-close").CleaningWorkPreview>(`/monthly-close/${month}/documents/${documentId}/work-log/preview`, {}, { timeout: BILLING_RECON_UPLOAD_TIMEOUT_MS }),
+  confirmCleaningWork: (month: string, documentId: string, previewHash: string, requestId: string) =>
+    api.post<import("./monthly-close").CleaningWorkImportResult>(`/monthly-close/${month}/documents/${documentId}/work-log/confirm`, { preview_hash: previewHash, request_id: requestId }, { timeout: BILLING_RECON_UPLOAD_TIMEOUT_MS }),
   confirmServiceStatement: (
     billingMonth: string,
     documentId: string,
@@ -832,7 +945,14 @@ export const monthlyCloseApi = {
     billingMonth: string,
     documentId: string,
     mapping: OperatingExpenseMapping,
-  ) => api.post<{ imported_count: number; failed: Array<{ row: number; errors: string }> }>(
+  ) => api.post<{
+    document_id: string;
+    mapping_confirmed: boolean;
+    proposal_required: boolean;
+  } | {
+    imported_count: number;
+    failed: Array<{ row: number; errors: string }>;
+  }>(
     `/monthly-close/${billingMonth}/documents/${documentId}/operating-expense/confirm`,
     { mapping },
     { timeout: BILLING_RECON_UPLOAD_TIMEOUT_MS },
@@ -886,6 +1006,87 @@ export const monthlyCloseApi = {
     input,
     { timeout: BILLING_RECON_UPLOAD_TIMEOUT_MS },
   ),
+  createOtaProposal: (
+    billingMonth: string,
+    input: {
+      batch_id: string;
+      selected_diff_ids: string[];
+      decisions?: import("./monthly-close").OtaProposalDecision[];
+      request_id: string;
+    },
+  ) => api.post<MonthlyCloseProposalView>(`/monthly-close/${billingMonth}/ota-proposals`, input),
+  createServiceProposal: (billingMonth: string, requestId: string) =>
+    api.post<MonthlyCloseProposalView>(`/monthly-close/${billingMonth}/service-proposals`, { request_id: requestId }),
+  createUtilityProposal: (billingMonth: string, requestId: string) =>
+    api.post<MonthlyCloseProposalView>(`/monthly-close/${billingMonth}/utility-proposals`, { request_id: requestId }),
+  createOperatingExpenseProposal: (billingMonth: string, requestId: string) =>
+    api.post<MonthlyCloseProposalView>(`/monthly-close/${billingMonth}/operating-expense-proposals`, { request_id: requestId }),
+  listSourceProposals: (billingMonth: string) =>
+    api.get<import("./monthly-close").MonthlyCloseSourceProposalQueue>(
+      `/monthly-close/${billingMonth}/source-proposals`,
+    ),
+  getOtaBatch: (billingMonth: string, batchId: string) =>
+    api.get<ReconBatchDetail>(`/monthly-close/${billingMonth}/ota-batches/${batchId}`),
+  getOtaAppealSettlementCandidates: (billingMonth: string) =>
+    api.get<{ items: import("./monthly-close").OtaAppealSettlementCandidate[] }>(
+      `/monthly-close/${billingMonth}/ota-appeal-settlement-candidates`,
+    ),
+  listOtaAppealAdjudicationProposals: (billingMonth: string) =>
+    api.get<{
+      items: MonthlyCloseProposalView[];
+      groups: import("./monthly-close").OtaAppealAdjudicationProposalGroup[];
+    }>(
+      `/monthly-close/${billingMonth}/ota-appeal-adjudication-proposals`,
+    ),
+  createOtaAppealAdjudicationProposal: (
+    billingMonth: string,
+    input: {
+      candidate_id: string;
+      action: "withdraw" | "confirm_identity";
+      identity_choice_id?: string;
+      reason: string;
+      request_id: string;
+    },
+  ) => api.post<MonthlyCloseProposalView>(
+    `/monthly-close/${billingMonth}/ota-appeal-adjudication-proposals`,
+    input,
+  ),
+  archiveOtaAppealCandidateDocument: (
+    billingMonth: string,
+    documentId: string,
+    candidateId: string,
+  ) => api.post(
+    `/monthly-close/${billingMonth}/documents/${documentId}/ota-appeal-candidates/${candidateId}/archive`,
+  ),
+  reconcileSettledOtaAppeal: (
+    billingMonth: string,
+    issueId: string,
+    requestId: string,
+  ) => api.post(
+    `/monthly-close/${billingMonth}/actions/ota/reconcile-settled`,
+    { issue_id: issueId, request_id: requestId },
+  ),
+  searchOtaOrderCandidates: (
+    billingMonth: string,
+    batchId: string,
+    diffId: string,
+    query: string,
+  ) => api.get<{ items: import("./monthly-close").OtaOrderCandidate[] }>(
+    `/monthly-close/${billingMonth}/ota-batches/${batchId}/diffs/${diffId}/order-candidates`,
+    { params: { q: query } },
+  ),
+  getProposal: (billingMonth: string, proposalId: string, signal?: AbortSignal) =>
+    api.get<MonthlyCloseProposalView>(`/monthly-close/${billingMonth}/proposals/${proposalId}`, monthlyCloseScopedRequestConfig(signal)),
+  createFinalizationProposal: (billingMonth: string, requestId: string, signal?: AbortSignal) =>
+    api.post<MonthlyCloseProposalView>(`/monthly-close/${billingMonth}/finalization-proposals`, { request_id: requestId }, monthlyCloseScopedRequestConfig(signal)),
+  approveProposal: (billingMonth: string, proposalId: string, requestId: string, signal?: AbortSignal) =>
+    api.post(`/monthly-close/${billingMonth}/proposals/${proposalId}/approve`, { request_id: requestId }, monthlyCloseScopedRequestConfig(signal)),
+  rejectProposal: (billingMonth: string, proposalId: string, reason: string, requestId: string, signal?: AbortSignal) =>
+    api.post(`/monthly-close/${billingMonth}/proposals/${proposalId}/reject`, { reason, request_id: requestId }, monthlyCloseScopedRequestConfig(signal)),
+  executeProposal: (billingMonth: string, proposalId: string, requestId: string, signal?: AbortSignal) =>
+    api.post(`/monthly-close/${billingMonth}/proposals/${proposalId}/execute`, { request_id: requestId }, monthlyCloseScopedRequestConfig(signal)),
+  verifyAttempt: (billingMonth: string, attemptId: string, requestId: string, signal?: AbortSignal) =>
+    api.post(`/monthly-close/${billingMonth}/attempts/${attemptId}/verify`, { request_id: requestId }, monthlyCloseScopedRequestConfig(signal)),
 };
 
 // ─── Notifications (Features 3 & 10) ─────────────────────────────────────────
@@ -932,6 +1133,7 @@ export function normalizeBypmsConflictsFilters(filters: BypmsAdminConflictsFilte
 }
 
 export const bypmsSyncApi = {
+  diagnose: (platformOrderId: string) => api.get<BypmsOrderDiagnosis>("/system/bypms-sync/order-diagnosis", { params: { platform_order_id: platformOrderId } }),
   overview: () => api.get<BypmsAdminSyncOverview>("/system/bypms-sync/overview"),
   cycles: (filters: BypmsAdminCyclesFilters = {}) => {
     const normalized = normalizeBypmsCyclesFilters(filters);
@@ -991,8 +1193,8 @@ export const exportApi = {
     api.get(`/export/settlements/${settlement_id}/statement`, { responseType: "blob" }),
   settlementIncomeDetail: (settlement_id: string) =>
     api.get(`/export/settlements/${settlement_id}/income-detail`, { responseType: "blob" }),
-  settlementPackage: (settlement_id: string) =>
-    api.get(`/export/settlements/${settlement_id}/package`, { responseType: "blob" }),
+  settlementPackage: (settlement_id: string, internal = false) =>
+    api.get(`/export/settlements/${settlement_id}/package`, { responseType: "blob", params: { internal } }),
 };
 
 // ─── Search (Feature C) ─────────────────────────────────────────────────────

@@ -2,9 +2,10 @@ import asyncio
 import calendar
 from datetime import date, datetime, timezone, timedelta
 from decimal import Decimal
+from time import perf_counter
 
-from fastapi import APIRouter, HTTPException, Query
-from sqlalchemy import select, func, extract, case
+from fastapi import APIRouter, HTTPException, Query, Response
+from sqlalchemy import select, func, extract, case, or_
 from dateutil.relativedelta import relativedelta
 
 from app.core.deps import DBSession, CurrentUser
@@ -13,7 +14,6 @@ from app.core.datetime_helpers import today_cn, CN_TZ
 from app.models.order import Order, OrderStatus
 from app.models.order_room import OrderRoom
 from app.models.expense import Expense
-from app.models.task import Task, TaskStatus
 from app.models.room import Room
 from app.services.dashboard_metrics import compute_period_metrics
 
@@ -67,34 +67,59 @@ async def _today_stats(db) -> dict:
     # 真正待退房的是「组末段（活段口径）退房日=今天」。金额裁剪逻辑与此无关，不碰。
     from app.services import stay_group as _stay_group
     _mid_seg_ids: list[str] = []
-    _grouped_today = (await db.execute(
+    grouped = (await db.execute(
         select(Order).where(
-            Order.check_out_date == today,
-            Order.order_status.in_(pre_checkout_statuses),
+            or_(
+                (Order.check_out_date == today) & Order.order_status.in_(pre_checkout_statuses),
+                (Order.check_in_date == today) & Order.order_status.in_(pre_checkin_statuses),
+            ),
             Order.is_deleted == False,
             Order.stay_group_id.isnot(None),
         )
     )).scalars().all()
-    for _o in _grouped_today:
-        if not await _stay_group.is_group_last_segment(db, _o):
-            _mid_seg_ids.append(_o.order_id)
-
+    _grouped_today = [order for order in grouped
+                      if order.order_status in pre_checkout_statuses]
     # 续住组非首段：入住日=今天但客人昨天就住进来了，前台不用办入住 → 不算「今日待入住」。
     # 与上面的退房中间段剔除对称：一趟续住只在首段入住日算一次待入住、只在末段退房日
     # 算一次待退房。生产 2026-07-25 sg_24b6b1aa12ba（1615 房）：续段停在 pending_confirm
     # 被当成待入住，前台反映「明明已经入住了还显示待入住」。
     _non_first_seg_ids: list[str] = []
-    _grouped_ci_today = (await db.execute(
-        select(Order).where(
-            Order.check_in_date == today,
-            Order.order_status.in_(pre_checkin_statuses),
-            Order.is_deleted == False,
-            Order.stay_group_id.isnot(None),
-        )
-    )).scalars().all()
-    for _o in _grouped_ci_today:
-        if not await _stay_group.is_group_first_segment(db, _o):
-            _non_first_seg_ids.append(_o.order_id)
+    _grouped_ci_today = [order for order in grouped
+                         if order.order_status in pre_checkin_statuses]
+    # Batch ordinary continuation boundaries: the old per-order first/last
+    # helpers each reloaded their group. Managed splits retain the existing
+    # physical-room-leg resolver, whose boundaries can differ by room.
+    if grouped:
+        from app.models.managed_stay_group import ManagedStayGroup, ManagedStayGroupKind
+        group_ids = {order.stay_group_id for order in grouped}
+        managed_ids = set((await db.execute(
+            select(ManagedStayGroup.stay_group_id).where(
+                ManagedStayGroup.stay_group_id.in_(group_ids),
+                ManagedStayGroup.kind == ManagedStayGroupKind.managed_split,
+            )
+        )).scalars().all())
+        members = (await db.execute(
+            select(Order).where(Order.stay_group_id.in_(group_ids),
+                                Order.is_deleted.is_(False),
+                                Order.order_status != OrderStatus.cancelled)
+        )).scalars().all()
+        by_group = {}
+        for member in members:
+            by_group.setdefault(member.stay_group_id, []).append(member)
+        summaries = {gid: _stay_group.summarize_group_members(rows)
+                     for gid, rows in by_group.items() if gid not in managed_ids}
+        for _o in _grouped_today:
+            is_last = (await _stay_group.is_group_last_segment(db, _o)
+                       if _o.stay_group_id in managed_ids
+                       else summaries[_o.stay_group_id].last.order_id == _o.order_id)
+            if not is_last:
+                _mid_seg_ids.append(_o.order_id)
+        for _o in _grouped_ci_today:
+            is_first = (await _stay_group.is_group_first_segment(db, _o)
+                        if _o.stay_group_id in managed_ids
+                        else summaries[_o.stay_group_id].anchor.order_id == _o.order_id)
+            if not is_first:
+                _non_first_seg_ids.append(_o.order_id)
 
     # 「待保洁房间」= 今天真要打扫的退房房，与飞书每日打扫卡**同一个函数**算出来，
     # 保洁看到的和看板显示的永远一致。旧口径是「退房日=今天 且 cleaning_status 未派」，
@@ -104,27 +129,16 @@ async def _today_stats(db) -> dict:
     _cleaning_rows = await list_checkout_rooms_for_cleaning(db)
 
     # Overdue tasks (separate table) + total rooms
-    overdue_tasks = await db.scalar(
-        select(func.count())
-        .select_from(Task)
-        .where(Task.deadline < now_utc, Task.status != TaskStatus.done)
-    ) or 0
+    from app.services.task_lifecycle import task_attention_summary
+    task_attention = await task_attention_summary(db, now=now_utc)
+    overdue_tasks = task_attention["overdue"]
     total_rooms = await db.scalar(select(func.count()).select_from(Room).where(Room.is_deleted == False)) or 0
-    # 实时在住 = 此刻在店的「房间数」（不是订单数）。分母 total_rooms 是房间维度，分子也必须
-    # 按房间数，否则一单多房会虚低（生产实盘 13 单/14 间 → 看板误显 13）。前端工具提示亦写明
-    # 「此刻在住房数占比」。口径：checked_in 订单下、已排房(room_id 非空)、未单间退房
-    # (checked_out_at 为空) 的 OrderRoom 行数。
-    checked_in = await db.scalar(
-        select(func.count())
-        .select_from(OrderRoom)
-        .join(Order, Order.order_id == OrderRoom.order_id)
-        .where(
-            Order.order_status == OrderStatus.checked_in,
-            Order.is_deleted == False,
-            OrderRoom.room_id.isnot(None),
-            OrderRoom.checked_out_at.is_(None),
-        )
-    ) or 0
+    # 实时在住按实际逐房入住/退房证据计算。预计退房日到来不代表客人已走，
+    # 不能使用按预订日期区间计算的有效房态，否则退房日零点就会提前少算。
+    from app.services.room_presence import current_room_presence
+    present_rooms = await current_room_presence(db, today)
+    checked_in = len(present_rooms)
+    overdue_checkout_rooms = [room.room_name for room in present_rooms if room.checkout_date < today]
     occupancy_rate = round(checked_in / total_rooms * 100, 1) if total_rooms > 0 else 0.0
 
     # 具体房号列表（前台卡片直显）。以 OrderRoom 逐房日期为准（迁移后的真相源），
@@ -170,7 +184,10 @@ async def _today_stats(db) -> dict:
             for r in _cleaning_rows
         ],
         "overdue_tasks": overdue_tasks,
+        "task_attention": task_attention,
         "checked_in": checked_in,
+        "overdue_checkout_count": len(overdue_checkout_rooms),
+        "overdue_checkout_rooms": overdue_checkout_rooms,
         "total_rooms": total_rooms,
         "occupancy_rate": occupancy_rate,
         "checkin_rooms": checkin_rooms,
@@ -200,6 +217,19 @@ async def _period_stats(db, start_date: date, end_date: date, metrics: dict | No
             Expense.is_deleted == False,
         )
     ) or 0)
+    # Standard owner service charges are not another supplier payment. Keep the
+    # legacy ledger total for existing consumers, expose the actual-cost basis
+    # separately so payroll and supplier imports cannot be counted twice.
+    from sqlalchemy import or_
+    costs = float(await db.scalar(select(func.coalesce(func.sum(Expense.amount),0)).where(
+        Expense.expense_date>=start_date,Expense.expense_date<=end_date,Expense.is_deleted.is_(False),
+        Expense.is_service_fee.is_(False),or_(Expense.paid_by.is_(None),Expense.paid_by=='company'))) or 0)
+    standard_fees = float(await db.scalar(select(func.coalesce(func.sum(Expense.amount),0)).where(
+        Expense.expense_date>=start_date,Expense.expense_date<=end_date,Expense.is_deleted.is_(False),
+        Expense.is_service_fee.is_(True))) or 0)
+    payer_unknown = int(await db.scalar(select(func.count()).select_from(Expense).where(
+        Expense.expense_date>=start_date,Expense.expense_date<=end_date,Expense.is_deleted.is_(False),
+        Expense.is_service_fee.is_(False),Expense.paid_by.is_(None))) or 0)
 
     total_rooms = await db.scalar(select(func.count()).select_from(Room).where(Room.is_deleted == False)) or 0
     range_days = (end_date - start_date).days + 1   # 含首尾端点
@@ -224,6 +254,10 @@ async def _period_stats(db, start_date: date, end_date: date, metrics: dict | No
         "total_net_revenue": total_net_revenue,
         "total_expenses": total_expenses,
         "gross_profit": total_net_revenue - total_expenses,
+        "recorded_operating_costs": costs,
+        "standard_service_fees": standard_fees,
+        "balance_after_recorded_costs": total_net_revenue-costs,
+        "cost_payment_unconfirmed_count": payer_unknown,
         "occ": round(occ * 100, 2),
         "adr": round(adr, 2),
         "revpar": round(revpar, 2),
@@ -395,6 +429,10 @@ _MONEY_FIELDS_MONTHLY = (
     "total_net_revenue",
     "total_expenses",
     "gross_profit",
+    "recorded_operating_costs",
+    "standard_service_fees",
+    "balance_after_recorded_costs",
+    "cost_payment_unconfirmed_count",
     "adr",
     "revpar",
 )
@@ -429,6 +467,7 @@ def _redact_comparison(comparison: dict) -> dict:
 async def dashboard_overview(
     db: DBSession,
     current_user: CurrentUser,
+    response: Response,
     year: int = Query(default_factory=lambda: today_cn().year),
     month: int = Query(default_factory=lambda: today_cn().month),
     months: int = Query(default=6, ge=1, le=24),
@@ -438,25 +477,55 @@ async def dashboard_overview(
     can_view_metrics = role in ROLES_WITH_METRICS
     can_view_revenue = role in ROLES_WITH_REVENUE
 
-    # Sequential awaits — each internal query runs back-to-back, but we save
-    # the 5 separate HTTP round trips from the frontend (the real win).
-    today = await _today_stats(db)
-    monthly = trend = channel = comparison = None
-    if can_view_metrics:
+    started = perf_counter()
+    timings = {}
+
+    async def load_today():
+        stage = perf_counter()
+        result = await _today_stats(db)
+        timings["today"] = (perf_counter() - stage) * 1000
+        return result
+
+    async def load_finance():
+        if not can_view_metrics:
+            return None, None, None, None
+        stage = perf_counter()
+        # AsyncSession cannot execute concurrent queries. Use a separate
+        # read session for financial panels while today's operations load.
+        async with AsyncSessionLocal() as finance_db:
+            result = await financial_panels(finance_db)
+        timings["metrics"] = (perf_counter() - stage) * 1000
+        return result
+
+    async def financial_panels(finance_db):
+        trend = None
         # 同月只算一次口径聚合，_monthly_stats 与 _channel_analysis 共享(评审 F3)。
         _days = calendar.monthrange(year, month)[1]
-        _month_metrics = await compute_period_metrics(db, date(year, month, 1), date(year, month, _days))
-        monthly = await _monthly_stats(db, year, month, metrics=_month_metrics)
-        channel = await _channel_analysis(db, year, month, metrics=_month_metrics)
-        comparison = await _comparison(db, year, month)
+        _month_metrics = await compute_period_metrics(finance_db, date(year, month, 1), date(year, month, _days))
+        monthly = await _monthly_stats(finance_db, year, month, metrics=_month_metrics)
+        channel = await _channel_analysis(finance_db, year, month, metrics=_month_metrics)
+        comparison = await _comparison(finance_db, year, month)
         if can_view_revenue:
             # Revenue trend is pure money — only finance/admin get it at all.
-            trend = await _revenue_trend(db, months)
+            trend = await _revenue_trend(finance_db, months)
         else:
             # operator / keeper: keep metrics, strip every money field server-side.
             _redact_monthly(monthly)
             _redact_channel(channel)
             _redact_comparison(comparison)
+        return monthly, trend, channel, comparison
+
+    # TaskGroup also cancels the sibling if either branch fails, so no query
+    # can outlive its request/session after a failed batch request.
+    async with asyncio.TaskGroup() as group:
+        today_task = group.create_task(load_today())
+        finance_task = group.create_task(load_finance())
+    today = today_task.result()
+    monthly, trend, channel, comparison = finance_task.result()
+    timings["total"] = (perf_counter() - started) * 1000
+    response.headers["Server-Timing"] = ", ".join(
+        f"{name};dur={duration:.1f}" for name, duration in timings.items()
+    )
 
     return {
         "today": today,
@@ -468,10 +537,13 @@ async def dashboard_overview(
 
 
 @router.get("/today")
-async def today_overview(db: DBSession, current_user: CurrentUser):
+async def today_overview(db: DBSession, current_user: CurrentUser, response: Response):
     if current_user["role"] not in ("admin", "operator", "finance", "keeper"):
         raise HTTPException(status_code=403, detail="无权查看今日概览")
-    return await _today_stats(db)
+    started = perf_counter()
+    result = await _today_stats(db)
+    response.headers["Server-Timing"] = f"today;dur={(perf_counter() - started) * 1000:.1f}"
+    return result
 
 
 @router.get("/monthly")

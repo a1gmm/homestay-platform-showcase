@@ -7,22 +7,26 @@
 目标子域的 /auth/accept 用 code 向后端换回真正的 token。token 永不进 URL。
 
 - TTL 90s:足够一次跳转,过期即失效。
-- 一次性:exchange 时 delete,重放无效。
+- 一次性:exchange 时用原子 Lua 取走值,并发兑换和重放均无效。
 - code 用 secrets 生成,足够熵。
 """
 from __future__ import annotations
 
 import json
-import logging
 import secrets
 from typing import Optional
 
 import redis.asyncio as aioredis
 
-logger = logging.getLogger(__name__)
-
 _PREFIX = "auth:handoff:"
 _TTL_SECONDS = 90
+_CONSUME_SCRIPT = """
+local value = redis.call("GET", KEYS[1])
+if value then
+    redis.call("DEL", KEYS[1])
+end
+return value
+"""
 
 
 def _key(code: str) -> str:
@@ -31,7 +35,7 @@ def _key(code: str) -> str:
 
 async def store(redis: aioredis.Redis, payload: dict) -> str:
     """暂存交接 payload,返回一次性 code。Redis 不可用时抛异常 → 端点返回 503,
-    由前端降级回 URL 老方式(见 login/page.tsx handoffRedirect)。"""
+    前端留在登录页重试,不得将 token 放入 URL。"""
     code = secrets.token_urlsafe(24)
     await redis.set(_key(code), json.dumps(payload), ex=_TTL_SECONDS)
     return code
@@ -41,18 +45,14 @@ async def consume(redis: aioredis.Redis, code: str) -> Optional[dict]:
     """用 code 换回 payload 并立即删除(一次性)。无效/过期/已用返回 None。"""
     if not code:
         return None
-    key = _key(code)
-    raw = await redis.get(key)
+    # GET + DELETE 会让并发请求同时读到 payload；删除失败也不能返回凭证。
+    # 单个 EVAL 在 Redis 内原子取走值，兼容尚不支持 GETDEL 的 Redis。
+    # 任何 Redis 错误都交给端点返回 503，绝不拆成独立读写进行重试。
+    raw = await redis.eval(_CONSUME_SCRIPT, 1, _key(code))
     if raw is None:
         return None
-    # 一次性:无论后续如何,先删掉
     try:
-        await redis.delete(key)
-    except Exception as exc:  # pragma: no cover - 删除失败不应阻塞换取
-        logger.warning("Failed to delete handoff code: %s", exc)
-    if isinstance(raw, bytes):
-        raw = raw.decode("utf-8")
-    try:
-        return json.loads(raw)
+        payload = json.loads(raw)
+        return payload if isinstance(payload, dict) else None
     except (ValueError, TypeError):
         return None

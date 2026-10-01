@@ -23,6 +23,7 @@ from app.models.cleaning_request import (
     CleaningRequest,
     CleaningRequestStatus,
 )
+from app.services.reconciliation_policy import service_cost_payer
 from app.models.expense import Expense, ExpenseCategory, ExpensePayer
 from app.models.order import Order, OrderStatus, is_owner_self_order
 from app.models.order_room import OrderRoom
@@ -553,6 +554,10 @@ async def _ensure_incurred_cleaning_expense(
     if order is None or room is None or not room.owner_id:
         return None
 
+    # Serialize with historical work-fee backfills as well as checkout fees.
+    from app.services.service_fee_ledger import lock_owner_service_fee_ledger
+    await lock_owner_service_fee_ledger(db, room.owner_id)
+
     occupied_by_other_request = exists(
         select(CleaningRequest.request_id).where(
             CleaningRequest.expense_id == Expense.expense_id,
@@ -588,7 +593,7 @@ async def _ensure_incurred_cleaning_expense(
             expense_date=expense_date,
             room_id=room.room_id,
             order_id=order.order_id,
-            payer=ExpensePayer.company if owner_self else ExpensePayer.owner,
+            payer=service_cost_payer(order),
             owner_id=room.owner_id,
             notes=req.notes,
             is_service_fee=True,

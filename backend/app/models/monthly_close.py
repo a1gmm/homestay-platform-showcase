@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from decimal import Decimal
+from collections.abc import Iterable
+from typing import Literal
 
 from sqlalchemy import (
     Boolean,
@@ -47,6 +49,74 @@ MONTHLY_CLOSE_SOURCE_TYPES = (
     "operating_expenses",
 )
 
+# ``utility_receipt`` remains in the persistent allowlist above so historical
+# rows and database constraints stay readable.  It is not a current upload or
+# close requirement: this short-stay business pays utilities as an expense and
+# does not collect a separate utility payment from guests.
+MONTHLY_CLOSE_ACTIVE_SOURCE_TYPES = (
+    "cleaning_statement",
+    "linen_statement",
+    "utility_expense",
+    "ota_statement",
+    "operating_expenses",
+)
+
+
+def uses_legacy_utility_contract(
+    cycle: "MonthlyCloseCycle", *, documents: Iterable[object] = ()
+) -> bool:
+    """Keep six-source evidence and paired reconciliation where it already exists.
+
+    A completed cycle retains its final snapshot after it is reopened, so the
+    snapshot is the durable contract marker.  An unfinished pre-migration cycle
+    has no final snapshot; a linked legacy batch or an actual receipt/expense
+    pair proves that it already entered the old workflow.  A lone historical
+    receipt does not: it is intentionally folded into the new single expense
+    source so the current month can continue without inventing guest receipts.
+    """
+    if isinstance(cycle.final_snapshot, dict):
+        steps = cycle.final_snapshot.get("steps")
+        if isinstance(steps, list):
+            source_step = next(
+                (
+                    step
+                    for step in steps
+                    if isinstance(step, dict)
+                    and step.get("step_key") == "source_collection"
+                ),
+                None,
+            )
+            evidence = (
+                source_step.get("evidence")
+                if isinstance(source_step, dict)
+                else None
+            )
+            summary = evidence.get("summary") if isinstance(evidence, dict) else None
+            sources = summary.get("sources") if isinstance(summary, dict) else None
+            if isinstance(sources, list) and any(
+                isinstance(source, dict)
+                and source.get("source_type") == "utility_receipt"
+                for source in sources
+            ):
+                return True
+
+    utility_documents = [
+        document
+        for document in documents
+        if getattr(document, "source_type", None)
+        in {"utility_receipt", "utility_expense"}
+    ]
+    if any(
+        getattr(document, "engine_type", None) == "utility_recon"
+        and getattr(document, "engine_id", None)
+        for document in utility_documents
+    ):
+        return True
+    return {getattr(document, "source_type", None) for document in utility_documents} >= {
+        "utility_receipt",
+        "utility_expense",
+    }
+
 MONTHLY_CLOSE_INBOX_STATUSES = (
     "received",
     "classified",
@@ -70,6 +140,13 @@ class MonthlyCloseCycle(Base):
         CheckConstraint(
             "status IN ('open', 'completed', 'reopened')",
             name="ck_monthly_close_cycles_status",
+        ),
+        CheckConstraint(
+            "write_control_owner IN ('legacy', 'assistant')",
+            name="ck_monthly_close_cycles_write_control_owner",
+        ),
+        CheckConstraint(
+            "control_version >= 1", name="ck_monthly_close_cycles_control_version"
         ),
     )
 
@@ -106,6 +183,12 @@ class MonthlyCloseCycle(Base):
     monitor_current_step: Mapped[str | None] = mapped_column(String(40))
     monitor_progress: Mapped[int | None] = mapped_column(Integer)
     monitor_blocking_count: Mapped[int | None] = mapped_column(Integer)
+    write_control_owner: Mapped[Literal["legacy", "assistant"]] = mapped_column(
+        String(16), nullable=False, default="legacy", server_default="legacy"
+    )
+    control_version: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=1, server_default="1"
+    )
 
 
 class MonthlyCloseStepConfirmation(Base):
@@ -187,6 +270,9 @@ class MonthlyCloseDocument(Base):
     __tablename__ = "monthly_close_documents"
     __table_args__ = (
         UniqueConstraint(
+            "document_id", "cycle_id", name="uq_monthly_close_document_id_cycle"
+        ),
+        UniqueConstraint(
             "cycle_id", "sha256", name="uq_monthly_close_document_cycle_sha"
         ),
         CheckConstraint(
@@ -267,6 +353,10 @@ class MonthlyCloseInboxItem(Base):
             f"({_sql_values(MONTHLY_CLOSE_SOURCE_TYPES)})",
             name="ck_monthly_close_inbox_source_type",
         ),
+        CheckConstraint(
+            "classification_generation >= 1",
+            name="ck_monthly_close_inbox_classification_generation",
+        ),
         Index("ix_monthly_close_inbox_cycle_status", "cycle_id", "status"),
     )
 
@@ -287,6 +377,9 @@ class MonthlyCloseInboxItem(Base):
     confidence: Mapped[Decimal | None] = mapped_column(Numeric(5, 4))
     suggested_by: Mapped[str | None] = mapped_column(String(24))
     classification_reason: Mapped[str | None] = mapped_column(Text)
+    classification_generation: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=1, server_default="1"
+    )
     status: Mapped[str] = mapped_column(
         String(20), nullable=False, default="received", server_default="received"
     )

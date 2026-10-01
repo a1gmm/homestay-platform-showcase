@@ -1,6 +1,7 @@
 """有界读取异构 Excel，并确定文件角色、表头和月份范围。"""
 
 from datetime import date, datetime
+from decimal import Decimal
 from io import BytesIO
 import re
 import zipfile
@@ -9,6 +10,7 @@ from openpyxl import load_workbook
 import xlrd
 
 from .contracts import DetectedTable, InspectedFile, PreflightResult, WorkbookInput
+from .normalize import normalize_amount
 
 
 MAX_FILE_BYTES = 10 * 1024 * 1024
@@ -44,6 +46,11 @@ def _map_headers(row: tuple) -> dict[str, int]:
             if cleaned in {_clean(item) for item in synonyms}:
                 mapped.setdefault(field, index)
     return mapped
+
+
+def _valid_amount(value: object) -> bool:
+    normalized = normalize_amount(value).value
+    return isinstance(normalized, Decimal) and normalized.is_finite()
 
 
 def _role(columns: dict[str, int]) -> str | None:
@@ -189,6 +196,22 @@ def _inspect_with_mapping(
         if mapping.columns["date"] < len(row)
         and (month := _month(row[mapping.columns["date"]], target_month))
     })
+    amount_field = (
+        "receipt_amount" if mapping.role == "receipt" else "expense_amount"
+    )
+    amount_column = mapping.columns[amount_field]
+    invalid_amount_rows = [
+        mapping.header_row + row_number + 2
+        for row_number, row in enumerate(data_rows)
+        if mapping.columns["date"] < len(row)
+        and _month(row[mapping.columns["date"]], target_month) == target_month
+        and (amount_column >= len(row) or not _valid_amount(row[amount_column]))
+    ]
+    if invalid_amount_rows:
+        row_labels = "、".join(str(row_number) for row_number in invalid_amount_rows[:5])
+        raise WorkbookInspectionError(
+            f"当前月份第 {row_labels} 行金额无法解析，请修正金额列后重试。"
+        )
     table = DetectedTable(
         mapping.role,
         item.filename,
@@ -201,11 +224,39 @@ def _inspect_with_mapping(
     return InspectedFile(item.filename, mapping.role, [table], months, status)
 
 
+def summarize_inspected_file(
+    inspected: InspectedFile,
+    target_month: str,
+) -> tuple[int, Decimal]:
+    """Return the valid target-month row count and amount for human review."""
+    count = 0
+    total = Decimal("0.00")
+    for table in inspected.sheets:
+        date_column = table.columns.get("date")
+        amount_column = table.columns.get(
+            "receipt_amount" if table.role == "receipt" else "expense_amount"
+        )
+        if date_column is None or amount_column is None:
+            continue
+        for row in table.rows:
+            if date_column >= len(row) or amount_column >= len(row):
+                continue
+            if _month(row[date_column], target_month) != target_month:
+                continue
+            amount = normalize_amount(row[amount_column]).value
+            if not isinstance(amount, Decimal) or not amount.is_finite():
+                continue
+            count += 1
+            total += amount
+    return count, total.quantize(Decimal("0.01"))
+
+
 async def inspect_workbook_with_ai(
     item: WorkbookInput,
     mapping=None,
     *,
     target_month: str | None = None,
+    allow_ai: bool = True,
 ) -> InspectedFile:
     """Inspect one workbook; an explicit mapping is always locally revalidated."""
     if mapping is not None:
@@ -213,6 +264,10 @@ async def inspect_workbook_with_ai(
     try:
         return _inspect_file(item, target_month)
     except WorkbookInspectionError as deterministic_error:
+        if not allow_ai:
+            raise WorkbookInspectionError(
+                "智能字段识别已关闭，请人工确认列号"
+            ) from deterministic_error
         _validate_input(item)
         source_sheets = _xlsx_rows(item) if item.filename.lower().endswith(".xlsx") else _xls_rows(item)
         from .ai_mapping import UtilityMappingError, ai_column_mapping

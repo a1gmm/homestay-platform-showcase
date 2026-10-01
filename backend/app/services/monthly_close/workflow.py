@@ -14,7 +14,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.monthly_close import (
-    MONTHLY_CLOSE_SOURCE_TYPES,
+    MONTHLY_CLOSE_ACTIVE_SOURCE_TYPES,
     MONTHLY_CLOSE_STEP_KEYS,
     MonthlyCloseCycle,
     MonthlyCloseDocument,
@@ -26,6 +26,7 @@ from app.models.user import User
 from app.services.audit import log_action_tx
 from app.services.monthly_close.evidence import (
     StepEvidence,
+    compatible_confirmation_hashes,
     build_step_evidences,
     step_confirmation,
 )
@@ -91,7 +92,7 @@ async def get_cycle_by_month(
 
 
 async def get_or_create_cycle(
-    db: AsyncSession, billing_month: str, user_id: str
+    db: AsyncSession, billing_month: str, user_id: str | None
 ) -> MonthlyCloseCycle:
     billing_month = validate_billing_month(billing_month)
     existing = await get_cycle_by_month(db, billing_month)
@@ -106,7 +107,7 @@ async def get_or_create_cycle(
     try:
         async with db.begin_nested():
             db.add(cycle)
-            for source_type in MONTHLY_CLOSE_SOURCE_TYPES:
+            for source_type in MONTHLY_CLOSE_ACTIVE_SOURCE_TYPES:
                 db.add(
                     MonthlyCloseSourceRequirement(
                         requirement_id="MCR-" + uuid4().hex[:12].upper(),
@@ -146,6 +147,7 @@ async def require_cycle_writable(
             select(MonthlyCloseCycle)
             .where(MonthlyCloseCycle.cycle_id == cycle.cycle_id)
             .with_for_update()
+            .execution_options(populate_existing=True)
         )
     ).scalar_one()
     if locked.status == "completed":
@@ -161,11 +163,12 @@ def _effective_steps(
 ) -> list[dict[str, Any]]:
     result: list[dict[str, Any]] = []
     previous_confirmed = True
+    confirmation_hashes = compatible_confirmation_hashes(evidences, confirmations)
     for position, evidence in enumerate(evidences, 1):
         confirmation = confirmations.get(evidence.step_key)
         matches = (
             confirmation is not None
-            and confirmation.evidence_hash == evidence.evidence_hash
+            and confirmation_hashes.get(evidence.step_key) == evidence.evidence_hash
         )
         if confirmation is not None and not matches:
             status = "stale"
@@ -207,6 +210,91 @@ def _effective_steps(
     return result
 
 
+async def build_effective_steps(
+    db: AsyncSession,
+    cycle: MonthlyCloseCycle,
+    evidences: list[StepEvidence],
+) -> list[dict[str, Any]]:
+    """Apply persisted confirmations to the existing nine-step evidence chain."""
+    confirmation_rows = list(
+        (
+            await db.execute(
+                select(MonthlyCloseStepConfirmation).where(
+                    MonthlyCloseStepConfirmation.cycle_id == cycle.cycle_id
+                )
+            )
+        ).scalars()
+    )
+    confirmations = {item.step_key: item for item in confirmation_rows}
+    return _effective_steps(evidences, confirmations)
+
+
+def _completed_snapshot_hashes(cycle: MonthlyCloseCycle) -> dict[str, str] | None:
+    snapshot = cycle.final_snapshot
+    steps = snapshot.get("steps") if isinstance(snapshot, dict) else None
+    if not isinstance(steps, list) or len(steps) != len(MONTHLY_CLOSE_STEP_KEYS):
+        return None
+    hashes: dict[str, str] = {}
+    for step in steps:
+        if not isinstance(step, dict):
+            return None
+        step_key = step.get("step_key")
+        evidence_hash = step.get("evidence_hash")
+        if step_key not in MONTHLY_CLOSE_STEP_KEYS or not isinstance(
+            evidence_hash, str
+        ):
+            return None
+        hashes[str(step_key)] = evidence_hash
+    return hashes if set(hashes) == set(MONTHLY_CLOSE_STEP_KEYS) else None
+
+
+async def completed_cycle_is_fresh(
+    db: AsyncSession,
+    cycle: MonthlyCloseCycle,
+    *,
+    evidences: list[StepEvidence] | None = None,
+) -> bool:
+    """Return only whether a completed cycle still matches live evidence.
+
+    This is deliberately a non-projecting guard. It may read the privileged
+    evidence graph server-side, but no snapshot, amount, identifier, count, or
+    blocker detail crosses this boolean boundary to a low-role projection.
+    """
+    if cycle.status != "completed":
+        return False
+    snapshot_hashes = _completed_snapshot_hashes(cycle)
+    if snapshot_hashes is None:
+        return False
+    confirmation_rows = list(
+        (
+            await db.execute(
+                select(
+                    MonthlyCloseStepConfirmation.step_key,
+                    MonthlyCloseStepConfirmation.evidence_hash,
+                ).where(MonthlyCloseStepConfirmation.cycle_id == cycle.cycle_id)
+            )
+        ).mappings()
+    )
+    confirmation_hashes = {
+        str(row["step_key"]): str(row["evidence_hash"])
+        for row in confirmation_rows
+    }
+    if confirmation_hashes != snapshot_hashes:
+        return False
+    live_evidences = (
+        evidences if evidences is not None else await build_step_evidences(db, cycle)
+    )
+    if any(evidence.blocking_count for evidence in live_evidences):
+        return False
+    live_hashes = {
+        evidence.step_key: evidence.evidence_hash for evidence in live_evidences
+    }
+    return (
+        cycle.monitor_effective_status != "needs_recheck"
+        and live_hashes == snapshot_hashes
+    )
+
+
 async def build_cycle_view(
     db: AsyncSession,
     cycle: MonthlyCloseCycle,
@@ -219,17 +307,15 @@ async def build_cycle_view(
     await db.refresh(cycle, attribute_names=["updated_at"])
     loader = evidence_loader or build_step_evidences
     evidences = await loader(db, cycle)
-    confirmation_rows = list(
-        (
-            await db.execute(
-                select(MonthlyCloseStepConfirmation).where(
-                    MonthlyCloseStepConfirmation.cycle_id == cycle.cycle_id
-                )
-            )
-        ).scalars()
-    )
-    confirmations = {item.step_key: item for item in confirmation_rows}
-    steps = _effective_steps(evidences, confirmations)
+    steps = await build_effective_steps(db, cycle, evidences)
+    # Enrich display after computing immutable evidence hashes.
+    from app.services.monthly_close.issue_locators import issue_order_locators
+    locators = await issue_order_locators(db, cycle.billing_month, evidences)
+    steps = [{**step, "issues": [
+        {**issue, **({"subject": locators[issue["order_id"]]} if issue.get("order_id") in locators else {})}
+        for issue in step.get("issues", [])
+    ]} for step in steps]
+
     first_incomplete = next(
         (item["step_key"] for item in steps if item["status"] != "confirmed"), None
     )
@@ -259,11 +345,21 @@ async def build_cycle_view(
     )
     documents_by_source: dict[str, list[MonthlyCloseDocument]] = {}
     for document in document_rows:
-        documents_by_source.setdefault(document.source_type, []).append(document)
+        logical_source_type = (
+            "utility_expense"
+            if document.source_type == "utility_receipt"
+            else document.source_type
+        )
+        documents_by_source.setdefault(logical_source_type, []).append(document)
     sources = [
         {
             "source_type": source_type,
-            "state": by_source[source_type].state,
+            "state": (
+                "uploaded"
+                if by_source[source_type].state == "pending"
+                and documents_by_source.get(source_type)
+                else by_source[source_type].state
+            ),
             "not_applicable_reason": by_source[source_type].not_applicable_reason,
             "decided_by": by_source[source_type].decided_by,
             "decided_at": (
@@ -292,7 +388,7 @@ async def build_cycle_view(
                 )
             ],
         }
-        for source_type in MONTHLY_CLOSE_SOURCE_TYPES
+        for source_type in MONTHLY_CLOSE_ACTIVE_SOURCE_TYPES
         if source_type in by_source
     ]
     return {
@@ -309,6 +405,18 @@ async def build_cycle_view(
         "reopen_reason": cycle.reopen_reason,
         "updated_at": cycle.updated_at.isoformat() if cycle.updated_at else None,
     }
+
+
+async def build_role_cycle_projection(
+    db: AsyncSession,
+    cycle: MonthlyCloseCycle,
+    actor: User | dict[str, Any],
+) -> dict[str, Any]:
+    """Expose the workspace projection through the existing workflow boundary."""
+    from app.services.monthly_close.projection import build_monthly_close_projection
+
+    projection = await build_monthly_close_projection(db, cycle, actor)
+    return projection.to_dict()
 
 
 async def build_cycle_summary(
@@ -543,19 +651,30 @@ async def build_lightweight_cycle_summaries(
         missing_sources = [
             requirement.source_type
             for requirement in cycle_requirements
-            if requirement.state == "pending"
+            if requirement.source_type in MONTHLY_CLOSE_ACTIVE_SOURCE_TYPES
+            and requirement.state == "pending"
         ]
         inbox_pending_count = sum(
             item.status not in {"confirmed", "dismissed"}
             for item in cycle_inbox
         )
         active_source_types = {
-            document.source_type
+            (
+                "utility_expense"
+                if document.source_type == "utility_receipt"
+                else document.source_type
+            )
             for document in documents_by_cycle.get(cycle.cycle_id, [])
             if document.is_active
         }
+        missing_sources = [
+            source_type
+            for source_type in missing_sources
+            if source_type not in active_source_types
+        ]
         source_document_missing_count = sum(
-            requirement.state == "uploaded"
+            requirement.source_type in MONTHLY_CLOSE_ACTIVE_SOURCE_TYPES
+            and requirement.state == "uploaded"
             and requirement.source_type not in active_source_types
             for requirement in cycle_requirements
         )
@@ -677,7 +796,7 @@ async def confirm_step(
 
     now = datetime.now(timezone.utc)
     confirmation = confirmations.get(step_key)
-    if confirmation is not None and confirmation.evidence_hash == current.evidence_hash:
+    if confirmation is not None and compatible_confirmation_hashes(evidences, confirmations).get(step_key) == current.evidence_hash:
         return confirmation
     if confirmation is None:
         confirmation = MonthlyCloseStepConfirmation(
@@ -709,37 +828,51 @@ async def confirm_step(
         confirmation.confirmed_at = now
 
     if step_key == MONTHLY_CLOSE_STEP_KEYS[-1]:
-        locked.status = "completed"
-        locked.completed_by = user_id
-        locked.completed_at = now
-        locked.monitor_effective_status = "completed"
-        locked.monitor_current_step = None
-        locked.monitor_progress = 9
-        locked.monitor_blocking_count = 0
-        locked.final_snapshot = {
-            "billing_month": locked.billing_month,
-            "steps": [
-                {
-                    "step_key": item.step_key,
-                    "evidence_hash": item.evidence_hash,
-                    "evidence": item.snapshot,
-                }
-                for item in evidences
-            ],
-        }
-    await log_action_tx(
-        db,
-        user_id,
-        "monthly_close.step.confirm",
-        "monthly_close",
-        locked.cycle_id,
-        after_data={
-            "billing_month": locked.billing_month,
-            "step_key": step_key,
-            "evidence_hash": current.evidence_hash,
-        },
-    )
-    await db.commit()
+        # The legacy ninth-step action may prepare the canonical close proposal,
+        # but completion remains exclusively owned by its approved execution.
+        from app.services.monthly_close.finalization import (
+            build_finalization_proposal,
+        )
+
+        try:
+            await log_action_tx(
+                db,
+                user_id,
+                "monthly_close.step.confirm",
+                "monthly_close",
+                locked.cycle_id,
+                after_data={
+                    "billing_month": locked.billing_month,
+                    "step_key": step_key,
+                    "evidence_hash": current.evidence_hash,
+                },
+            )
+            await build_finalization_proposal(
+                db,
+                locked,
+                {"user_id": user_id},
+                request_id=(
+                    f"legacy-step:{locked.cycle_id}:{current.evidence_hash[:16]}"
+                ),
+                evidence_loader=loader,
+            )
+        except Exception:
+            await db.rollback()
+            raise
+    else:
+        await log_action_tx(
+            db,
+            user_id,
+            "monthly_close.step.confirm",
+            "monthly_close",
+            locked.cycle_id,
+            after_data={
+                "billing_month": locked.billing_month,
+                "step_key": step_key,
+                "evidence_hash": current.evidence_hash,
+            },
+        )
+        await db.commit()
     await db.refresh(confirmation)
     return confirmation
 
