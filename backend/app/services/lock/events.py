@@ -22,6 +22,9 @@ from app.core.datetime_helpers import now_cn
 from app.models.door_code import DoorCode, DoorCodePurpose, DoorCodeStatus
 from app.models.lock_device import LockDevice
 from app.models.lock_event import LockEvent
+from app.models.order import Order, OrderStatus
+from app.services.lock.factory import get_lock_provider
+from app.services.lock.orchestrator import OrderLockService
 from app.services.feishu_lead_alert import send_lock_battery_alert
 
 logger = logging.getLogger(__name__)
@@ -52,6 +55,7 @@ def _epoch_to_dt(epoch) -> datetime | None:
 
 async def process_lock_event(db: AsyncSession, payload: dict) -> ProcessResult:
     result = ProcessResult()
+    recovered = None
     data = (payload or {}).get("data") or {}
     log_id = data.get("logId")
     if not log_id:
@@ -98,7 +102,8 @@ async def process_lock_event(db: AsyncSession, payload: dict) -> ProcessResult:
         # 补 apartmentAddPasswordKey 客户端超时（码已进锁但没收到同步成功）的确认缺口，
         # 断掉「以为没成→每轮重推→连环响」的病根。
         if log_type == _LOG_TYPE_ADD_KEY and device.room_id:
-            result.code_confirmed = await _confirm_added_key(db, device.room_id)
+            recovered = await _confirm_added_key(db, device)
+            result.code_confirmed = recovered is not None
 
     try:
         await db.commit()
@@ -108,31 +113,41 @@ async def process_lock_event(db: AsyncSession, payload: dict) -> ProcessResult:
         result.deduped = True
         result.device_updated = False
         result.alert_sent = False
+        result.code_confirmed = False
+        recovered = None
+    if recovered:
+        from app.services.lock.hooks import notify_recovered_guest_codes
+        await notify_recovered_guest_codes(db, [recovered])
     return result
 
 
-async def _confirm_added_key(db: AsyncSession, room_id: str) -> bool:
-    """收到该房 logType=8「添加钥匙」→ 把它 pending/manual 的客人码坐实为 active。
-
-    apartmentAddPasswordKey 客户端超时时码其实已进锁，这条回调是最可靠的下码确认，
-    故 pending（待确认）与 manual（重推超时转人工、其实可能已进锁）都据此翻活并清退避。
-    只认客人码；同房多把取最新。返回是否确认了一把。keyId 精确匹配需 logKeys 附录字段，
-    本期按房号+用途粗匹配（同房至多一把在途客人码）。
-    """
+async def _confirm_added_key(db: AsyncSession, device: LockDevice) -> tuple[str, str] | None:
+    """A room-level event is only a hint: confirm the exact password on the cloud."""
     code = (await db.execute(
         select(DoorCode).where(
-            DoorCode.room_id == room_id,
+            DoorCode.room_id == device.room_id,
             DoorCode.purpose == DoorCodePurpose.guest,
             DoorCode.status.in_([DoorCodeStatus.pending, DoorCodeStatus.manual]),
-        ).order_by(DoorCode.created_at.desc())
+        ).order_by(DoorCode.created_at.desc()).with_for_update(skip_locked=True)
     )).scalars().first()
     if code is None:
-        return False
+        return None
+    order = await db.get(Order, code.order_id) if code.order_id else None
+    if order is None or order.is_deleted or order.order_status not in (
+        OrderStatus.checked_in, OrderStatus.pending_checkout,
+    ):
+        return None
+    end = code.end_at
+    if end is None or (end if end.tzinfo else end.replace(tzinfo=timezone.utc)) <= datetime.now(timezone.utc):
+        return None
+    service = OrderLockService(provider=get_lock_provider(), db=db)
+    if not await service._confirmed_on_cloud(device.vendor_room_id, code):
+        return None
     code.status = DoorCodeStatus.active
     code.retry_count = 0
     code.next_retry_at = None
     code.last_error = None
-    return True
+    return (code.order_id, code.room_id)
 
 
 async def _match_device(

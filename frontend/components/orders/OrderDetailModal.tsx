@@ -310,6 +310,7 @@ export default function OrderDetailModal({
   });
   const lockCodes = lockCodesResp?.codes;
   const lockCodesIssuing = lockCodesResp?.issuing === true;
+  const lockCodesNeedAttention = lockCodesResp?.needs_attention === true;
 
   // 内联日期编辑 mutation：payload 计算在 lib/order-dates.ts（含"续住保留
   // daily_prices / 缩短住不重摊 / 新增日取上一日价"语义，见该文件注释与单测）。
@@ -1410,16 +1411,21 @@ export default function OrderDetailModal({
                 重发到飞书
               </Button>
             </div>
+            {lockCodesNeedAttention && (
+              <div role="alert" style={{ fontSize: 13, color: tokens.color.text.secondary, marginBottom: 8 }}>
+                门锁密码下发未确认，已转人工处理。请核对门锁及厂商App，不要将旧密码发给客人。
+              </div>
+            )}
+            {lockCodesIssuing && (
+              <div role="status" style={{ fontSize: 13, color: tokens.color.text.secondary, marginBottom: 8 }}>
+                <LoadingOutlined style={{ marginRight: 6 }} />
+                门锁密码尚未确认下发成功，系统正在重试；确认后才会显示并发送。
+              </div>
+            )}
             {lockCodes === undefined ? (
               <div style={{ fontSize: 13, color: tokens.color.text.tertiary }}>加载中…</div>
             ) : lockCodes.length === 0 ? (
-              lockCodesIssuing ? (
-                // 码正在下发/重试中（锁一时离线）：诚实告知会自愈，别再吓前台说「未办理入住/失效」。
-                <div style={{ fontSize: 13, color: tokens.color.brand.primary }}>
-                  <LoadingOutlined style={{ marginRight: 6 }} />
-                  门锁密码正在下发中（锁可能一时离线），系统会自动重推，稍候即到，无需手动操作。
-                </div>
-              ) : (
+              lockCodesIssuing || lockCodesNeedAttention ? null : (
                 <div style={{ fontSize: 13, color: tokens.color.text.tertiary }}>
                   暂无可用密码（未办理入住 / 房间未绑锁 / 码已失效）
                 </div>

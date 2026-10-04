@@ -411,6 +411,7 @@ export const ordersApi = {
         // 空态时区分「正在下发/重试中（会自愈）」与「真没码」：入住瞬间下码可能 FAILED
         // （锁一时离线），gather 取不到但重试轮会自动重推 → issuing=true。
         issuing?: boolean;
+        needs_attention?: boolean;
       }>(`/orders/${id}/lock/codes`)
       .then((r) => r.data),
   // 续住关联（软关联：拴成一段连续入住，不合并不删单）

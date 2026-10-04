@@ -2449,16 +2449,18 @@ async def resend_lock_card(order_id: str, db: DBSession, current_user: CurrentUs
     if not order:
         raise HTTPException(status_code=404, detail="订单不存在")
 
-    from app.services.lock.hooks import notify_checkin_codes, has_inflight_guest_code
+    from app.services.lock.hooks import notify_checkin_codes, has_inflight_guest_code, has_manual_guest_code
     # 押金上传卡入住时已发过，重发只发密码卡
     pushed = await notify_checkin_codes(db, order, include_deposit_card=False)
     if not pushed:
+        if await has_manual_guest_code(db, order):
+            raise HTTPException(status_code=400, detail="门锁密码下发未确认，已转人工处理。请核对门锁及厂商App，不要将旧密码发给客人。")
         # 区分「下发/重试中」与「真没码」：码 FAILED（锁一时离线）时 retry 轮会自动重推，
         # 别再吓前台说「未办理入住/失效」——那三条这时全是假的。
         if await has_inflight_guest_code(db, order):
             raise HTTPException(
                 status_code=400,
-                detail="门锁密码正在下发/重试中（锁可能一时离线），系统会自动重推，请稍候刷新，无需手动操作")
+                detail="门锁密码尚未确认下发成功，系统正在重试。确认成功后才能发送，请稍后刷新。")
         raise HTTPException(
             status_code=400,
             detail="该订单没有可推送的门锁密码（未办理入住 / 房间未绑锁 / 码已失效）")
@@ -2476,7 +2478,7 @@ async def view_lock_codes(order_id: str, db: DBSession, current_user: CurrentUse
     """查看本单当前门锁密码（解密后明文），供前台在详情里直接看+复制（2026-07-31）。
 
     兜底：飞书「重发密码卡」一抖就没退路、UI 从不显示密码本身 → 前台被卡在「想重新
-    发密码都没地方发」。此端点把现有码解密回给前台（可见口径同 resend：active/pending
+    发密码都没地方发」。此端点把现有码解密回给前台（可见口径同 resend：仅 active
     的客人码）。门锁密码是敏感数据 → assert_can_write（仅 admin/operator，与 resend 同
     audience，不新增暴露面）。只读、不碰门锁；每次查看写审计。无可用码 → 空列表（不是
     400——读接口空是合法状态，前端据此显示「暂无可用密码」）。"""
@@ -2487,13 +2489,14 @@ async def view_lock_codes(order_id: str, db: DBSession, current_user: CurrentUse
     if not order:
         raise HTTPException(status_code=404, detail="订单不存在")
 
-    from app.services.lock.hooks import gather_active_guest_codes, has_inflight_guest_code
+    from app.services.lock.hooks import gather_active_guest_codes, has_inflight_guest_code, has_manual_guest_code
     codes = await gather_active_guest_codes(db, order)
 
     # 空态区分「正在下发/重试中（会自愈）」与「真没码」：入住瞬间下码可能 FAILED（锁一时
     # 离线），gather 取不到但 retry 轮会自动重推 → issuing=True，前端据此显示诚实文案而非
-    # 误导的「未办理入住/失效」，并轻量轮询自愈。有码时不必再判（codes 非空即 issuing=False）。
-    issuing = bool(not codes and await has_inflight_guest_code(db, order))
+    # 误导的「未办理入住/失效」，并轻量轮询自愈。多房订单即使部分有码，也要显示剩余房间的下发状态。
+    issuing = await has_inflight_guest_code(db, order)
+    needs_attention = await has_manual_guest_code(db, order)
 
     # 审计只在真取到密码时写（谁在何时看了哪单的密码）；空态不涉密、且前端会轮询自愈，
     # 若每次空查都写审计会刷屏。不记密码明文本身。
@@ -2502,7 +2505,7 @@ async def view_lock_codes(order_id: str, db: DBSession, current_user: CurrentUse
             db, current_user["user_id"], "order.lock_code_view", "order", order_id,
             notes=f"查看门锁密码（{len(codes)} 间）",
         )
-    return {"codes": codes, "issuing": issuing}
+    return {"codes": codes, "issuing": issuing, "needs_attention": needs_attention}
 
 
 # ─── 续住关联（软关联：拴成一段连续入住，不合并不删单）────────────────────────────

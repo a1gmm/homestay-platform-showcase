@@ -10,7 +10,7 @@
    禁止 strip/replace —— 去掉换行会算出完全不同的 key 与密文。
 """
 import hashlib
-from base64 import b64encode
+from base64 import b64encode, b64decode
 
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives.padding import PKCS7
@@ -33,3 +33,12 @@ def aes_encrypt(token_id: str, plaintext: str) -> str:
     cipher = Cipher(algorithms.AES(key), modes.CBC(iv))
     encryptor = cipher.encryptor()
     return b64encode(encryptor.update(data) + encryptor.finalize()).decode()
+
+
+def aes_decrypt(token_id: str, ciphertext: str) -> str:
+    """Decode a vendor key for in-process comparison only; never log its value."""
+    key = _derive_key(token_id)
+    decryptor = Cipher(algorithms.AES(key), modes.CBC(key)).decryptor()
+    data = decryptor.update(b64decode(ciphertext, validate=True)) + decryptor.finalize()
+    unpadder = PKCS7(_AES_BLOCK_BITS).unpadder()
+    return (unpadder.update(data) + unpadder.finalize()).decode()

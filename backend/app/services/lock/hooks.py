@@ -132,7 +132,7 @@ async def _window_was_inverted(db, order_id: str, room_id: str) -> bool:
 
 async def _alert_if_codes_missing(db, order, only_room_ids=None) -> None:
     """有绑锁的房却没成功下码(FAILED/无码)→ 飞书告警，别静默(王总明确要求，2026-07-12)。
-    pending 码算成功：已随卡推给前台、锁上线后 retry_pending 会确认，不算失败。
+    pending 码交由 retry_pending 确认，暂不发送密码卡；超时转人工后另行告警。
     only_room_ids 给定则只检查这几间房（单间入住，别把没入住的房误报缺码）。
 
     判定的是「客人这一段进不进得了门」，不是「本单名下有没有 DoorCode 行」。两步都必须
@@ -377,7 +377,7 @@ async def notify_checkin_codes(db, order, only_room_ids=None,
         conds = [
             DoorCode.order_id == order.order_id,
             DoorCode.purpose == DoorCodePurpose.guest,
-            DoorCode.status.in_([DoorCodeStatus.active, DoorCodeStatus.pending]),
+            DoorCode.status == DoorCodeStatus.active,
             DoorCode.password.isnot(None),
         ]
         if only is not None:
@@ -432,13 +432,13 @@ async def notify_checkin_codes(db, order, only_room_ids=None,
 async def gather_active_guest_codes(db, order) -> list[dict]:
     """取本单当前可用的客人门锁密码（解密后明文），供前台在详情里查看/复制（兜底）。
 
-    可见口径与 notify_checkin_codes 一致：active/pending 的客人码、有密文、每房去重
+    可见口径与 notify_checkin_codes 一致：仅 active 客人码、有密文、每房去重
     （取最新一条）。解密失败的码跳过（不把乱码/密文当密码给前台）。只读、不碰门锁。
     返回 [{room_id, room_name, password}]，无可用码时返回空列表。"""
     conds = [
         DoorCode.order_id == order.order_id,
         DoorCode.purpose == DoorCodePurpose.guest,
-        DoorCode.status.in_([DoorCodeStatus.active, DoorCodeStatus.pending]),
+        DoorCode.status == DoorCodeStatus.active,
         DoorCode.password.isnot(None),
     ]
     rows = (await db.execute(
@@ -480,11 +480,19 @@ async def has_inflight_guest_code(db, order) -> bool:
     return row is not None
 
 
-async def notify_recovered_guest_codes(db, recovered: list[tuple[str, str]]) -> None:
-    """retry 把首发 FAILED 的客人码翻活后补发密码卡（2026-07-18）。
+async def has_manual_guest_code(db, order) -> bool:
+    row = (await db.execute(select(DoorCode.id).where(
+        DoorCode.order_id == order.order_id,
+        DoorCode.purpose == DoorCodePurpose.guest,
+        DoorCode.status == DoorCodeStatus.manual,
+    ).limit(1))).first()
+    return row is not None
 
-    首发 FAILED 时 notify_checkin_codes 不推卡（只推 active/pending），retry 成功后
-    没人补 → 前台永远等不到密码。pending 码首发已带密码推过卡，不在此列（防重复刷群）。
+
+async def notify_recovered_guest_codes(db, recovered: list[tuple[str, str]]) -> None:
+    """retry 或回调确认客人码生效后补发密码卡（2026-07-18）。
+
+    pending/failed 均不提前推卡；只在确认变为 active 后补发。
     fail-safe：飞书任何问题只 log，绝不影响 retry 本身的落库。
     """
     by_order: dict[str, list[str]] = {}

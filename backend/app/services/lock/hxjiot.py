@@ -21,7 +21,7 @@ from typing import Awaitable, Callable
 
 import httpx
 
-from app.services.lock.aes import aes_encrypt
+from app.services.lock.aes import aes_encrypt, aes_decrypt
 from app.services.lock.types import IssuedCode, IssueOutcome, VendorKey, VendorRoom
 from app.services.lock.util import gen_numeric_password
 
@@ -149,7 +149,8 @@ class HxjiotProvider:
                 resp = await self._request("apartmentAddPasswordKey", _data)
             except (httpx.TimeoutException, httpx.TransportError) as exc:
                 # 客户端侧超时/网络抖动（生产服务端推码慢，常态）→ 受理待重试，绝不丢码
-                return IssuedCode(outcome=IssueOutcome.QUEUED, password=plaintext, error=str(exc))
+                return IssuedCode(outcome=IssueOutcome.QUEUED, password=plaintext,
+                                  error=f"{type(exc).__name__}: vendor request not confirmed")
             except HxjiotError as exc:
                 last_error = exc
                 # 自动生成的密码撞了 → 换码重试；调用方指定的密码撞了不重试
@@ -237,15 +238,25 @@ class HxjiotProvider:
         start = 0
         while True:
             page_start = start
+            request_token = None
+            def key_request(token, s=page_start):
+                nonlocal request_token
+                request_token = token
+                return {"roomId": vendor_room_id, "startNum": s, "getNum": _ROOM_LIST_PAGE_SIZE}
             data = await self._request(
                 "apartmentKeyList",
-                lambda _token, s=page_start: {
-                    "roomId": vendor_room_id, "startNum": s, "getNum": _ROOM_LIST_PAGE_SIZE,
-                },
+                key_request,
             )
             page = data.get("list", []) or []
             for r in page:
                 end = r.get("endTime")
+                begin = r.get("beginTime")
+                password = None
+                if r.get("password") and request_token:
+                    try:
+                        password = aes_decrypt(request_token, r["password"])
+                    except (ValueError, TypeError, UnicodeError):
+                        pass  # An unreadable key cannot confirm a local password.
                 keys.append(
                     VendorKey(
                         phone_no=r.get("phoneNo"),
@@ -253,6 +264,9 @@ class HxjiotProvider:
                         end_at=(datetime.fromtimestamp(int(end), tz=timezone.utc)
                                 if isinstance(end, (int, float)) else None),
                         vendor_key_id=r.get("keyId"),
+                        password=password,
+                        start_at=(datetime.fromtimestamp(int(begin), tz=timezone.utc)
+                                  if isinstance(begin, (int, float)) else None),
                     )
                 )
             start += len(page)

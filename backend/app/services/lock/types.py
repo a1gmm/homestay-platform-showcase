@@ -7,7 +7,7 @@
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 
@@ -60,3 +60,5 @@ class VendorKey:
     key_state: int | None
     end_at: datetime | None = None
     vendor_key_id: str | None = None
+    password: str | None = field(default=None, repr=False)
+    start_at: datetime | None = None

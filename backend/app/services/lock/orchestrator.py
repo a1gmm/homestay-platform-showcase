@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import hmac
 import logging
 from datetime import datetime, time, timedelta, timezone
 
@@ -1152,14 +1153,14 @@ class OrderLockService:
             )
             if not in_house:
                 # 客人已不在（退房/取消/删除/无单）→ 不是「进不了门」，且清掉残留去重标记
-                if code.last_error == _MANUAL_ALERTED:
-                    code.last_error = None
+                if _MANUAL_ALERTED in (code.last_error or ""):
+                    code.last_error = code.last_error.replace(_MANUAL_ALERTED, "").strip("； ") or None
                 continue
             if order.stay_group_id is not None:
                 from app.services import stay_group as _sg
                 if not await _sg.is_managed_split(self._db, order.stay_group_id):
                     continue  # ordinary continuation groups have their group-level alert
-            if code.last_error == _MANUAL_ALERTED:
+            if _MANUAL_ALERTED in (code.last_error or ""):
                 continue  # 已告警过，别刷屏
             created = code.created_at
             if created is None:
@@ -1175,13 +1176,13 @@ class OrderLockService:
                 f"（系统自动重推超时后已转人工，至今仍未设置成功）\n"
                 f"请前台到慧享家 App 手动为该房设置客人密码，或检查门锁网络"
             )
-            code.last_error = _MANUAL_ALERTED
+            code.last_error = "；".join(filter(None, [code.last_error, _MANUAL_ALERTED]))
             alerted += 1
         await self._db.commit()
         return {"alerted": alerted}
 
     async def _confirmed_on_cloud(self, vendor_room_id: str, code) -> bool:
-        """查云端钥匙列表旁证「码已下发生效」：同手机号 + keyState==3 + 有效期覆盖本码退房日。
+        """查云端钥匙列表旁证「码已下发生效」：同手机号和密码 + keyState==3 + 有效期覆盖本码。
 
         云端视角（非物理锁真值），仅作重推前兜底确认，避免回调断时对已下好码的锁瞎重推。
         provider 无 list_keys 能力（如测试替身）或查询失败 → 返回 False，照常重推（宁可多推不漏）。
@@ -1197,6 +1198,18 @@ class OrderLockService:
         for k in keys:
             if k.phone_no != code.phone_no or k.key_state != KEY_STATE_NORMAL:
                 continue
+            password = decrypt_code(code.password) if code.password else None
+            if not password or not getattr(k, "password", None):
+                continue
+            if not hmac.compare_digest(password.encode(), k.password.encode()):
+                continue  # A different key for the same person is not this password.
+            if code.start_at is not None:
+                if getattr(k, "start_at", None) is None:
+                    continue
+                ks = k.start_at if k.start_at.tzinfo else k.start_at.replace(tzinfo=timezone.utc)
+                cs = code.start_at if code.start_at.tzinfo else code.start_at.replace(tzinfo=timezone.utc)
+                if ks > cs:
+                    continue
             if code.end_at is not None:
                 if k.end_at is None:
                     continue
@@ -1219,10 +1232,10 @@ class OrderLockService:
                     DoorCodePurpose.guest, DoorCodePurpose.cleaning, DoorCodePurpose.keeper,
                 ]),
                 DoorCode.status.in_([DoorCodeStatus.pending, DoorCodeStatus.failed]),
-            )
+            ).with_for_update(skip_locked=True)
         )
         processed = 0
-        # 首发 FAILED 的客人码当时没推过密码卡（notify 只认 active/pending），翻活后要补
+        # 未确认的客人码不提前推卡；本轮确认 active 后补发。
         recovered_unnotified: list[tuple[str, str]] = []
         for code in rows.scalars().all():
             if not (code.room_id and code.phone_no and code.password):
@@ -1249,7 +1262,8 @@ class OrderLockService:
                     created = created.replace(tzinfo=timezone.utc)
                 if created < self._clock() - _RETRY_MAX_AGE:
                     code.status = DoorCodeStatus.manual
-                    code.last_error = "锁持续离线超时，停止自动重推，请前台检查网络或手动设置"
+                    code.last_error = "下发超过重试时限仍未确认，已停止自动重推，请人工核对" + (
+                        f"；最近失败：{code.last_error}" if code.last_error else "")
                     logger.warning(
                         "retry_pending 放弃重推：room=%s order=%s 建码已超 %s 仍未确认，转人工",
                         code.room_id, code.order_id, _RETRY_MAX_AGE,
@@ -1267,7 +1281,7 @@ class OrderLockService:
             vendor_room_id = await self._vendor_room_id(code.room_id)
             if vendor_room_id is None:
                 continue
-            # 双保险（兜底 PULL）：重推前先查云端钥匙列表，同手机号已有 keyState=3 且有效期
+            # 双保险（兜底 PULL）：重推前先查云端钥匙列表，同手机号和密码已有 keyState=3 且有效期
             # 覆盖本码退房日 → 码其实已下发，直接确认、不再重推（省一次会让在线锁播报的下码）。
             # 回调 logType=8 是首选确认；此路防回调断时也能收敛。查询失败/无此能力→照常重推。
             if await self._confirmed_on_cloud(vendor_room_id, code):
@@ -1275,13 +1289,14 @@ class OrderLockService:
                 code.retry_count = 0
                 code.next_retry_at = None
                 code.last_error = None
+                if code.purpose == DoorCodePurpose.guest:
+                    recovered_unnotified.append((code.order_id, code.room_id))
                 processed += 1
                 continue
             label = {
                 DoorCodePurpose.cleaning: "保洁",
                 DoorCodePurpose.keeper: "查房",
             }.get(code.purpose, "客人")
-            was_failed = code.status == DoorCodeStatus.failed
             result = await self._provider.issue_code(
                 vendor_room_id=vendor_room_id,
                 phone=code.phone_no,
@@ -1302,8 +1317,8 @@ class OrderLockService:
             elif code.status in (DoorCodeStatus.pending, DoorCodeStatus.failed):
                 code.retry_count = (code.retry_count or 0) + 1
                 code.next_retry_at = self._clock() + _backoff_delay(code.retry_count)
-            if (was_failed and code.purpose == DoorCodePurpose.guest
-                    and code.status in (DoorCodeStatus.active, DoorCodeStatus.pending)):
+            if (code.purpose == DoorCodePurpose.guest
+                    and code.status == DoorCodeStatus.active):
                 recovered_unnotified.append((code.order_id, code.room_id))
             processed += 1
         await self._db.commit()
