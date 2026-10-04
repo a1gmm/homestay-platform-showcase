@@ -2667,8 +2667,8 @@
     {
       "executable": false,
       "path": "frontend/app/layout.tsx",
-      "sha256": "36fb7e122714b94c4908766b6a3f62cb66404e4cce69ecdac50d71c6ac383110",
-      "size": 1651
+      "sha256": "54355278b6ff6519af995d5638f58bcfa59d543141f94d3e17d43f18565f06dd",
+      "size": 1607
     },
     {
       "executable": false,
@@ -2745,8 +2745,8 @@
     {
       "executable": false,
       "path": "frontend/app/providers.tsx",
-      "sha256": "07f187ff5e2806fb1108937e1c8885244f4b23592229b811d997c43660528a0c",
-      "size": 9560
+      "sha256": "36d4e8cbd4243e7d3170015812654172d454e64a80ba2a727610e4d194fe14b1",
+      "size": 9760
     },
     {
       "executable": false,
@@ -3249,8 +3249,8 @@
     {
       "executable": false,
       "path": "frontend/components/orders/OrderDetailModal.tsx",
-      "sha256": "ed49738f415251b9f9b4c850985086776220d8aa455f589340360fb34ff584b8",
-      "size": 77689
+      "sha256": "030be27f2c289d1b53d779939a908434e795fbfe89ae45238e942abb12fb4d07",
+      "size": 78282
     },
     {
       "executable": false,
@@ -3291,8 +3291,8 @@
     {
       "executable": false,
       "path": "frontend/components/orders/TransferRoomModal.tsx",
-      "sha256": "1a9e7430952fc00655454092b601445bc54bd29fb0884b6e6d6c7cf8f9a32823",
-      "size": 10524
+      "sha256": "4ef1c45c48dbb9a7d5a2e48caaf0fa0ed3d53bceddca39b2946c519e2750a5f2",
+      "size": 10342
     },
     {
       "executable": false,
@@ -3347,6 +3347,12 @@
       "path": "frontend/components/orders/detail/RevertCheckoutModal.tsx",
       "sha256": "342c510d153b5ee3ad37d7e832868daf49e6325df37be664560caa5a24575cdc",
       "size": 2530
+    },
+    {
+      "executable": false,
+      "path": "frontend/components/orders/detail/StayGroupTransferModal.tsx",
+      "sha256": "5c5b233d1b0c380f4c671fa130cc988b7d52df661bf4eda51df4d6b12c4a92a7",
+      "size": 3461
     },
     {
       "executable": false,
@@ -4375,6 +4381,6 @@
       "size": 920
     }
   ],
-  "revision": "4b5bd4701d9e4bcefaad13c367e0f4f6e67011df",
+  "revision": "55bdb6e8c21b8b7b04c37f4bf0292accdda9358f",
   "version": 1
 }

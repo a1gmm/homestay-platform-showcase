@@ -1,5 +1,9 @@
 "use client";
 
+// Register the React 19 renderer in the client bundle: a side-effect import
+// from the server layout does not execute this client module in the browser.
+import "@ant-design/v5-patch-for-react-19";
+
 import {
   MutationCache,
   QueryCache,

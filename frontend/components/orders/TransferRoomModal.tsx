@@ -6,6 +6,7 @@ import { MobileInputNumber } from "@/components/ui/MobileInputNumber";
 import dayjs, { Dayjs } from "dayjs";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { ordersApi, roomsApi, extractErrorMessage } from "@/lib/api";
+import { invalidateOrderRelated } from "@/lib/order-cache";
 import type { OrderOut, RoomOut } from "@/lib/types";
 import { tokens } from "@/lib/design-tokens";
 import { ROOM_STATUS_COLOR, ROOM_STATUS_LABEL } from "@/lib/status-display";
@@ -94,10 +95,7 @@ export function TransferRoomModal({ order, orderRoomId: orderRoomIdProp, onClose
         .then((r) => r.data),
     onSuccess: () => {
       message.success("已换房，请把新房密码发给客人");
-      qc.invalidateQueries({ queryKey: ["orders"] });
-      qc.invalidateQueries({ queryKey: ["order", order!.order_id] }); // 刷新打开中的订单详情
-      qc.invalidateQueries({ queryKey: ["rooms"] });
-      qc.invalidateQueries({ queryKey: ["staff", "calendar"] });
+      invalidateOrderRelated(qc);
       reset();
       onSuccess?.();
       onClose();

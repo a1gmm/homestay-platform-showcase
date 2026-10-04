@@ -28,6 +28,7 @@ import OrderAuditTimeline from "./OrderAuditTimeline";
 import EditOrderModal from "./EditOrderModal";
 import PaymentModal from "./PaymentModal";
 import { TransferRoomModal } from "./TransferRoomModal";
+import { StayGroupTransferModal } from "./detail/StayGroupTransferModal";
 import { CheckinDepositModal } from "./detail/CheckinDepositModal";
 import { RevertCheckoutModal } from "./detail/RevertCheckoutModal";
 import { RevertCheckinModal } from "./detail/RevertCheckinModal";
@@ -211,6 +212,7 @@ export default function OrderDetailModal({
 
   const [assignOpen, setAssignOpen] = useState(false);
   const [transferOpen, setTransferOpen] = useState(false);
+  const [groupTransferOpen, setGroupTransferOpen] = useState(false);
   const [transferRowId, setTransferRowId] = useState<string | undefined>(undefined);
   const [pickedOrderRoomId, setPickedOrderRoomId] = useState<string | undefined>(undefined);
   const [checkoutOpen, setCheckoutOpen] = useState(false);
@@ -907,6 +909,8 @@ export default function OrderDetailModal({
               日期/晚数/房间序列全取后端 group_view 的口径（已排除取消段），前端不重算。 */}
           {isGroup && (
             <div style={{ gridColumn: "1 / -1", display: "flex", flexDirection: "column", gap: 8 }}>
+              {!privacyMode && <div><Button icon={<HomeOutlined />} onClick={() => setGroupTransferOpen(true)}>换房</Button>
+                <span style={{ marginLeft: 8, fontSize: 12, color: tokens.color.text.secondary }}>选择要换房的日期和房间</span></div>}
               <Field label="整段日期">
                 <span className="tabular">
                   {stayGroup!.check_in_date} → {stayGroup!.check_out_date}
@@ -1626,6 +1630,12 @@ export default function OrderDetailModal({
           onClose={() => setEditSegment(null)}
         />
       )}
+
+      {groupTransferOpen && <StayGroupTransferModal
+        key={order.order_id}
+        segments={groupSegments}
+        onClose={() => setGroupTransferOpen(false)}
+      />}
 
       {/* 统一换房弹窗（免费升级 / 房间故障 / 客人要求）——已排房订单走此处 */}
       <TransferRoomModal
