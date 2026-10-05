@@ -701,13 +701,15 @@ export const ownersApi = {
 
 // ─── Tasks ────────────────────────────────────────────────────────────────────
 export const tasksApi = {
-  workspace: (params?: { status?: string; keyword?: string; assignee_id?: string; deadline?: string; overdue_only?: boolean; attention?: string; page?: number; page_size?: number }) =>
+  workspace: (params?: { work_scope?: string; status?: string; keyword?: string; assignee_id?: string; deadline?: string; overdue_only?: boolean; attention?: string; page?: number; page_size?: number }) =>
     api.get<import("./types").TaskWorkspace>("/tasks/workspace", { params }),
   list: (params?: { status?: string; order_id?: string; assignee_id?: string; overdue_only?: boolean }) =>
     api.get<TaskOut[]>("/tasks", { params }),
   create: (data: TaskCreate) => api.post<TaskOut>("/tasks", data),
   update: (id: string, data: TaskUpdate) => api.patch<TaskOut>(`/tasks/${id}`, data),
   delete: (id: string) => api.delete(`/tasks/${id}`),
+  archive: (id: string, data: { apply?: boolean; reason?: string; expected_fingerprint?: string }) =>
+    api.post<{ fingerprint: string; effect: string; applied: boolean; order_id: string; room_id: string | null }>(`/tasks/${id}/archive`, data),
   // Feature 4: Cleaning review workflow
   submit: (id: string, notes?: string) => api.post<TaskOut>(`/tasks/${id}/submit`, { notes }),
   review: (id: string, approved: boolean, rejection_reason?: string) =>

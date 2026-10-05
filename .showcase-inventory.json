@@ -681,8 +681,8 @@
     {
       "executable": false,
       "path": "backend/app/api/v1/orders.py",
-      "sha256": "c13fefb4d85c3e1296eb797924b4477754eacb8534b3bfa7e1c6c2ea363127bb",
-      "size": 162359
+      "sha256": "2e97d2dfc35aeea3efe653dad4dd311e5d93e145397c20081a13d0d489fffdc8",
+      "size": 162835
     },
     {
       "executable": false,
@@ -747,8 +747,8 @@
     {
       "executable": false,
       "path": "backend/app/api/v1/tasks.py",
-      "sha256": "71c33b18bf42e167343cb68145ad8c088a66402dd0c2ea4309311530247b6ed3",
-      "size": 19969
+      "sha256": "f0d68e615ba3244f4fa7fe9edf673b3215aab8f3e9011eee911d0afca0ca21f6",
+      "size": 24166
     },
     {
       "executable": false,
@@ -807,8 +807,8 @@
     {
       "executable": false,
       "path": "backend/app/core/deps.py",
-      "sha256": "9854d41264d1c8faaa91f58b381df1563a70bb76b5b26cf93dd8469b0ddfac04",
-      "size": 12266
+      "sha256": "719d9473d92651d0733634555be4033e75c969aaa5f7f6f65e8510df323d51ad",
+      "size": 13149
     },
     {
       "executable": false,
@@ -1233,8 +1233,8 @@
     {
       "executable": false,
       "path": "backend/app/schemas/order.py",
-      "sha256": "0e494102f2f5f8ae5aba0ef8d19bc41c5787302db92e82076b3e587124690a22",
-      "size": 36789
+      "sha256": "f3492b025df0aabb2a95391bd0415d7bb050a574ae241f1135730fd3cb3c40f4",
+      "size": 36898
     },
     {
       "executable": false,
@@ -2067,8 +2067,8 @@
     {
       "executable": false,
       "path": "backend/app/services/order_state.py",
-      "sha256": "e8fce24c2b6b086e38377520cf30c42a8261e6f4792331721a7dbb330802abea",
-      "size": 16562
+      "sha256": "766ef1d5265ddf3b51c72f932b734a4cc59155e50b7bd3f0b2028529b610830f",
+      "size": 17799
     },
     {
       "executable": false,
@@ -2133,8 +2133,8 @@
     {
       "executable": false,
       "path": "backend/app/services/room_availability.py",
-      "sha256": "634598d7897c32faa32d904acb5134d10ba2c18afcd2ea40aaafc22ab2571c41",
-      "size": 14296
+      "sha256": "fbd2574510a4137b9a66e6c6a58052283a769099a6e03037015700f760b9d74b",
+      "size": 14512
     },
     {
       "executable": false,
@@ -2199,14 +2199,20 @@
     {
       "executable": false,
       "path": "backend/app/services/stay_group.py",
-      "sha256": "30347722ff4eeca8a6c4fd06392371f635462b4420ed21c4c372bf312e532af5",
-      "size": 30055
+      "sha256": "11c9ce7acbb29aa68c922eb9de058277cb2ec68f0f926f5d634dff458c9640b8",
+      "size": 29968
     },
     {
       "executable": false,
       "path": "backend/app/services/system_integrity_audit.py",
       "sha256": "5a83d1d21766a8ea1d48dfd41659dc1820583aae0da72a4c473b1abe8a46c564",
       "size": 5328
+    },
+    {
+      "executable": false,
+      "path": "backend/app/services/task_archive.py",
+      "sha256": "00f0097b66552312d44d16740086f1d40fbea441c42d3d8036be21fd2d4fd789",
+      "size": 3485
     },
     {
       "executable": false,
@@ -2589,8 +2595,8 @@
     {
       "executable": false,
       "path": "frontend/app/(dashboard)/tasks/page.tsx",
-      "sha256": "26ea9580be9dd6aea9e79b088dec01a9ac336ddcdd6a954464c58e62ce8b89e3",
-      "size": 26361
+      "sha256": "e9066f79bed558f43668971b40626a2cd099154275c57bceb3a445f78746cffc",
+      "size": 28215
     },
     {
       "executable": false,
@@ -3249,8 +3255,8 @@
     {
       "executable": false,
       "path": "frontend/components/orders/OrderDetailModal.tsx",
-      "sha256": "477ae748f12a9e3590f69bb77f5f2eb8f34d5a034bc1253bf3c83348d5c17c61",
-      "size": 78596
+      "sha256": "b00fdee9005cd582dc83c80f13b09ef8c067d77f87edecc3159b0ee373f5b97a",
+      "size": 79118
     },
     {
       "executable": false,
@@ -3357,8 +3363,8 @@
     {
       "executable": false,
       "path": "frontend/components/orders/detail/StaySegmentBreakdown.tsx",
-      "sha256": "b2da2557f22b92f4b7fb0ff37059bac1b52e77671184bd51f8a8ec9f23fe8e65",
-      "size": 5380
+      "sha256": "19b7bc6a88b8d4c07c3d34e9b20a602a65418849b505b749d130e222b8f7a520",
+      "size": 5606
     },
     {
       "executable": false,
@@ -3533,6 +3539,12 @@
       "path": "frontend/components/sync/OrderSyncDiagnosis.tsx",
       "sha256": "40b89807d3f01a8f860a595c2d140e0b0032d6fa469bcabac880f785817b3755",
       "size": 2854
+    },
+    {
+      "executable": false,
+      "path": "frontend/components/tasks/HistoricalTaskArchiveModal.tsx",
+      "sha256": "7bb181788daea2568ba89006e59a01bb563054ad6bc7345c2f878e7368b518fb",
+      "size": 3040
     },
     {
       "executable": false,
@@ -3801,8 +3813,8 @@
     {
       "executable": false,
       "path": "frontend/hooks/useTasksWorkspace.ts",
-      "sha256": "77ac07221cf62b2f2a22a9b4c9a021203691f2317abae66f95f099d6721b9a63",
-      "size": 2199
+      "sha256": "9b49e64e84c2f29a5df96799ded35c43218462ca764cee90c826f12f7a9663a4",
+      "size": 2315
     },
     {
       "executable": false,
@@ -3819,8 +3831,8 @@
     {
       "executable": false,
       "path": "frontend/lib/api.ts",
-      "sha256": "5dde4abf624e8b64ea6b093b45457d7ccd429e118bf2be1682951e00df4c1e5c",
-      "size": 64429
+      "sha256": "8ae3b20ab69ff1a757fad3a2f16445b7df2471d6ccac01bc4e0504e5cf1aff11",
+      "size": 64697
     },
     {
       "executable": false,
@@ -4221,8 +4233,8 @@
     {
       "executable": false,
       "path": "frontend/lib/stay-group-actions.ts",
-      "sha256": "2b0c538c9323ab3d2c15f4e4de24b6aabd8d5b4c840db8e62013ee55585db86f",
-      "size": 688
+      "sha256": "ba92ea6201d2f7ea96772418470a6b7b3f6ceee405dbaf38a7452cce57ee985a",
+      "size": 1222
     },
     {
       "executable": false,
@@ -4245,8 +4257,8 @@
     {
       "executable": false,
       "path": "frontend/lib/types.ts",
-      "sha256": "856b8fa1cde868c522d2e03769e7c216533e2046b9d60166a3b2e9bfc36091f2",
-      "size": 42390
+      "sha256": "3fb7d77258e211bf46312e420644dd20b137cd7f004bf313162eee4896943219",
+      "size": 42564
     },
     {
       "executable": false,
@@ -4281,8 +4293,20 @@
     {
       "executable": false,
       "path": "frontend/package.json",
-      "sha256": "467842e43eee49c76a0d2758b2fa93ed9a4fb4affbaa7389c700567f79d0ad51",
-      "size": 1919
+      "sha256": "f0c47c0919c6837a3a9bdbfd92f493b25e6bc3ff8f62b75cebcffaea73b2273e",
+      "size": 2006
+    },
+    {
+      "executable": false,
+      "path": "frontend/patches/README.md",
+      "sha256": "167178c3f3017e31219ab6270025f28f9dd97299326e0390ce0fa7bbccaf6162",
+      "size": 998
+    },
+    {
+      "executable": false,
+      "path": "frontend/patches/braces@3.0.3.patch",
+      "sha256": "f58a3bdd79e69b9a9682921c88d9a43c69b29faa23beeaf17661bfaa8dc43f35",
+      "size": 3414
     },
     {
       "executable": false,
@@ -4387,6 +4411,6 @@
       "size": 920
     }
   ],
-  "revision": "99424f39146f43b37efd975936fd6d0d7d374168",
+  "revision": "48d7491eb82434b775c65dbd7dd47f3703fc379c",
   "version": 1
 }

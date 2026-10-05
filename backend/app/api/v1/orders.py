@@ -1470,6 +1470,9 @@ async def update_order(order_id: str, body: OrderUpdate, db: DBSession, current_
 
     # ── 执行 rooms 替换（如果有）──────────────────────────────────────────
     if target_rooms is not None:
+        # Existing room/date allocations may still be edited for price/notes
+        # while maintenance is active. New allocations must obey the hard lock.
+        old_allocations = {(r.room_id, r.check_in_date, r.check_out_date) for r in order.rooms}
         old_rooms_snapshot = [(r.order_room_id, r.room_id) for r in order.rooms]
         old_room_ids = {rid for _, rid in old_rooms_snapshot if rid}
         new_room_ids = {r.room_id for r in target_rooms if r.room_id}
@@ -1515,6 +1518,7 @@ async def update_order(order_id: str, body: OrderUpdate, db: DBSession, current_
                 has_conflict = await check_room_conflict(
                     db, r.room_id, r.check_in_date, r.check_out_date,
                     exclude_order_id=order_id,
+                    allow_unchanged_static_status=(r.room_id, r.check_in_date, r.check_out_date) in old_allocations,
                 )
                 if has_conflict:
                     # 注意：此时旧行已删，事务回滚后会复原
@@ -2681,6 +2685,7 @@ async def _build_stay_group_out(
         group_kind=view["group_kind"],
         anchor_order_id=view["anchor_order_id"],
         last_order_id=view["last_order_id"],
+        checkout_order_id=await stay_group_svc.checkout_order_id(db, order) if with_candidates else None,
         check_in_date=view["check_in_date"],
         check_out_date=view["check_out_date"],
         nights=view["nights"],

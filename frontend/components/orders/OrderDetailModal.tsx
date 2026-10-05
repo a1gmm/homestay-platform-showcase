@@ -36,7 +36,7 @@ import { ExtendLockModal } from "./detail/ExtendLockModal";
 import { LinkStayModal } from "./detail/LinkStayModal";
 import { StaySegmentBreakdown } from "./detail/StaySegmentBreakdown";
 import { FreeRoomBadge } from "@/components/ui/FreeRoomBadge";
-import { segmentActionGates } from "@/lib/stay-group-actions";
+import { segmentActionGates, checkoutSegmentDestination } from "@/lib/stay-group-actions";
 import { segmentCountLabel } from "@/lib/stay-group-display";
 import { CheckoutModal } from "./detail/CheckoutModal";
 import { AssignRoomModal } from "./detail/AssignRoomModal";
@@ -153,6 +153,7 @@ export default function OrderDetailModal({
   const stayGroup = useStayGroup(open, order);
   const isGroup = !!stayGroup?.stay_group_id;
   const gates = segmentActionGates(order?.order_id, stayGroup);
+  const checkoutDestination = checkoutSegmentDestination(order?.order_id, stayGroup);
   // 分段明细里点某一段 → 编辑那一段（而非当前段）。null = 未选中。
   const [editSegment, setEditSegment] = useState<any>(null);
   const currentStatus = order?.order_status || order?.status;
@@ -676,6 +677,11 @@ export default function OrderDetailModal({
             )}
             {/* 续住组中间段不给「发起退房」：客人明天还住，后端本来就会 400（中间段退房拦截）。
                 这里只是不让前台点到那堵墙。末段（gates.canCheckout）照常显示。 */}
+            {checkoutDestination && (currentStatus === "checked_in" || checkoutDestination.order_status === "checked_in") && (
+              <Button type="primary" href={`/orders?order_id=${encodeURIComponent(checkoutDestination.order_id)}`}>
+                {checkoutDestination.order_status === "checked_in" ? "前往末段办理退房" : "查看末段入住状态"}
+              </Button>
+            )}
             {next && !isTerminal && !(currentStatus === "checked_in" && !gates.canCheckout) && (() => {
               const button = (
                 <Button

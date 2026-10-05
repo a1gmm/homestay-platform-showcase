@@ -590,6 +590,7 @@ export interface StayGroup {
   group_kind?: "managed_split" | null;
   anchor_order_id: string; // 首段：持门锁码
   last_order_id: string; // 末段：退房只在这段办
+  checkout_order_id?: string | null; // 详情接口按当前物理住宿段计算的退房入口
   check_in_date: string;
   check_out_date: string;
   nights: number;
@@ -978,6 +979,8 @@ export interface SettlementDetail extends OwnerSettlementOut {
 // ─── Task ────────────────────────────────────────────────────────────────────
 
 export interface TaskOut {
+  historical_review?: boolean;
+  archived?: boolean;
   task_id: string;
   task_type: TaskType;
   title: string;
@@ -1021,6 +1024,7 @@ export interface TaskUpdate {
 }
 
 export interface TaskWorkspace {
+  historical?: number;
   items: TaskOut[];
   total: number;
   page: number;

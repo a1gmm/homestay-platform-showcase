@@ -300,6 +300,15 @@ async def group_last_order_id(db, stay_group_id: str, alive_only: bool = False) 
     return max(orders, key=lambda o: (o.check_out_date, o.order_id)).order_id
 
 
+async def checkout_order_id(db, order: Order) -> str:
+    """Same physical-leg destination for server guards and frontend navigation."""
+    if not order.stay_group_id:
+        return order.order_id
+    members = await operational_group_orders(db, order)
+    alive = [member for member in members if member.order_status != OrderStatus.cancelled]
+    return max(alive, key=lambda item: (item.check_out_date, item.order_id)).order_id if alive else order.order_id
+
+
 async def is_group_last_segment(db, order: Order) -> bool:
     """本单是不是组末段（活段口径，与 group_view 展示一致）。
 
@@ -307,20 +316,7 @@ async def is_group_last_segment(db, order: Order) -> bool:
     被取消段顶着当「中间段」拦住——那会让客人在 UI 上退不了房。
     整组都取消时 last 为 None，此时不拦（返回 True 交给状态机守卫）。
     """
-    from app.models.order import OrderStatus
-
-    if not order.stay_group_id:
-        return True
-    if await is_managed_split(db, order.stay_group_id):
-        members = await operational_group_orders(db, order)
-        alive = [member for member in members if member.order_status != OrderStatus.cancelled]
-        if not alive:
-            return True
-        return order.order_id == max(
-            alive, key=lambda item: (item.check_out_date, item.order_id)
-        ).order_id
-    last = await group_last_order_id(db, order.stay_group_id, alive_only=True)
-    return last is None or order.order_id == last
+    return order.order_id == await checkout_order_id(db, order)
 
 
 async def is_group_first_segment(db, order: Order) -> bool:

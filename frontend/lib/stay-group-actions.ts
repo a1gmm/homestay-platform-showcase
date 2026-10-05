@@ -9,7 +9,16 @@ export function segmentActionGates(orderId: string, group?: StayGroup) {
     return { canCheckout: true, canCollectDeposit: true };
   }
   return {
-    canCheckout: orderId === group.last_order_id,
+    canCheckout: orderId === (group.checkout_order_id || group.last_order_id),
     canCollectDeposit: orderId === group.anchor_order_id,
   };
+}
+
+// The server excludes cancelled tails when choosing last_order_id. Never infer
+// the destination from array order or dates (multi-room groups can overlap).
+export function checkoutSegmentDestination(orderId: string, group?: StayGroup) {
+  if (!group?.stay_group_id) return undefined;
+  const destination = group.checkout_order_id || group.last_order_id;
+  if (destination === orderId) return undefined;
+  return group.segments.find(s => s.order_id === destination && s.order_status !== "cancelled");
 }

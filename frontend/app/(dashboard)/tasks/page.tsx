@@ -43,6 +43,8 @@ import { PageHeader } from "@/components/ui/PageHeader";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { tokens } from "@/lib/design-tokens";
+import { useAuthStore } from "@/lib/auth";
+import { HistoricalTaskArchiveModal } from "@/components/tasks/HistoricalTaskArchiveModal";
 
 const { Title, Text } = Typography;
 
@@ -72,7 +74,11 @@ export default function TasksPage() {
   const isMobile = useIsMobile();
   const qc = useQueryClient();
   const privacyMode = usePrivacyMode();
+  const role = useAuthStore(state => state.user?.role);
+  const canManage = ["admin", "operator", "keeper"].includes(role || "");
+  const canDelete = ["admin", "operator"].includes(role || "");
   const [editingTask, setEditingTask] = useState<TaskOut | null>(null);
+  const [archiveTask, setArchiveTask] = useState<TaskOut | null>(null);
   const [editDeadline, setEditDeadline] = useState<string | null>(null);
   const [editAssignee, setEditAssignee] = useState<string | null>(null);
   const workspace = useTasksWorkspace();
@@ -177,6 +183,12 @@ export default function TasksPage() {
       />
 
       {privacyMode && <Alert type="info" showIcon message="隐私演示模式：任务操作已禁用" />}
+      {!isError && (workspace.historical || 0) > 0 && <Alert type="info" showIcon
+        message={`历史保洁待核查 ${workspace.historical} 项`}
+        description={<Space direction="vertical">
+          <span>这些任务创建已满 7 天，关联订单已完成或取消。请核实后安排继续执行，或由管理员填写原因归档。</span>
+          <Button style={{ minHeight: 44 }} onClick={() => { workspace.setWorkScope("historical"); setStatusFilter("active"); }}>查看历史待办</Button>
+        </Space>} />}
       {!isLoading && !isError && workspace.needs_attention > 0 && <Alert type="warning" showIcon
         message={`待核查 ${workspace.needs_attention} 项`}
         description={`未设截止时间 ${workspace.no_deadline} 项 · 未分配负责人 ${workspace.unassigned} 项 · 积压 7 天以上 ${workspace.aged} 项。没有逾期不代表任务已处理，请补全安排并核实历史任务。`} />}
@@ -241,6 +253,10 @@ export default function TasksPage() {
           gap: 12,
         }}
       >
+        <Select aria-label="任务范围" value={workspace.workScope} onChange={workspace.setWorkScope}
+          style={{ minWidth: 150 }} options={[
+            { value: "current", label: "日常任务" }, { value: "historical", label: "历史保洁待核查" }, { value: "all", label: "全部范围" },
+          ]} />
         <Select
           aria-label="任务状态"
           placeholder="未完成任务"
@@ -297,7 +313,7 @@ export default function TasksPage() {
               const isRejected = task.review_status === "rejected";
               // 清扫任务必须保洁提交后才能审核完成;非清扫任务管家随时可勾完成。
               const checkboxDisabled =
-                privacyMode || isDone || task.status === "cancelled" || (isCleaning && !isPendingReview);
+                privacyMode || !canManage || isDone || task.status === "cancelled" || (isCleaning && !isPendingReview);
               const checkboxTooltip = privacyMode ? "隐私演示模式下不可操作" : isDone
                 ? "已完成"
                 : isCleaning && !isPendingReview
@@ -470,13 +486,17 @@ export default function TasksPage() {
                     {/* Status tag + actions */}
                     <Space direction="vertical" align="end" size={6}>
                       <StatusBadge status={dispStatus} size="sm" />
-                      {isActiveTask(task) && <Button size="small" disabled={privacyMode}
+                      {task.historical_review && <Tag>历史待核查</Tag>}
+                      {task.archived && <Tag>已归档 · 保留记录</Tag>}
+                      {role === "admin" && task.historical_review && <Button size="small" disabled={privacyMode}
+                        onClick={() => setArchiveTask(task)}>核实并归档</Button>}
+                      {canManage && isActiveTask(task) && <Button size="small" disabled={privacyMode}
                         onClick={() => {
                           setEditingTask(task);
                           setEditDeadline(task.deadline || null);
                           setEditAssignee(task.assignee_id || null);
                         }}>安排任务</Button>}
-                      {isCleaning && isPendingReview && isActiveTask(task) && (
+                      {canManage && isCleaning && isPendingReview && isActiveTask(task) && (
                         <Button
                           size="small"
                           danger
@@ -515,7 +535,7 @@ export default function TasksPage() {
                           打回重做
                         </Button>
                       )}
-                      <Popconfirm
+                      {canDelete && !task.historical_review && !task.archived && <Popconfirm
                         title="删除任务"
                         description="确认删除该运营任务？此操作不可恢复。"
                         disabled={privacyMode}
@@ -531,7 +551,7 @@ export default function TasksPage() {
                         >
                           删除
                         </Button>
-                      </Popconfirm>
+                      </Popconfirm>}
                     </Space>
                   </div>
                 </Card>
@@ -558,6 +578,7 @@ export default function TasksPage() {
             onChange={value => setEditDeadline(value?.toISOString() || null)} />
         </Space>
       </Modal>
+      {archiveTask && <HistoricalTaskArchiveModal key={archiveTask.task_id} task={archiveTask} onClose={() => setArchiveTask(null)} />}
     </div>
   );
 }

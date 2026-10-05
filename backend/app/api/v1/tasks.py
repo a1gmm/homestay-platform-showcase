@@ -9,7 +9,9 @@ from app.core.deps import DBSession, CurrentUser
 from app.models.task import Task, TaskStatus, TaskType, TaskPriority, ReviewStatus
 from app.models.order import Order, OrderStatus, CleaningStatus
 from app.models.room import Room, RoomStatus
+from app.models.audit_log import AuditLog
 from app.services.audit import log_action_tx
+from app.services.task_archive import archive_historical_task, historical_task_condition
 from app.services.task_lifecycle import (
     ACTIVE_STATUSES, CN, reconcile_task_batch, task_attention_conditions, task_attention_summary,
 )
@@ -49,6 +51,8 @@ class TaskReviewRequest(BaseModel):
 
 
 class TaskOut(BaseModel):
+    historical_review: bool = False
+    archived: bool = False
     task_id: str
     task_type: TaskType
     title: str
@@ -71,6 +75,7 @@ class TaskOut(BaseModel):
 
 
 class TaskWorkspaceOut(BaseModel):
+    historical: int = 0
     items: list[TaskOut]
     total: int
     page: int
@@ -84,7 +89,17 @@ class TaskWorkspaceOut(BaseModel):
     needs_attention: int
 
 
+TASK_READ_ROLES = frozenset({"admin", "operator", "keeper", "finance", "cleaner"})
+TASK_WORK_ROLES = frozenset({"admin", "operator", "keeper", "cleaner"})
+
+
+def _require_task_role(current_user, roles):
+    if current_user["role"] not in roles:
+        raise HTTPException(status_code=403, detail="无权操作内部运营任务")
+
+
 def _visibility(current_user):
+    _require_task_role(current_user, TASK_READ_ROLES)
     if current_user["role"] == "cleaner":
         return [or_(Task.assignee_id == current_user["user_id"],
                     and_(Task.assignee_id.is_(None), Task.task_type == TaskType.cleaning))]
@@ -109,6 +124,7 @@ async def task_workspace(
     keyword: str = Query(default="", max_length=100),
     assignee_id: Optional[str] = None, deadline: Optional[date] = None,
     overdue_only: bool = False,
+    work_scope: Literal["all", "current", "historical"] = "all",
     attention: Optional[Literal["no_deadline", "unassigned", "aged", "needs_attention"]] = None,
     page: int = Query(default=1, ge=1), page_size: int = Query(default=30, ge=1, le=100),
 ):
@@ -128,6 +144,11 @@ async def task_workspace(
         conditions.append(attention_conditions["overdue"])
     if attention:
         conditions.append(attention_conditions[attention])
+    historical_condition = historical_task_condition(now)
+    historical = (await db.execute(select(func.count()).select_from(Task)
+        .where(*conditions, historical_condition))).scalar_one()
+    if work_scope != "all":
+        conditions.append(historical_condition if work_scope == "historical" else ~historical_condition)
     summary = await task_attention_summary(db, now=now, conditions=conditions)
     # Cast enum to text: PostgreSQL otherwise tries to interpret pending_review
     # as task_status (review state is deliberately stored separately).
@@ -151,8 +172,31 @@ async def task_workspace(
     items = (await db.execute(select(Task).where(*item_conditions)
         .order_by(Task.deadline.asc().nullslast(), Task.created_at.desc(), Task.task_id)
         .offset((page - 1) * page_size).limit(page_size))).scalars().all()
-    return {"items": items, "total": total, "page": page, "page_size": page_size,
+    historical_ids = set((await db.execute(select(Task.task_id).where(
+        Task.task_id.in_([t.task_id for t in items]), historical_condition))).scalars()) if items else set()
+    archived_ids = set((await db.execute(select(AuditLog.resource_id).where(
+        AuditLog.action == "task.archive", AuditLog.resource_type == "task",
+        AuditLog.resource_id.in_([t.task_id for t in items])))).scalars()) if items else set()
+    items = [TaskOut.model_validate(t).model_copy(update={"historical_review": t.task_id in historical_ids,
+                                                       "archived": t.task_id in archived_ids}) for t in items]
+    return {"items": items, "total": total, "page": page, "page_size": page_size, "historical": historical,
             "counts": counts, **summary}
+
+
+class TaskArchiveRequest(BaseModel):
+    apply: bool = False
+    reason: str = Field(default="", max_length=1000)
+    expected_fingerprint: Optional[str] = None
+
+
+@router.post("/{task_id}/archive")
+async def archive_task(task_id: str, body: TaskArchiveRequest, db: DBSession, current_user: CurrentUser):
+    if current_user["role"] != "admin":
+        raise HTTPException(403, "仅管理员可核实归档历史任务")
+    result = await archive_historical_task(db, task_id, **body.model_dump(), operator_id=current_user["user_id"])
+    if body.apply:
+        await db.commit()
+    return result
 
 
 class TaskReconcileRequest(BaseModel):
@@ -187,6 +231,7 @@ async def list_tasks(
     assignee_id: Optional[str] = Query(default=None),
     overdue_only: bool = Query(default=False),
 ):
+    _require_task_role(current_user, TASK_READ_ROLES)
     q = select(Task)
 
     # Cleaner 看自己的任务 + 所有未派单的清扫任务（可抢单）。
@@ -232,10 +277,21 @@ async def create_task(body: TaskCreate, db: DBSession, current_user: CurrentUser
 
 @router.patch("/{task_id}", response_model=TaskOut)
 async def update_task(task_id: str, body: TaskUpdate, db: DBSession, current_user: CurrentUser):
-    result = await db.execute(select(Task).where(Task.task_id == task_id).with_for_update())
+    _require_task_role(current_user, TASK_WORK_ROLES)
+    result = await db.execute(select(Task).where(Task.task_id == task_id).with_for_update()
+                              .execution_options(populate_existing=True))
     task = result.scalar_one_or_none()
     if not task:
         raise HTTPException(status_code=404, detail="任务不存在")
+
+    if (await db.execute(select(AuditLog.log_id).where(AuditLog.action == "task.archive",
+        AuditLog.resource_type == "task", AuditLog.resource_id == task_id).limit(1))).scalar_one_or_none():
+        raise HTTPException(409, "已归档任务需保留核实记录，不能修改；有新工作请创建新任务")
+
+    if body.status == TaskStatus.cancelled and (await db.execute(select(Task.task_id).where(
+        Task.task_id == task_id, historical_task_condition(datetime.now(timezone.utc))
+    ))).scalar_one_or_none():
+        raise HTTPException(409, "历史保洁请由管理员使用“核实并归档”，先预览并填写核实原因")
 
     if task.status in (TaskStatus.done, TaskStatus.cancelled) and body.status and body.status != task.status:
         raise HTTPException(status_code=400, detail="终态任务不能重新开始，请创建新任务")
@@ -301,10 +357,19 @@ async def delete_task(task_id: str, db: DBSession, current_user: CurrentUser):
     if current_user["role"] not in ("admin", "operator"):
         raise HTTPException(status_code=403, detail="无权删除任务")
 
-    result = await db.execute(select(Task).where(Task.task_id == task_id))
+    result = await db.execute(select(Task).where(Task.task_id == task_id).with_for_update()
+                              .execution_options(populate_existing=True))
     task = result.scalar_one_or_none()
     if not task:
         raise HTTPException(status_code=404, detail="任务不存在")
+
+    historical = (await db.execute(select(Task.task_id).where(
+        Task.task_id == task_id, historical_task_condition(datetime.now(timezone.utc))
+    ))).scalar_one_or_none()
+    archived = (await db.execute(select(AuditLog.log_id).where(AuditLog.action == "task.archive",
+        AuditLog.resource_type == "task", AuditLog.resource_id == task_id).limit(1))).scalar_one_or_none()
+    if historical or archived:
+        raise HTTPException(409, "历史保洁需保留记录；请使用“核实并归档”，已归档记录不能删除")
 
     await db.delete(task)
     await log_action_tx(db, current_user["user_id"], "task.delete", "task", task_id)
@@ -317,10 +382,18 @@ async def delete_task(task_id: str, db: DBSession, current_user: CurrentUser):
 @router.post("/{task_id}/submit", response_model=TaskOut)
 async def submit_task(task_id: str, body: TaskSubmitRequest, db: DBSession, current_user: CurrentUser):
     """保洁提交完工，等待审核。"""
+    _require_task_role(current_user, TASK_WORK_ROLES)
     result = await db.execute(select(Task).where(Task.task_id == task_id).with_for_update())
     task = result.scalar_one_or_none()
     if not task:
         raise HTTPException(status_code=404, detail="任务不存在")
+
+    if current_user["role"] == "cleaner" and task.assignee_id != current_user["user_id"] and not (
+        task.assignee_id is None and task.task_type == TaskType.cleaning
+    ):
+        raise HTTPException(403, "只能提交分配给自己的任务")
+    if task.status in ACTIVE_STATUSES and task.task_type == TaskType.cleaning and task.room_id:
+        await _lock_cleaning_room(db, task.room_id)
 
     # 同 update：保洁可以认领未派单的清扫任务，并在 /submit 时一并 claim。
     auto_claimed = False

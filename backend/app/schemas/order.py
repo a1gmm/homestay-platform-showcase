@@ -881,6 +881,7 @@ class StayGroupOut(BaseModel):
     group_kind: Optional[str] = None            # managed_split | None (ordinary continuation)
     anchor_order_id: str                      # 首段：持门锁码
     last_order_id: str                        # 末段：唯一，退房在这段办
+    checkout_order_id: Optional[str] = None   # 当前物理住宿段的退房入口（详情接口提供）
     check_in_date: date
     check_out_date: date
     nights: int

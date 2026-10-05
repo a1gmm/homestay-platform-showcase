@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
-import { Tag } from "antd";
+import { Button, Tag } from "antd";
 import { DownOutlined, RightOutlined } from "@ant-design/icons";
 import { tokens } from "@/lib/design-tokens";
 import { CHANNEL_LABELS } from "@/lib/channels";
@@ -146,6 +146,8 @@ function SegmentRow({ seg, onClick }: { seg: StaySegment; onClick?: (id: string)
         )}
       </span>
       {cancelled && <Tag color="default">已取消</Tag>}
+      <Button type="link" href={`/orders?order_id=${encodeURIComponent(seg.order_id)}`}
+        onClick={event => event.stopPropagation()} aria-label={`查看 ${seg.order_id} 详情与操作`}>详情与操作</Button>
     </div>
   );
 }

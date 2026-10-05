@@ -55,6 +55,7 @@ def _extract_token(
 async def get_current_user(
     token: str = Depends(_extract_token),
     redis: aioredis.Redis = Depends(get_redis),
+    db: AsyncSession = Depends(get_db),
 ):
     payload = decode_token(token)
     if not payload or payload.get("type") != "access":
@@ -65,7 +66,21 @@ async def get_current_user(
     if not role:
         # 缺 role claim 的 token（旧格式 / 跨端伪造尝试）一律拒绝，绝不默认到 operator。
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token 无效")
-    return {"user_id": payload["sub"], "role": role}
+    # A signed token proves the login happened; it does not prove that the
+    # employee is still enabled or still has that role. Re-read on every request
+    # (including after Redis failure) so offboarding takes effect immediately.
+    owns_read_transaction = not db.in_transaction()
+    try:
+        user = await db.scalar(select(User).where(User.user_id == payload.get("sub"))
+                               .execution_options(populate_existing=True))
+        if user is None or not user.is_active:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="权限不足")
+        return {"user_id": user.user_id, "role": user.role.value}
+    finally:
+        # Do not leave an auth-only autobegin open: endpoints such as BYPMS
+        # retry own an explicit db.begin(). Never roll back a caller's work.
+        if owns_read_transaction:
+            await db.rollback()
 
 
 CurrentUser = Annotated[dict, Depends(get_current_user)]

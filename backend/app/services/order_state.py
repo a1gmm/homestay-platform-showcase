@@ -144,6 +144,21 @@ VALID_TRANSITIONS = {
 }
 
 
+async def _assert_rooms_accept_checkin(db, room_ids: list[str]) -> None:
+    """Lock and validate every target before changing any arrival evidence.
+
+    Cleaning remains a staff decision; explicit maintenance/locks never are.
+    """
+    for rid in sorted(set(room_ids)):
+        room = (await db.execute(select(Room).where(Room.room_id == rid)
+                                .with_for_update().execution_options(populate_existing=True))).scalar_one_or_none()
+        if room is None or room.is_deleted:
+            raise HTTPException(status_code=409, detail=f"房间 {rid} 已下线或不存在，请先重新排房")
+        if room.room_status in (RoomStatus.maintenance, RoomStatus.locked):
+            label = "维修" if room.room_status == RoomStatus.maintenance else "锁房"
+            raise HTTPException(status_code=409, detail=f"房间 {rid} 当前处于{label}状态，请先核实并解除限制或换房，再办理入住")
+
+
 async def _sync_rooms_for_status(db, order: Order, target_status: OrderStatus) -> None:
     """房态联动 — 所有入口共用。多房间订单:每间房都要联动,不能只动 order.room_id 这一间 (#42)。"""
     for rid in await order_room_ids(db, order):
@@ -204,6 +219,8 @@ async def apply_order_transition(db, order: Order, target_status: OrderStatus) -
     # 再改变订单状态；完整性错误会让调用方回滚，不能出现“已退房但支出没记”。
     if target_status == OrderStatus.pending_checkout:
         await ensure_checkout_service_expenses(db, order=order)
+    if target_status == OrderStatus.checked_in:
+        await _assert_rooms_accept_checkin(db, await order_room_ids(db, order))
 
     before_status = order.order_status.value
     order.order_status = target_status
@@ -281,6 +298,7 @@ async def fast_checkin(db, order: Order) -> None:
         raise HTTPException(status_code=400, detail=f"订单已{order.order_status.value},无需再办理入住")
     _guard_pre_checkin_state(order)
 
+    await _assert_rooms_accept_checkin(db, await order_room_ids(db, order))
     order.order_status = OrderStatus.checked_in
     await _sync_rooms_for_status(db, order, OrderStatus.checked_in)
     # 给所有已排房、未入住的房行打入住时刻（整单入住 = 全部一起入住）。
@@ -294,6 +312,8 @@ async def checkin_one_room(db, order: Order, target: OrderRoom) -> None:
     只把 target 房置 occupied、打 checked_in_at，不碰订单里其它未入住的房（保持 reserved）。
     校验由调用方（handle_checkin）做：target 属本单、已排房、未入住。
     """
+    if target.room_id:
+        await _assert_rooms_accept_checkin(db, [target.room_id])
     # 订单尚未入住 → 走前置态守卫并转 checked_in；已入住则保持（逐间入住第 2..N 间）。
     if order.order_status != OrderStatus.checked_in:
         _guard_pre_checkin_state(order)

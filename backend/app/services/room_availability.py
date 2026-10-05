@@ -19,7 +19,7 @@ from typing import Optional
 
 from app.models.order import Order, OrderStatus
 from app.models.order_room import OrderRoom
-from app.models.room import Room
+from app.models.room import Room, RoomStatus
 from app.models.room_block import RoomBlock
 
 
@@ -31,6 +31,7 @@ async def check_room_conflict(
     exclude_order_id: Optional[str] = None,
     exclude_order_room_id: Optional[str] = None,
     exclude_stay_group_id: Optional[str] = None,
+    *, allow_unchanged_static_status: bool = False,
 ) -> bool:
     """Returns True if there is a booking conflict for the given room/dates.
 
@@ -49,12 +50,14 @@ async def check_room_conflict(
     # 区分「行不存在」与「is_deleted 为 falsy」：存量房若因迁移未回填而 is_deleted=NULL，
     # 仍应视为未删放行，绝不能因 NULL 把所有存量房判成不可订。
     room_row = (await db.execute(
-        select(Room.room_id, Room.is_deleted)
+        select(Room.room_id, Room.is_deleted, Room.room_status)
         .where(Room.room_id == room_id).with_for_update()
     )).first()
     if room_row is None:       # 房间不存在
         return True
     if room_row.is_deleted:    # 已下线（NULL / False 均放行）
+        return True
+    if not allow_unchanged_static_status and room_row.room_status in (RoomStatus.maintenance, RoomStatus.locked):
         return True
 
     # 主冲突查询：join order_rooms × orders，排除已取消订单
