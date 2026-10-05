@@ -545,7 +545,10 @@ export const roomsApi = {
       params: { check_in, check_out, ...(excludeOrderId ? { exclude_order_id: excludeOrderId } : {}) },
     }),
   checkAvailability: (data: { room_id: string; check_in_date: string; check_out_date: string; exclude_order_id?: string }) =>
-    api.post<{ room_id: string; available: boolean }>("/rooms/availability/check", data),
+    api.post<{ room_id: string; available: boolean; conflict?: {
+      kind: "order" | "overdue" | "block" | "unavailable";
+      message: string; order_id?: string; block_id?: string;
+    } | null }>("/rooms/availability/check", data),
   pricing: (room_id: string, days: number = 7) =>
     api.get<RoomPricingPoint[]>(`/rooms/${room_id}/pricing`, { params: { days } }),
   pricingDetail: (room_id: string, date: string) =>

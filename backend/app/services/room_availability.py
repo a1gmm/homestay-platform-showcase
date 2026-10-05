@@ -117,6 +117,63 @@ async def check_room_conflict(
     return False
 
 
+async def describe_room_conflict(
+    db: AsyncSession, room_id: str, check_in: date, check_out: date,
+    exclude_order_id: str | None = None,
+) -> dict | None:
+    """Read-only explanation for the selected room; write guards keep their row lock.
+
+    Check actual overdue presence first: the old booking can be outside the visible
+    calendar window. Reuse the physical-leg resolver so checked-out continuation
+    tails cannot resurrect an old anchor. No guest contact details are returned.
+    """
+    from app.core.datetime_helpers import today_cn
+    from app.services.room_presence import current_room_presence
+    from app.models.room import RoomStatus
+
+    room = await db.get(Room, room_id)
+    if room is None or room.is_deleted:
+        return {"kind": "unavailable", "message": f"房间 {room_id} 已下线或不存在，请重新选择房间。"}
+    today = today_cn()
+    if check_in <= today < check_out:
+        present = await current_room_presence(db, today, room_id=room_id,
+                                              exclude_order_id=exclude_order_id)
+        overdue = next((p for p in present if p.checkout_date < today), None)
+        if overdue:
+            return {
+                "kind": "overdue", "order_id": overdue.order_id,
+                "message": f"房间 {room_id} 有超期在住订单（{overdue.order_id}），预计 {overdue.checkout_date} 退房，尚未办理退房。请核实客人是否离店：已离店请办理退房，仍在住请处理续住或选择其他房间。",
+            }
+    q = (select(OrderRoom).join(Order, Order.order_id == OrderRoom.order_id)
+         .where(OrderRoom.room_id == room_id, Order.is_deleted == False,
+                Order.order_status != OrderStatus.cancelled,
+                OrderRoom.check_in_date < check_out, OrderRoom.check_out_date > check_in)
+         .order_by(OrderRoom.check_in_date, OrderRoom.order_room_id).limit(1))
+    if exclude_order_id:
+        q = q.where(OrderRoom.order_id != exclude_order_id)
+    occupied = (await db.execute(q)).scalar_one_or_none()
+    if occupied:
+        return {
+            "kind": "order", "order_id": occupied.order_id,
+            "message": f"房间 {room_id} 的日期与订单 {occupied.order_id} 冲突：该订单 {occupied.check_in_date} 入住、{occupied.check_out_date} 退房（退房当天不占夜）。请查看原订单或更换房间、日期。",
+        }
+    block = (await db.execute(select(RoomBlock).where(
+        RoomBlock.room_id == room_id, RoomBlock.start_date < check_out,
+        RoomBlock.end_date > check_in,
+    ).order_by(RoomBlock.start_date, RoomBlock.block_id).limit(1))).scalar_one_or_none()
+    if block:
+        labels = {"maintenance": "维修", "owner_use": "业主自用", "reserved": "预留", "other": "其他"}
+        kind = getattr(block.block_type, "value", block.block_type)
+        return {
+            "kind": "block", "block_id": block.block_id,
+            "message": f"房间 {room_id} 在 {block.start_date} 至 {block.end_date} 已锁房（{labels.get(kind, kind)}；结束日不占夜）" + (f"：{block.reason}" if block.reason else "") + "。请核实锁房安排或选择其他房间。",
+        }
+    if room.room_status in (RoomStatus.maintenance, RoomStatus.locked):
+        label = "维修" if room.room_status == RoomStatus.maintenance else "锁房"
+        return {"kind": "unavailable", "message": f"房间 {room_id} 当前为{label}状态，请核实并恢复房态后再选房。"}
+    return None
+
+
 async def get_available_rooms(
     db: AsyncSession,
     check_in: date,

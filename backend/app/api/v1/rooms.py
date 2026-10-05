@@ -32,7 +32,7 @@ from app.schemas.room_cost_share import (
     CostShareRulesBulkRequest,
 )
 from app.models.room_cost_share import RoomCostShareRule
-from app.services.room_availability import check_room_conflict, get_available_rooms
+from app.services.room_availability import get_available_rooms, describe_room_conflict
 from app.services.audit import log_action, log_action_tx
 from app.services.pricing_service import calculate_room_pricing_for_range
 from app.services import oss_service
@@ -169,12 +169,18 @@ async def delete_room(room_id: str, db: DBSession, current_user: CurrentUser):
 async def check_availability(body: AvailabilityCheckRequest, db: DBSession, current_user: CurrentUser):
     """Check if a room is available for given dates."""
     from datetime import date as date_type
-    checkin = date_type.fromisoformat(body.check_in_date)
-    checkout = date_type.fromisoformat(body.check_out_date)
-    has_conflict = await check_room_conflict(
+    try:
+        checkin = date_type.fromisoformat(body.check_in_date)
+        checkout = date_type.fromisoformat(body.check_out_date)
+    except ValueError:
+        raise HTTPException(status_code=422, detail="请填写有效的入住、退房日期")
+    if checkout <= checkin:
+        raise HTTPException(status_code=422, detail="退房日期必须晚于入住日期")
+    conflict = await describe_room_conflict(
         db, body.room_id, checkin, checkout, exclude_order_id=body.exclude_order_id
     )
-    return {"room_id": body.room_id, "available": not has_conflict}
+    return {"room_id": body.room_id, "available": conflict is None, "conflict": conflict}
+
 
 
 @router.get("/availability/list")

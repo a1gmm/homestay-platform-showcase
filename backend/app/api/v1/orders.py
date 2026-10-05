@@ -36,7 +36,7 @@ from app.schemas.order import (
     normal_booking_violation,
     owner_revenue_requires_actual_violation, OWNER_REVENUE_REQUIRES_ACTUAL,
 )
-from app.services.room_availability import check_room_conflict
+from app.services.room_availability import check_room_conflict, describe_room_conflict
 from app.services.audit import log_action, log_action_tx
 from app.services.guest_service import link_guest_to_order
 from app.services.order_pricing import (
@@ -832,7 +832,9 @@ async def create_order(body: OrderCreate, db: DBSession, current_user: CurrentUs
             if has_conflict:
                 raise HTTPException(
                     status_code=409,
-                    detail=f"房间 {r.room_id} 在 {r.check_in_date}–{r.check_out_date} 已有订单冲突",
+                    detail=(await describe_room_conflict(
+                        db, r.room_id, r.check_in_date, r.check_out_date
+                    ) or {"message": "房态已变化，请刷新房态后重新检查房间和日期。"})["message"],
                 )
 
     # 同客重复单拦截：上面的房间冲突检测只拦「同房间日期重叠」，未排房单

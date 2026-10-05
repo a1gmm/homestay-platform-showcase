@@ -55,32 +55,6 @@ export function QuickCreateOrderModal({ open, initial, onClose, onSuccess }: Pro
     enabled: open,
   });
 
-  // 重置 + 应用预填值（甘特图点格子带进来的房间/日期作为第一行）
-  useEffect(() => {
-    if (!open) return;
-    form.resetFields();
-    setChannel("self_acquired");
-    if (initial) {
-      const dates =
-        initial.check_in_date && initial.check_out_date
-          ? [dayjs(initial.check_in_date), dayjs(initial.check_out_date)]
-          : initial.check_in_date
-          ? [dayjs(initial.check_in_date), dayjs(initial.check_in_date).add(1, "day")]
-          : undefined;
-      form.setFieldsValue({
-        channel: "self_acquired",
-        deposit: 0,
-        rooms: [{ room_id: initial.room_id ?? undefined, dates, guests_count: 0 }],
-      });
-    } else {
-      form.setFieldsValue({
-        channel: "self_acquired",
-        deposit: 0,
-        rooms: [{ guests_count: 0 }],
-      });
-    }
-  }, [open, initial, form]);
-
   const markSeen = useNewOrderStore((s) => s.markSeen);
 
   const createMutation = useMutation({
@@ -101,9 +75,39 @@ export function QuickCreateOrderModal({ open, initial, onClose, onSuccess }: Pro
     // 重复单 409 走下方 mutateWithDupConfirm 的确认对话框，不再重复弹 toast。
     onError: (e) => {
       if (isDuplicateOrderError(e)) return;
-      message.error(extractErrorMessage(e));
+      // Keep one persistent error in the form instead of stacking identical toasts.
+      void qc.invalidateQueries({ queryKey: ["rooms"] });
     },
   });
+
+  const { reset: resetCreateMutation } = createMutation;
+
+  // 重置 + 应用预填值（甘特图点格子带进来的房间/日期作为第一行）
+  useEffect(() => {
+    if (!open) return;
+    form.resetFields();
+    resetCreateMutation();
+    setChannel("self_acquired");
+    if (initial) {
+      const dates =
+        initial.check_in_date && initial.check_out_date
+          ? [dayjs(initial.check_in_date), dayjs(initial.check_out_date)]
+          : initial.check_in_date
+          ? [dayjs(initial.check_in_date), dayjs(initial.check_in_date).add(1, "day")]
+          : undefined;
+      form.setFieldsValue({
+        channel: "self_acquired",
+        deposit: 0,
+        rooms: [{ room_id: initial.room_id ?? undefined, dates, guests_count: 0 }],
+      });
+    } else {
+      form.setFieldsValue({
+        channel: "self_acquired",
+        deposit: 0,
+        rooms: [{ guests_count: 0 }],
+      });
+    }
+  }, [open, initial, form, resetCreateMutation]);
 
   // 同客同日期重复单：后端 409（duplicate_order）拦下 → 弹确认，
   // 用户确认「同名不同客」后第一张也带 allow_duplicate 重发整批。
@@ -196,13 +200,14 @@ export function QuickCreateOrderModal({ open, initial, onClose, onSuccess }: Pro
       confirmLoading={createMutation.isPending}
       destroyOnHidden
     >
-      {createMutation.isError && (
+      {createMutation.isError && !isDuplicateOrderError(createMutation.error) && (
         <Alert
           type="error"
           message={extractErrorMessage(createMutation.error)}
           style={{ marginBottom: 12, borderRadius: 8 }}
           showIcon
           closable
+          onClose={() => createMutation.reset()}
         />
       )}
 
@@ -217,6 +222,7 @@ export function QuickCreateOrderModal({ open, initial, onClose, onSuccess }: Pro
           rooms: [{ guests_count: 0 }],
         }}
         onValuesChange={(changed, all) => {
+          if (createMutation.isError) createMutation.reset();
           if (changed.channel) setChannel(changed.channel);
           // issue#103 Step 3: 客人价默认带入实收（仅填空，不覆盖）
           if (changed.rooms) {
@@ -289,7 +295,7 @@ export function QuickCreateOrderModal({ open, initial, onClose, onSuccess }: Pro
         {/* 房间信息（多房）—— 与 /orders/new 共用同一套录入逻辑 */}
         <Form.Item label="房间信息（可加多间）" style={{ marginBottom: 12 }} required>
           {/* allowPastDates：甘特图点过去的空格建单(补录)，日期框不能把那一天灰掉 */}
-          <OrderRoomsField form={form} rooms={rooms as RoomOut[] | undefined} phonePriceExempt={phonePriceExempt} allowPastDates />
+          <OrderRoomsField form={form} rooms={rooms as RoomOut[] | undefined} phonePriceExempt={phonePriceExempt} allowPastDates validateAvailability />
         </Form.Item>
 
         {/* 押金已下线（王总 2026-07-22）：走线下 POS + 飞书小票，建单不再录押金 */}

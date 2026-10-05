@@ -681,8 +681,8 @@
     {
       "executable": false,
       "path": "backend/app/api/v1/orders.py",
-      "sha256": "986a7fbd8b4a71658ebb788cb1ec3f76560e44561cf34ba82662c1ee512fa236",
-      "size": 162196
+      "sha256": "c13fefb4d85c3e1296eb797924b4477754eacb8534b3bfa7e1c6c2ea363127bb",
+      "size": 162359
     },
     {
       "executable": false,
@@ -717,8 +717,8 @@
     {
       "executable": false,
       "path": "backend/app/api/v1/rooms.py",
-      "sha256": "b4ab2c9e3be0104d76d95d6af9c9b5091c247547fa547fa4ff0399c70b079cf0",
-      "size": 36523
+      "sha256": "b4598b756ed1a9d4c1877c1cf1f982da0462dbc55ee40d9d20ad9ba785fcaf9f",
+      "size": 36803
     },
     {
       "executable": false,
@@ -2133,14 +2133,14 @@
     {
       "executable": false,
       "path": "backend/app/services/room_availability.py",
-      "sha256": "28a2ec32c1d15d3384792d80524d3b4478f59d1f9e606d2f0955479a5a04e144",
-      "size": 10790
+      "sha256": "634598d7897c32faa32d904acb5134d10ba2c18afcd2ea40aaafc22ab2571c41",
+      "size": 14296
     },
     {
       "executable": false,
       "path": "backend/app/services/room_presence.py",
-      "sha256": "897d87ebf9cb2c3012791eb4e28dc5f0e54d4d25cec07a43ff760a294cd3fc10",
-      "size": 5940
+      "sha256": "39e20c6c1275114fdd46ac96c8ffd16a7ce1186324eb6250ed3e3c3edb29704b",
+      "size": 5988
     },
     {
       "executable": false,
@@ -2523,8 +2523,8 @@
     {
       "executable": false,
       "path": "frontend/app/(dashboard)/orders/new/page.tsx",
-      "sha256": "2ce9d01cb79c57bb78268795341559a3031d7450a6cae2b68512c6a7e04f79b9",
-      "size": 16225
+      "sha256": "2cdf10db2045832dd06dd1da29f393dfbf8367fe37ac6d4c3562b15424cc037e",
+      "size": 16262
     },
     {
       "executable": false,
@@ -3261,8 +3261,8 @@
     {
       "executable": false,
       "path": "frontend/components/orders/OrderRoomsField.tsx",
-      "sha256": "ee06fd48b229e1bd62e8f55fccfaf522630484b233c8db54a32fb4f59bbdc283",
-      "size": 16009
+      "sha256": "40fdf9ddaab6edf687ef015eb885840bd210ed3b93968871adcc9482cad5b935",
+      "size": 17467
     },
     {
       "executable": false,
@@ -3441,8 +3441,8 @@
     {
       "executable": false,
       "path": "frontend/components/rooms/QuickCreateOrderModal.tsx",
-      "sha256": "fe151fc1b864c5ce8015ef85938e97bd33967c326c08c59d2e95e2ac1b8a14d9",
-      "size": 13815
+      "sha256": "a2035e62889737c7dd790fca3d91d3ef9cf2d5e3eacd61ba52ec6316abd9053b",
+      "size": 14199
     },
     {
       "executable": false,
@@ -3788,6 +3788,12 @@
     },
     {
       "executable": false,
+      "path": "frontend/hooks/useSelectedRoomAvailability.ts",
+      "sha256": "40cf7aacb5df9ecc7d48c992a928611cf2551da10ea4cb369b8ffdf8f41b4cf8",
+      "size": 1882
+    },
+    {
+      "executable": false,
       "path": "frontend/hooks/useSplitStay.ts",
       "sha256": "f44fe9cdb6224ed9518dd8566a03f58854bfb2dd922fca6142ea1d147df20ac5",
       "size": 4901
@@ -3813,8 +3819,8 @@
     {
       "executable": false,
       "path": "frontend/lib/api.ts",
-      "sha256": "55e1248dc0c1eb8a1cf17cea2629a55dedabe5b1606acd29518b767d30c17a3f",
-      "size": 64282
+      "sha256": "5dde4abf624e8b64ea6b093b45457d7ccd429e118bf2be1682951e00df4c1e5c",
+      "size": 64429
     },
     {
       "executable": false,
@@ -4381,6 +4387,6 @@
       "size": 920
     }
   ],
-  "revision": "fc53d993e782933ab49b5ef1647055f494a9c9f7",
+  "revision": "99424f39146f43b37efd975936fd6d0d7d374168",
   "version": 1
 }

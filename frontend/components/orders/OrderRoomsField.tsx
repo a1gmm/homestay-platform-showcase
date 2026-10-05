@@ -1,9 +1,8 @@
 "use client";
 
 import React from "react";
-import { useQuery } from "@tanstack/react-query";
-import { roomsApi } from "@/lib/api";
-import { Form, Select, DatePicker, Button, Row, Col, Typography, Tag, Tooltip, Popconfirm } from "antd";
+import { useSelectedRoomAvailability } from "@/hooks/useSelectedRoomAvailability";
+import { Form, Select, DatePicker, Button, Row, Col, Typography, Tag, Tooltip, Popconfirm, Alert } from "antd";
 import type { RoomOut } from "@/lib/types";
 import { isPhonePriceExempt } from "@/lib/types";
 import { MobileInputNumber } from "@/components/ui/MobileInputNumber";
@@ -18,33 +17,38 @@ const { RangePicker } = DatePicker;
 /** 单行选房下拉：按本行日期实时查可订房，不可订的禁选。
  *  excludeOrderId：编辑单场景传本单 id，本单自己的占用不算冲突。 */
 function RoomSelectField({
-  name, restField, rooms, form, excludeOrderId,
+  name, restField, rooms, form, excludeOrderId, validateAvailability,
 }: {
   name: number;
   restField: any;
   rooms: RoomOut[] | undefined;
   form: any;
   excludeOrderId?: string;
+  validateAvailability: boolean;
 }) {
   const rowDates = Form.useWatch(["rooms", name, "dates"], form) as
     | [Dayjs | null, Dayjs | null]
     | undefined;
   const rci = rowDates?.[0]?.format("YYYY-MM-DD");
   const rco = rowDates?.[1]?.format("YYYY-MM-DD");
-  const { data: rowAvail } = useQuery({
-    queryKey: ["rooms", "availability", rci, rco, excludeOrderId ?? null],
-    queryFn: () => roomsApi.availabilityList(rci!, rco!, excludeOrderId).then((r) => r.data),
-    enabled: !!rci && !!rco,
-  });
+  const roomId = Form.useWatch(["rooms", name, "room_id"], form) as string | undefined;
+  const { list, selected, validate, validDates } = useSelectedRoomAvailability(roomId, rci, rco, excludeOrderId, validateAvailability);
+  const rowAvail = list.data;
+  const conflict = selected.data?.conflict;
   const rowAvailSet = React.useMemo(
     () => new Set(rowAvail?.available_room_ids ?? []),
     [rowAvail]
   );
 
   return (
-    <Form.Item {...restField} name={[name, "room_id"]} label="房间" style={{ marginBottom: 8 }}>
+    <>
+    <Form.Item {...restField} name={[name, "room_id"]} label="房间" style={{ marginBottom: 8 }}
+      dependencies={[["rooms", name, "dates"]]}
+      rules={validateAvailability ? [{ validator: validate }] : undefined}
+    >
       <Select
         allowClear
+        loading={validDates && list.isFetching}
         size="large"
         placeholder="暂不分配（待排房）"
         showSearch
@@ -54,7 +58,7 @@ function RoomSelectField({
           ...(rooms || []).map((r) => ({
             value: r.room_id,
             label: `${r.room_id} · ${r.room_name}`,
-            disabled: (rci && rco) ? !rowAvailSet.has(r.room_id) : false,
+            disabled: validDates && !!rowAvail && !rowAvailSet.has(r.room_id),
             room: r,
           })),
         ]}
@@ -75,6 +79,17 @@ function RoomSelectField({
         }}
       />
     </Form.Item>
+    {validateAvailability && roomId && validDates && (
+      selected.isError ? <Alert type="warning" showIcon
+        message="房态检查失败，请重试后再保存。"
+        action={<Button onClick={() => { void selected.refetch(); void list.refetch(); }}>重新检查房态</Button>}
+      /> : selected.data?.available === false ? <Alert type="warning" showIcon
+        message={conflict?.message || `房间 ${roomId} 在所选日期不可订，请核实占用情况或更换房间、日期。`}
+        description={conflict?.order_id ? <a href={`/orders?order_id=${encodeURIComponent(conflict.order_id)}`} target="_blank" rel="noopener noreferrer">查看占用订单</a> : undefined}
+      /> : selected.isFetching ? <Text type="secondary">正在检查所选日期的房态…</Text> : null
+    )}
+    {validDates && list.isError && <Text type="secondary">可订房列表加载失败，请重新检查房态。</Text>}
+    </>
   );
 }
 
@@ -88,7 +103,7 @@ function RoomSelectField({
 export function OrderRoomsField({
   form, rooms, phonePriceExempt, showPerRoomNetFee = false,
   excludeOrderId, allowPastDates = false, confirmRoomRemoval = false,
-  allowAdd = true,
+  allowAdd = true, validateAvailability = false,
 }: {
   form: any;
   rooms: RoomOut[] | undefined;
@@ -108,6 +123,8 @@ export function OrderRoomsField({
   // 「添加房间」按钮开关。新建/快速建单允许加房（多间后自动拆成多张单）；
   // 编辑单传 false 隐藏——一间一单，编辑不加房（见 editRoomAddBlockMessage）。
   allowAdd?: boolean;
+  // 创建入口显式启用；编辑已有订单继续使用自己的写入校验，不新增保存限制。
+  validateAvailability?: boolean;
 }) {
   return (
     <Form.List name="rooms">
@@ -130,7 +147,7 @@ export function OrderRoomsField({
                 <Col xs={24} md={12}>
                   <RoomSelectField
                     name={name} restField={restField} rooms={rooms} form={form}
-                    excludeOrderId={excludeOrderId}
+                    excludeOrderId={excludeOrderId} validateAvailability={validateAvailability}
                   />
                 </Col>
                 <Col xs={24} md={12}>

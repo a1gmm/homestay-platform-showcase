@@ -50,6 +50,7 @@ class CurrentRoomPresence:
     room_id: str
     room_name: str
     checkout_date: date
+    order_id: str | None = None
 
 
 async def current_room_presence(
@@ -131,5 +132,5 @@ async def current_room_presence(
             continue
         previous = present.get(room.room_id)
         if previous is None or checkout_date > previous.checkout_date:
-            present[room.room_id] = CurrentRoomPresence(room.room_id, name, checkout_date)
+            present[room.room_id] = CurrentRoomPresence(room.room_id, name, checkout_date, order.order_id)
     return sorted(present.values(), key=lambda item: (item.room_name, item.room_id))

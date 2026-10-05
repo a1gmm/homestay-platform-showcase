@@ -274,7 +274,8 @@ export default function NewOrderPage() {
           {/* allowPastDates：补录老单要能直接填过去的入住日（后端建单本就放行，见
               test_create_order_with_past_dates_allowed）。别指望「先建今天再改」——
               编辑守卫会拦活单改到过去。 */}
-          <OrderRoomsField form={form} rooms={rooms as RoomOut[] | undefined} phonePriceExempt={phonePriceExempt} showPerRoomNetFee={isPlatform} allowPastDates />
+          <OrderRoomsField
+                validateAvailability form={form} rooms={rooms as RoomOut[] | undefined} phonePriceExempt={phonePriceExempt} showPerRoomNetFee={isPlatform} allowPastDates />
         </Card>
 
         {/* 押金 / 佣金 / 总览 */}
