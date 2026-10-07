@@ -3,6 +3,11 @@ import type { AssistantReply } from "./monthly-close";
 /** Export the saved query facts, never re-calculate money or treat a snapshot as live. */
 export function monthlyCloseResultText(reply: AssistantReply): string {
   const facts = reply.facts;
+  if (reply.output) {
+    const doc = reply.output.document;
+    return [doc.title, `查询时间：${doc.queried_at}`, doc.summary, ...doc.caveats,
+      ...doc.sections.flatMap(section => [section.title, section.note, section.columns.join("\t"), ...section.rows.map(row => row.map(value => value ?? "待确认").join("\t"))]), `查询编号：${reply.run_id}`].join("\n");
+  }
   const lines = [`${facts.billing_month} 月结查询结果`, "本次查询快照；不是结算凭证。记录变化后请重新查询。", "", reply.message];
   if (reply.tool === "review_month") {
     if (typeof facts.detail_total === "number") {

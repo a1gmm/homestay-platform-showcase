@@ -165,6 +165,26 @@ def ledger_snapshot(rows):
                  paid_by=getattr(getattr(e,'paid_by',None),'value',None),payment_date=str(getattr(e,'payment_date',None))) for e in rows]
 
 
+async def report_snapshot(db, cycle, sources, months, rows=None):
+    """Rebuild the complete report only from its exact source/ledger evidence."""
+    from .reporting import build_report
+    if rows is None:
+        rows = [e for month in months for e in await ledger(db, cycle_view(cycle, month))]
+    rows = sorted(rows, key=lambda e: e.expense_id)
+    grouped = defaultdict(Decimal)
+    for e in rows:
+        if not e.is_deleted:
+            grouped[e.category.value] += e.amount
+    payloads = [source_payload(s) for s in sources]
+    report = build_report(payloads, {k: v for s in sources for k, v in s.decisions.items()}, months,
+        ledger_summary={'total': f'{sum(grouped.values(), Decimal(0)):.2f}',
+                        'by_category': {k: f'{v:.2f}' for k, v in grouped.items()}})
+    evidence_hash = digest(dict(months=months, sources=payloads,
+        originals=[dict(id=s.source_id, sha256=s.sha256, version=s.version) for s in sources],
+        ledger=ledger_snapshot(rows)))
+    return report, dict(evidence_hash=evidence_hash, issue_count=len(report['issues']))
+
+
 def posting_date(fact, decision):
     explicit = decision.get('expense_date')
     if explicit:
@@ -504,6 +524,10 @@ async def _respond(db, cycle, actor, text, attachment_ids, context_run_id=None, 
     facts = dict(projection_version=VERSION,billing_month=cycle.billing_month,state='result',message='',
         sources=[{k:v for k,v in receipt(s).items() if k in ('source_id','filename','kind','fact_count')} for s in sources],
         metrics=[],issues=[],details=[],proposal_id=None,report_months=_months(text,cycle.billing_month,sources),export_ready=True)
+    from .explanations import business_explanation
+    if explanation := business_explanation(text):
+        facts.update(explanation)
+        return facts
     if re.fullmatch(r'[\s，。！!]*(确认执行|确认|通过|按这个方案执行)[\s，。！!]*',text):
         try:
             async with db.begin_nested():
@@ -518,7 +542,8 @@ async def _respond(db, cycle, actor, text, attachment_ids, context_run_id=None, 
             return facts
         facts.update(state='completed',message=f"{'这份方案此前已执行' if replayed else '已记入系统支出'}：{proposal.result['count']} 条，共 {proposal.result['amount']} 元。原件和执行记录可追溯。",proposal_id=proposal.proposal_id,proposal_kind='posting')
         return facts
-    if re.fullmatch(r'\s*(取消|先不执行|取消方案)\s*',text) and context_run_id:
+    pause_text = re.sub(r'[\s，,。！!；;]+', '', text)
+    if re.fullmatch(r'(?:取消|先不执行|先别执行|不要执行|取消方案|(?:先)?(?:暂停|停止)(?:方案)?(?:不要执行|先不执行|别执行)?)', pause_text) and context_run_id:
         initial=await db.scalar(select(FinancialCaseProposal).where(FinancialCaseProposal.run_id==context_run_id,
             FinancialCaseProposal.created_by==actor_id(actor),FinancialCaseProposal.cycle_id==cycle.cycle_id))
         if initial:
@@ -741,15 +766,14 @@ async def _respond(db, cycle, actor, text, attachment_ids, context_run_id=None, 
         facts['metrics']=[]
         return facts
     if (semantic and semantic.action=='report') or re.search(r'利润|收入|流水|到账|累计|报表|报告|开业|这些.*多少',text):
-        from .reporting import build_report
-        decisions={k:v for s in sources for k,v in s.decisions.items()}
-        report=build_report([source_payload(s) for s in sources],decisions,facts['report_months'],
-                            ledger_summary={'total':f'{total:.2f}','by_category':{k:f'{v:.2f}' for k,v in grouped.items()}})
+        report, facts['report_snapshot'] = await report_snapshot(db, cycle, sources, facts['report_months'], rows)
         facts['details'].append(dict(label='报表口径',value='银行收付、业务月份、平台净结算和业主标准服务费分别核对。未确认部分不作为最终利润。'))
         # Reporting module owns arithmetic; case response only displays its evidence.
         facts['metrics'] += report.get('chat_metrics',[])
         facts['details'] += report.get('chat_details',[])
-        facts['issues'] += [{k:i.get(k) for k in ('code','message','source_id','fact_key')} for i in report.get('chat_issues',[])]
+        # Report issues are their own complete scope; appending matching issues
+        # before them could consume the chat limit and hide the report's tail.
+        facts['issues'] = [{k:i.get(k) for k in ('code','message','source_id','fact_key')} for i in report.get('chat_issues',[])]
         facts['message']=report.get('message','已生成月度与累计核对报告。仍有未明确的分类、业务月份或重复关系；当前报表是暂算结果，可以导出查看每笔来源。')
         return facts
     for source in sources:

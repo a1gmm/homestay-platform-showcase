@@ -48,7 +48,7 @@ export function SettlementDelivery({ projection }: { projection: MonthlyClosePro
       </div>
     </div>)}
     {!rows.length && <p>账单明细可从下方结算列表查看。尚未生成的账单需先核对记录与费用。</p>}
-    <p>公司经营报表：{projection.final_review.state === "verified" ? "本月已关账，可查看归档报告。" : "尚未关账，当前经营报表仍需结合待核实事项复核。"}</p>
+    <p>公司经营报表：{projection.final_review.state === "verified" ? "本月已关账，可查看归档报告。" : "本工作流尚未登记关账；当前经营报表用于复查，不推翻已有确认结果。"}</p>
     {notice && <p role="status">{notice}</p>}
   </section>;
 }

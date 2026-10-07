@@ -17,3 +17,6 @@ test-results/
 playwright-report/
 .worktrees/
 .gstack/
+
+# Isolated PDF renderer dependencies used by local QA
+backend/.qa-deps/

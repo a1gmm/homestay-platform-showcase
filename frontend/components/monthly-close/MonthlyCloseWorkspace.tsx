@@ -445,7 +445,7 @@ export function MonthlyCloseWorkspace({
           <span className="mcw-avatar" aria-hidden="true">月</span>
           <span>
             <strong>{monthLabel(projection.billing_month)}对账</strong>
-            <small>{finalizationVerified ? "整月关账已完成" : projection.final_review.confirmed_settlement_count ? "业主结算已有确认 · 经营关账进行中" : "进行中"}</small>
+            <small>{finalizationVerified ? "整月关账已完成" : projection.final_review.confirmed_settlement_count ? "业主结算已有确认 · 可查看历史结果" : "进行中"}</small>
           </span>
         </div>
         <div className="mcw-header-actions">

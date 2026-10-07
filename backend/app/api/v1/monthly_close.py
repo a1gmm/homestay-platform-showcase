@@ -1811,6 +1811,7 @@ async def get_monthly_close_events(
 async def get_monthly_close_progress_details(
     billing_month: str,
     step_key: str,
+    document_id: str | None = Query(default=None, max_length=80),
     offset: int = Query(default=0, ge=0),
     limit: int = Query(default=20, ge=1, le=50),
     expected_evidence_hash: str | None = Query(default=None, pattern=r"^[0-9a-f]{64}$"),
@@ -1828,12 +1829,57 @@ async def get_monthly_close_progress_details(
         return await read_progress_details(
             db, cycle, actor_role=current["role"], step_key=step_key,
             offset=offset, limit=limit,
-            expected_evidence_hash=expected_evidence_hash,
+            expected_evidence_hash=expected_evidence_hash, document_id=document_id, actor=current,
         )
     except MonthlyCloseConflict as exc:
         raise _http_conflict(exc) from exc
     except LookupError as exc:
         raise HTTPException(404, detail=str(exc)) from exc
+
+
+@router.get("/{billing_month}/messages/{run_id}/export")
+async def export_monthly_close_result(
+    billing_month: str, run_id: str, request: Request,
+    format: Literal["txt", "md", "csv", "json", "xlsx", "docx", "pdf", "html"] = "txt",
+    current=Depends(require_monthly_close_action(MonthlyCloseAction.view_cycle)),
+    db: AsyncSession = Depends(get_db),
+):
+    import asyncio
+    from app.services.monthly_close.result_delivery import export_document
+    from app.services.monthly_close.result_output import render_document, MEDIA
+    _feature_enabled(MonthlyCloseFeature.natural_language, current)
+    if request.headers.get("X-Privacy-Mode") == "1":
+        raise HTTPException(409, detail="隐私演示模式禁止导出查询快照")
+    if current["role"] != "admin":
+        raise HTTPException(403, detail="仅管理员可导出对账查询")
+    cycle = await get_cycle_by_month(db, billing_month)
+    if cycle is None:
+        raise HTTPException(404, detail="该月尚未开始月结")
+    try:
+        document = await export_document(db, cycle, current, run_id)
+    except PermissionError as exc:
+        raise HTTPException(403, detail="你的权限已变化，请重新登录") from exc
+    except LookupError as exc:
+        raise HTTPException(404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(422, detail="查询结果超出当前导出范围，请缩小范围后重新查询") from exc
+    except MonthlyCloseConflict as exc:
+        raise _http_conflict(exc) from exc
+    data = await asyncio.to_thread(render_document, document, format)
+    # Recheck live authority after rendering; revoked sessions cannot finish an export.
+    from app.services.monthly_close.result_delivery import source_reply
+    try:
+        await source_reply(db, cycle, current, run_id)
+    except PermissionError as exc:
+        raise HTTPException(403, detail="你的权限已变化，本次导出已停止") from exc
+    except LookupError as exc:
+        raise HTTPException(404, detail=str(exc)) from exc
+    filename = quote(f"{billing_month}-对账核对结果.{format}")
+    return Response(content=data, media_type=MEDIA[format], headers={
+        "Content-Disposition": f"attachment; filename*=UTF-8''{filename}",
+        "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff",
+        "Content-Security-Policy": "sandbox; default-src 'none'; style-src 'unsafe-inline'",
+    })
 
 
 @router.get("/{billing_month}/messages")

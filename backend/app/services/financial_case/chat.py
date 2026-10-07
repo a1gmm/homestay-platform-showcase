@@ -47,6 +47,11 @@ class FinancialCaseDetail(StrictDTO):
     value: str = Field(max_length=2000)
 
 
+class FinancialReportSnapshot(StrictDTO):
+    evidence_hash: str = Field(pattern=r'^[a-f0-9]{64}$')
+    issue_count: int = Field(ge=0)
+
+
 class FinancialCaseFacts(StrictDTO):
     projection_version: Literal['financial-case-v1']
     billing_month: str = Field(pattern=r'^\d{4}-(?:0[1-9]|1[0-2])$')
@@ -62,6 +67,7 @@ class FinancialCaseFacts(StrictDTO):
     export_ready: bool
     ledger_scope: dict | None = None
     order_scope: OrderQueryScope | None = None
+    report_snapshot: FinancialReportSnapshot | None = None
 
     @field_validator('report_months')
     @classmethod
@@ -186,6 +192,18 @@ async def can_handle(db, cycle, actor, text, attachment_ids, context_run_id=None
                 return False
         await _service().validate_attachments(db, cycle.cycle_id, attachment_ids)
         return True
+    from app.services.monthly_close.semantic_agent import work_fee_review_request
+    if work_fee_review_request(text):
+        return False  # A fee completeness review is not an amount-total query.
+    from .explanations import business_explanation
+    if business_explanation(text):
+        return not context_run_id or await previous_reply(db, cycle, actor, context_run_id) is not None
+    # An explicit archived filename is a stronger topic cue than the previous
+    # conversation. Cleaning originals retain their dedicated work workflow.
+    if re.search(r'\.(?:xlsx?|csv|pdf|png|jpe?g)', text, re.I):
+        if any(source.filename in text and source.kind != 'cleaning'
+               for source in await _service().load_sources(db, cycle.cycle_id)):
+            return not context_run_id or await previous_reply(db, cycle, actor, context_run_id) is not None
     from .operations import wants_operation
     from .order_scope import wants_order_query, is_identity_diagnostic
     if is_identity_diagnostic(text):
@@ -207,10 +225,10 @@ async def can_handle(db, cycle, actor, text, attachment_ids, context_run_id=None
     if re.search(r'(?:删除|补齐|恢复|撤销|重建).{0,16}(?:打扫|保洁|工单|订单|记录)|(?:打扫|保洁|工单|订单).{0,16}(?:删除|补齐|恢复|撤销)|身份证|入住人|订单身份', text):
         return False
     previous = await previous_reply(db, cycle, actor, context_run_id)
-    if context_run_id and (previous is None or previous.tool != 'financial_case'):
+    financial_topic = re.search(r'银行|流水|记账|利润|会计|资金|现金流|收支|资本|股东|借款|开业|核对这些资料|生成.*报告', text)
+    if context_run_id and (previous is None or (previous.tool != 'financial_case' and not financial_topic)):
         return False
     is_case_context = previous is not None and previous.tool == 'financial_case'
-    financial_topic = re.search(r'银行|流水|记账|利润|会计|资金|现金流|收支|资本|股东|借款|开业|核对这些资料|生成.*报告', text)
     followup = re.search(r'这些|这个|那些|刚才|一共|合计|总共|多少|保洁|洗涤|工资|水电|水费|电费|物业|承担|支付|收款|收入|支出|费用|确认|执行|取消|分类|归类|更正|改成|月份|月底|月初|导出|报告|凭证|证据|明细|原始|准确|为什么|怎么算|怎么算的|继续|再看|核对|层|排除|只看', text)
     if not financial_topic and not (is_case_context and followup):
         return False

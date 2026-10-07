@@ -15,8 +15,8 @@
     {
       "executable": false,
       "path": ".gitignore",
-      "sha256": "681362584eee99e3390c914aed3f09e9e1ffc738564acf822e0e62cac1efb016",
-      "size": 220
+      "sha256": "13dc107380d25e75a2e4d2d82909c87fe40f8570026f55d2db70535ad0f3a4df",
+      "size": 293
     },
     {
       "executable": false,
@@ -669,8 +669,8 @@
     {
       "executable": false,
       "path": "backend/app/api/v1/monthly_close.py",
-      "sha256": "53b7d7c65c55a0769bc8154e358d9f0904aa70dd1cf1576743494811af1ba669",
-      "size": 132738
+      "sha256": "6d104b1c66bfb8ff74e3532f5d4bca101b9dd4f4efe3627a773374ebfb19cd3f",
+      "size": 135284
     },
     {
       "executable": false,
@@ -837,8 +837,8 @@
     {
       "executable": false,
       "path": "backend/app/core/privacy_mode.py",
-      "sha256": "49a6f0ac1abc7259329fb86c97ffe89c03b1a2ef1f42e509536f01cc6a62f68d",
-      "size": 14224
+      "sha256": "02a0745af296ca67aec97e651b0b30aab8476ef546eb8acbbbff847ab171d914",
+      "size": 14495
     },
     {
       "executable": false,
@@ -1455,8 +1455,8 @@
     {
       "executable": false,
       "path": "backend/app/services/financial_case/chat.py",
-      "sha256": "ca95a3e7fda7ba7afc4f2184117049fea9cefe8705f23041bc16877244b3f104",
-      "size": 11097
+      "sha256": "a1b83a57f0dbfa025481f2165094558222292bb2f68980485aafa05d6873530b",
+      "size": 12186
     },
     {
       "executable": false,
@@ -1469,6 +1469,12 @@
       "path": "backend/app/services/financial_case/deduplication.py",
       "sha256": "3e4b20bad0a33fbcc10e5e09a40fecbc5d612253ecf0c8a6bb5780970757fa5c",
       "size": 11761
+    },
+    {
+      "executable": false,
+      "path": "backend/app/services/financial_case/explanations.py",
+      "sha256": "a9d052c9a604142ea38beb92bab48ab40b4a3575a3dfb4694b6152648e9df344",
+      "size": 2262
     },
     {
       "executable": false,
@@ -1515,20 +1521,20 @@
     {
       "executable": false,
       "path": "backend/app/services/financial_case/reporting.py",
-      "sha256": "3e6d05645a0290f873a47cbed04678778795dcba83c650a545d26025148663c3",
-      "size": 69690
+      "sha256": "38ae5b7c89753d46cacb9af6e87a1b672664e8ea07dc6bf0ee2af46fff59f197",
+      "size": 70605
     },
     {
       "executable": false,
       "path": "backend/app/services/financial_case/semantic.py",
-      "sha256": "ba3d81be68e6ba64f4249f02f360b3178e89552cc879f071871ebc185bdf9ae6",
-      "size": 26661
+      "sha256": "a36b7a0bba554b4d7ab7f206f1b3ee49e870eed8bd0cda8b281a35e8a0ac5b6e",
+      "size": 27274
     },
     {
       "executable": false,
       "path": "backend/app/services/financial_case/service.py",
-      "sha256": "d26d814761f0a05b4bfe12c7b03f0eebebd394c9bc70caefa011870f97d51569",
-      "size": 60203
+      "sha256": "6ab428b51292c4eb5aad02a30bfacdf3137f7610dab251a431ca135d2c8016ff",
+      "size": 61546
     },
     {
       "executable": false,
@@ -1743,8 +1749,8 @@
     {
       "executable": false,
       "path": "backend/app/services/monthly_close/assistant.py",
-      "sha256": "e4a78d2bc6d5dff7b2e6e5c00b5b6490f55c0feb8bab18d7141075cd52a8b039",
-      "size": 101271
+      "sha256": "8a3f9e0075e08b08f6b094517f37ce6a4f7a8ec7c98a3cf22594e5fc20ce1049",
+      "size": 107022
     },
     {
       "executable": false,
@@ -1755,8 +1761,8 @@
     {
       "executable": false,
       "path": "backend/app/services/monthly_close/cleaning_work_chat.py",
-      "sha256": "774949b1bb0c44984391fe8556b6e3e1ec6092cda10176256ddadffe75ca5cfd",
-      "size": 36288
+      "sha256": "6e0edb766b20e01ff633e483fd32025c28539535799667f3bbbf69caaaf27ef6",
+      "size": 37481
     },
     {
       "executable": false,
@@ -1785,14 +1791,14 @@
     {
       "executable": false,
       "path": "backend/app/services/monthly_close/conversation.py",
-      "sha256": "085c4dbcd50cab56eda2619061d12ed068ea4962744bb96e61526a8102842276",
-      "size": 20880
+      "sha256": "f9306909d2c454a89db275b90bc3163cdcefd3dbc0c26ef37ba9e1454c0d7dca",
+      "size": 30164
     },
     {
       "executable": false,
       "path": "backend/app/services/monthly_close/conversation_context.py",
-      "sha256": "89d62591ea8632d0eee3d8f133667b856951c1bdab4663c59d6d9564a527333b",
-      "size": 10331
+      "sha256": "1bdcd1fe2f9e1efb4e3453ac7d0468ba172b529d535e47e84c06c40f06e28906",
+      "size": 10338
     },
     {
       "executable": false,
@@ -1853,6 +1859,12 @@
       "path": "backend/app/services/monthly_close/investigation_agent.py",
       "sha256": "8da662b17b9c63124c1ee24d38565c86d4b0a8ddf1099e630f6eb70a4f79fef9",
       "size": 15680
+    },
+    {
+      "executable": false,
+      "path": "backend/app/services/monthly_close/investigation_context.py",
+      "sha256": "6b4fc13a9a2870c081f1ed13d4635334c192204ca6491a54164dc937d98b79ba",
+      "size": 4957
     },
     {
       "executable": false,
@@ -1917,20 +1929,32 @@
     {
       "executable": false,
       "path": "backend/app/services/monthly_close/progress_details.py",
-      "sha256": "34bde7edfeec9c9cf8b410d869a1de008ff68658f372b056f3665eb04ce955ea",
-      "size": 1891
+      "sha256": "895f803ec9fc544349608e17876b9102dfd5f765f78ab91adeaa63df16633819",
+      "size": 3107
     },
     {
       "executable": false,
       "path": "backend/app/services/monthly_close/projection.py",
-      "sha256": "e391e1b9c552ee80c054961afb7ddfd7b5e2441d73d721ab8384c63845aa8fb9",
-      "size": 55993
+      "sha256": "6a9f1fb170c25c54d1aba3d4017f41ef9586fb23e3a6518fd047b93b3d773e47",
+      "size": 56062
+    },
+    {
+      "executable": false,
+      "path": "backend/app/services/monthly_close/result_delivery.py",
+      "sha256": "ee491821bd2869e6d4b2193f88c76b4d2dcd05bd25b5d823659e432627babf44",
+      "size": 9736
+    },
+    {
+      "executable": false,
+      "path": "backend/app/services/monthly_close/result_output.py",
+      "sha256": "8ae578afb47578ac9936fe13d70743a9ee1decf3fa1425b94b584baa1cb48b34",
+      "size": 24488
     },
     {
       "executable": false,
       "path": "backend/app/services/monthly_close/semantic_agent.py",
-      "sha256": "0d608621b68b0f0dbab73d3b67af68b7e8a81c28973ce325242b45d99fea990e",
-      "size": 21539
+      "sha256": "91585fab80a409570caeab16abac291a0b99af928ec6d641b5837e02a1f489ed",
+      "size": 25113
     },
     {
       "executable": false,
@@ -2019,8 +2043,8 @@
     {
       "executable": false,
       "path": "backend/app/services/monthly_close/work_record_fees.py",
-      "sha256": "ca691dae7575439afed5ee69d01989117706049dac2d37c89b1153bade3bb1de",
-      "size": 9154
+      "sha256": "732e96d9c3a020a996d87e1f01f5c1af15ec96c110ece541b28142f93c1b6c0e",
+      "size": 11696
     },
     {
       "executable": false,
@@ -2373,8 +2397,8 @@
     {
       "executable": false,
       "path": "backend/requirements.txt",
-      "sha256": "d3aac1e674490a4d0952d8e49a0538f562483987be0f508f7d02f7a9bf2c9172",
-      "size": 819
+      "sha256": "2ef7cfc996051def45c6c1548a4d77b1a4a968f00b50f3f256d5f3b63cad1485",
+      "size": 836
     },
     {
       "executable": false,
@@ -2985,8 +3009,8 @@
     {
       "executable": false,
       "path": "frontend/components/monthly-close/CleaningWorkChatReply.tsx",
-      "sha256": "b7ebcf4c75c6d38e1b097ca45f7bf4d4c983b7f9bc4ec4e5259c6ce7049c0a38",
-      "size": 6917
+      "sha256": "ab035c216ebfe315926189165f8d0b815327ad2234212d527823067eb8aa2697",
+      "size": 7835
     },
     {
       "executable": false,
@@ -3056,6 +3080,12 @@
     },
     {
       "executable": false,
+      "path": "frontend/components/monthly-close/FormattedResult.tsx",
+      "sha256": "62662368b7a4588234fdf3f945f075538cc555b3a25c07ff165d957f9db74e41",
+      "size": 4969
+    },
+    {
+      "executable": false,
       "path": "frontend/components/monthly-close/IntakeLinkManager.tsx",
       "sha256": "d84ca3db115007eeb7be9ac5bec6638b24f28a27b2cd5c2ba278dfde43731754",
       "size": 4928
@@ -3069,8 +3099,8 @@
     {
       "executable": false,
       "path": "frontend/components/monthly-close/MonthOutcome.tsx",
-      "sha256": "0a0c95e520b1b6a08f2358c6f55ead71cb1c1f55867755a24f1cce4e7c4ea0a7",
-      "size": 2436
+      "sha256": "f39c3b086eb5f870c7be850b4332265031eec8e70fb4695349a91e290f4897ee",
+      "size": 2457
     },
     {
       "executable": false,
@@ -3099,7 +3129,7 @@
     {
       "executable": false,
       "path": "frontend/components/monthly-close/MonthlyCloseWorkspace.tsx",
-      "sha256": "16ca67c301640bf93ffd55bcc056f0b572d53825cadd3340d198cc4022d1743b",
+      "sha256": "acb0c11cdc0d57e9cb63df25b955a3120e4afa392ea3d3a82a72289ddec9f83c",
       "size": 54632
     },
     {
@@ -3123,8 +3153,8 @@
     {
       "executable": false,
       "path": "frontend/components/monthly-close/ProgressDetails.tsx",
-      "sha256": "cc8340a64ba61984ac8a6b2a72d639feb2407bc0b398380d98e3f1400e37fa66",
-      "size": 9378
+      "sha256": "39d6b1aff17f429141206b66f3560e0ef868109372d79d37624f68afcad77d63",
+      "size": 10809
     },
     {
       "executable": false,
@@ -3135,8 +3165,8 @@
     {
       "executable": false,
       "path": "frontend/components/monthly-close/QueryResultActions.tsx",
-      "sha256": "0414d74289d9a41a871b319ad7c67c9fe3b5d7c6c18cb04a0f2db1e331492496",
-      "size": 2431
+      "sha256": "0d704c7388ff1b98d19a56a3ec534cb438b82888da392765a2bf20f2459ddf5f",
+      "size": 5345
     },
     {
       "executable": false,
@@ -3159,8 +3189,8 @@
     {
       "executable": false,
       "path": "frontend/components/monthly-close/SettlementDelivery.tsx",
-      "sha256": "5ed8dae65b7322a26988e05e6cea311f79d577e3f71e4b87f937691f9bdc7f51",
-      "size": 4415
+      "sha256": "bde4a7fcdd90527f31f2423fbcc36b22022ea6f9ce6e58f4df500837c7a291f1",
+      "size": 4442
     },
     {
       "executable": false,
@@ -3207,8 +3237,8 @@
     {
       "executable": false,
       "path": "frontend/components/monthly-close/WorkTimeline.tsx",
-      "sha256": "b95cec9b1017c0f0647ea787986231f15a3be54efad67fcd2846a4648a1150ea",
-      "size": 14757
+      "sha256": "a87e5176a7160d4af69ad3102c5de8744525935a98a60ad285842da64410ac9e",
+      "size": 14992
     },
     {
       "executable": false,
@@ -4029,8 +4059,8 @@
     {
       "executable": false,
       "path": "frontend/lib/monthly-close-result-text.ts",
-      "sha256": "1dbba63ef88d2a0ec278fbd016cfd5e4f01b7c82fb4edcb8dafb1258e7396a2a",
-      "size": 1610
+      "sha256": "3039ec14432d472bea89f73edeeec248ca0bc5f34a49aea4896be83e3bd09e5e",
+      "size": 1989
     },
     {
       "executable": false,
@@ -4047,8 +4077,8 @@
     {
       "executable": false,
       "path": "frontend/lib/monthly-close.ts",
-      "sha256": "aec20d03301b3d04932b920c408fe87ab518a74e2832f7cde5cef4bb04a0c1cf",
-      "size": 25631
+      "sha256": "c351fb9dc0775b06100da60b391341a3ab9b93dbc3cbf994d9cd464b0fd0d5b1",
+      "size": 26088
     },
     {
       "executable": false,
@@ -4311,8 +4341,8 @@
     {
       "executable": false,
       "path": "frontend/playwright.config.ts",
-      "sha256": "93d644989f12667945f068d43fb4f801d212d7350dc1438820ab3ac7674e4894",
-      "size": 2275
+      "sha256": "4e17fe507857bc672e066866f040f2b18751d7f792f85d6fad5554d3b1aea1bc",
+      "size": 2658
     },
     {
       "executable": false,
@@ -4411,6 +4441,6 @@
       "size": 920
     }
   ],
-  "revision": "48d7491eb82434b775c65dbd7dd47f3703fc379c",
+  "revision": "407139584106fe42ae5127e5bd6980eaef69d551",
   "version": 1
 }

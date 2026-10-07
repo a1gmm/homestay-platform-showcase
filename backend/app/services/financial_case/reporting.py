@@ -374,15 +374,16 @@ def build_report(sources: list[dict], decisions: dict, months: list[str], ledger
         operating = roles["revenue"] - roles["expense"]
         advance_deduction = ZERO if owner_bases[month] == "gross" else roles["owner_advance"]
         template = None if owner_bases[month] == "mixed" else operating - roles["owner_share"] - advance_deduction
-        report["months"].append(dict(month=month, cash_in=_fmt(cash_in), cash_out=_fmt(cash_out),
-            net_cash=_fmt(cash_in - cash_out), cash_categories=categories,
+        report["months"].append(dict(month=month, cash_in=_fmt(cash_in) if cash else None, cash_out=_fmt(cash_out) if cash else None,
+            net_cash=_fmt(cash_in - cash_out) if cash else None, cash_categories=categories,
             confirmed_revenue=_fmt(roles["revenue"]), confirmed_expenses=_fmt(roles["expense"]),
             confirmed_owner_share=_fmt(roles["owner_share"]), confirmed_owner_advances=_fmt(roles["owner_advance"]),
             owner_distribution_basis=owner_bases[month], confirmed_operating_result=_fmt(operating),
             provisional_template_result=_fmt(template) if template is not None else None, final_profit=None if blocking_count or template is None else _fmt(template),
             cash_fact_keys=[r["fact_key"] for r in cash], profit_fact_keys=[r["fact_key"] for r in profit]))
     sums = ("cash_in", "cash_out", "net_cash", "confirmed_revenue", "confirmed_expenses", "confirmed_owner_share", "confirmed_owner_advances", "confirmed_operating_result")
-    report["cumulative"] = {key: _fmt(sum((Decimal(m[key]) for m in report["months"]), ZERO)) for key in sums}
+    report["cumulative"] = {key: None if not report["months"] or any(m[key] is None for m in report["months"])
+        else _fmt(sum((Decimal(m[key]) for m in report["months"]), ZERO)) for key in sums}
     report["cumulative"]["provisional_template_result"] = None if any(m["provisional_template_result"] is None for m in report["months"]) else _fmt(sum((Decimal(m["provisional_template_result"]) for m in report["months"]), ZERO))
     report["cumulative"]["final_profit"] = None if blocking_count else report["cumulative"]["provisional_template_result"]
     report["status"] = "provisional" if blocking_count else "ready_for_review"
@@ -390,15 +391,19 @@ def build_report(sources: list[dict], decisions: dict, months: list[str], ledger
         profit_row_count=len(report["profit_rows"]), open_issue_count=blocking_count,
         confirmed_count=sum(r["confirmed"] for r, _ in facts.values()),
         excluded_nonoperating_count=sum(r["confirmed"] and r["category"] in NON_OPERATING for r, _ in facts.values()))
+    missing_cash_months = [m["month"] for m in report["months"] if not m["cash_fact_keys"]]
+    cash_pending = "部分月份缺少银行流水" if any(m["cash_fact_keys"] for m in report["months"]) else "缺少银行流水"
+    def cash_value(value):
+        return value + " 元" if value is not None else cash_pending
     report["chat_metrics"] = [
-        dict(label="所选月份银行收款", value=report["cumulative"]["cash_in"] + " 元"),
-        dict(label="所选月份银行付款", value=report["cumulative"]["cash_out"] + " 元"),
-        dict(label="所选月份净现金", value=report["cumulative"]["net_cash"] + " 元"),
+        dict(label="所选月份银行收款", value=cash_value(report["cumulative"]["cash_in"])),
+        dict(label="所选月份银行付款", value=cash_value(report["cumulative"]["cash_out"])),
+        dict(label="所选月份净现金", value=cash_value(report["cumulative"]["net_cash"])),
         dict(label="待确认问题", value=str(blocking_count)),
         dict(label="利润状态", value="暂不能定稿" if blocking_count else "可复核"),
     ]
     report["chat_details"] = [dict(label=m["month"] + " 核对结果", value=
-        f"银行收款 {m['cash_in']} 元、付款 {m['cash_out']} 元、净现金 {m['net_cash']} 元；"
+        (f"已提供流水中的银行收款 {m['cash_in']} 元、付款 {m['cash_out']} 元、净现金 {m['net_cash']} 元；" if m['cash_fact_keys'] else "缺少该月银行流水，收款、付款和净现金待核实；") +
         f"已确认业务收入 {m['confirmed_revenue']} 元、公司自身费用 {m['confirmed_expenses']} 元、代业主支付 {m['confirmed_owner_advances']} 元、业主分成 {m['confirmed_owner_share']} 元。"
         + ("业主分成混合口径尚未核实，暂不能计算利润。" if m["provisional_template_result"] is None
            else f"已确认部分暂算 {m['provisional_template_result']} 元；完整利润待确认。" if m["profit_fact_keys"] and blocking_count
@@ -415,8 +420,8 @@ def build_report(sources: list[dict], decisions: dict, months: list[str], ledger
     else:
         report["chat_issues"] = list(report["issues"])
     scope = ("、".join(requested) if len(requested) <= 4 else f"{requested[0]} 至 {requested[-1]}（所选 {len(requested)} 个月）") or "当前所选月份"
-    report["message"] = (f"{scope} 银行收款合计 {report['cumulative']['cash_in']} 元、付款 {report['cumulative']['cash_out']} 元，"
-        f"净现金 {report['cumulative']['net_cash']} 元。"
+    report["message"] = ((f"{scope} {cash_pending}，收款、付款和净现金尚不能完整核定。" if missing_cash_months or not report['months'] else
+        f"{scope} 已提供流水中的银行收款合计 {report['cumulative']['cash_in']} 元、付款 {report['cumulative']['cash_out']} 元，净现金 {report['cumulative']['net_cash']} 元。")
         + (f"目前有 {blocking_count} 项待确认，完整利润仍为暂算状态，不能用未确认项为零得出利润。" if blocking_count
            else f"已确认业务及业主分成后的模板结果为 {report['cumulative']['final_profit']} 元，可继续复核。"))
     if issue_count > 500:
@@ -667,7 +672,8 @@ def export_workbook(report: dict, sources: list[dict]) -> bytes:
         return "待确认"
 
     def result_row(label, key, total=False, business=True):
-        values = [confirmed_value(column, key, months[i] if i < len(months) else None) if business else amount(column.get(key)) for i, column in enumerate(columns)]
+        values = [confirmed_value(column, key, months[i] if i < len(months) else None) if business else
+                  amount(column.get(key)) if column.get(key) is not None else "缺少银行流水" for i, column in enumerate(columns)]
         summary.append([label] + values)
         if total:
             totals.append(summary.max_row)
@@ -701,7 +707,8 @@ def export_workbook(report: dict, sources: list[dict]) -> bytes:
     result_row("银行付款", "cash_out", business=False)
     result_row("银行净现金", "net_cash", True, business=False)
     for direction, label in (("in", "其中：用途待确认收款"), ("out", "其中：用途待确认付款")):
-        summary.append([label] + [sum((_dec(r.get("amount")) or ZERO for r in report.get("cash_rows", []) if not r.get("confirmed") and r.get("direction") == direction and r.get("cash_month") in (months if period is None else [period])), ZERO) for period in months + [None]])
+        summary.append([label] + [sum((_dec(r.get("amount")) or ZERO for r in report.get("cash_rows", []) if not r.get("confirmed") and r.get("direction") == direction and r.get("cash_month") in (months if period is None else [period])), ZERO)
+            if columns[i].get("cash_in") is not None else "缺少银行流水" for i, period in enumerate(months + [None])])
     summary.append(["银行净现金含借款、股东投入等资金往来，不等同于利润。待确认项不能按零处理。"])
     style(summary, [32] + [20] * len(columns), numeric_columns=tuple(range(2, len(columns) + 2)))
     summary.auto_filter.ref = None

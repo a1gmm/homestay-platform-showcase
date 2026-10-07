@@ -3,14 +3,18 @@ import { defineConfig, devices } from "@playwright/test";
 const baseURL = process.env.PLAYWRIGHT_BASE_URL || "http://127.0.0.1:3000";
 const runsMonthlyCloseFullStory = process.env.PLAYWRIGHT_FULL_STORY === "1"
   || process.argv.some((argument) => argument.includes("monthly-close-assistant-full-story"));
+const runsResultOutput = process.argv.some((argument) => argument.includes("monthly-close-result-output"));
 
 const backendServer = {
-  command: process.argv.some((argument) => argument.includes("monthly-close-cleaning-investigation"))
+  command: runsResultOutput
+    ? "uv run --directory ../backend python tests/e2e_cleaning_resolution_server.py"
+    : process.argv.some((argument) => argument.includes("monthly-close-cleaning-investigation"))
     ? "uv run --directory ../backend python tests/e2e_cleaning_investigation_server.py"
     : "uv run --directory ../backend python tests/e2e_task8_server.py",
   url: `${process.env.E2E_API_ORIGIN || "http://127.0.0.1:8000"}/health`,
   reuseExistingServer: false,
   timeout: 120_000,
+  ...(runsResultOutput ? { env: { ...process.env, E2E_SERVER_PORT: "8000", E2E_STUB_MODEL: "1" } } : {}),
 };
 
 const killSwitchBackendServer = {
@@ -32,7 +36,7 @@ const killSwitchBackendServer = {
 };
 
 const frontendServer = {
-  command: "pnpm dev --hostname 127.0.0.1",
+  command: `pnpm dev ${process.env.PLAYWRIGHT_WEBPACK === "1" ? "--webpack " : ""}--hostname 127.0.0.1`,
   url: baseURL,
   reuseExistingServer: false,
   timeout: 120_000,

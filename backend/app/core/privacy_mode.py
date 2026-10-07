@@ -164,6 +164,10 @@ _BUSINESS_VALUE_SUFFIXES = (
 def _effective_field_name(container: dict[Any, Any], key: Any) -> str:
     field_name = str(key).lower()
     container_fields = {str(item).lower() for item in container}
+    if field_name == "rows" and {"title", "columns", "rows"} <= container_fields:
+        # Formatted reconciliation cells can mix names and free-text evidence;
+        # a positional table has no field names for reliable selective masking.
+        return "private_text"
     if field_name.endswith(("_phone", "_mobile", "_telephone")):
         return "phone"
     if field_name.endswith("_email"):

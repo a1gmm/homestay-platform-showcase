@@ -5,6 +5,7 @@ import { tokens } from "@/lib/design-tokens";
 import { sourceLabel } from "./SourceChecklist";
 import { CleaningWorkChatReply } from "./CleaningWorkChatReply";
 import { CleaningInvestigationReply } from "./CleaningInvestigationReply";
+import { FormattedResult } from "./FormattedResult";
 import { QueryResultActions } from "./QueryResultActions";
 import { ProgressDetails, hasStructuredProgress } from "./ProgressDetails";
 import { ConversationMemoryReply } from "./ConversationMemoryReply";
@@ -153,8 +154,8 @@ export function WorkTimeline({
             <span className="mcw-avatar mcw-message-avatar" aria-hidden="true">月</span>
             <div className="mcw-bubble mcw-assistant-bubble">
               <ExecutionReceipt reply={reply} projection={projection} />
-              {reply.tool !== "financial_case" && !hasStructuredProgress(reply, projection) && <div style={{ whiteSpace: "pre-wrap" }}>{reply.message}</div>}
-              {!hasStructuredProgress(reply, projection) && reply.tool === "review_month" && !["cost_responsibility", "amount_summary"].includes(String(reply.facts.query_mode)) && projection.actor_role === "admin" && reply.facts.billing_month === projection.billing_month && <details style={{ marginTop: 16 }}>
+              {!reply.output && reply.tool !== "financial_case" && !hasStructuredProgress(reply, projection) && <div style={{ whiteSpace: "pre-wrap" }}>{reply.message}</div>}
+              {!reply.output && !hasStructuredProgress(reply, projection) && reply.tool === "review_month" && !["cost_responsibility", "amount_summary"].includes(String(reply.facts.query_mode)) && projection.actor_role === "admin" && reply.facts.billing_month === projection.billing_month && <details style={{ marginTop: 16 }}>
                 <summary style={{ minHeight: 44, cursor: "pointer" }}>查看各类资料和月结进度</summary>
                 <ul style={{ paddingLeft: 20, display: "grid", gap: 16 }}>
                   {(reply.facts.sources as Array<{ source_type: string; label: string; detail: string; next_step: string }>).map((source) => <li key={source.source_type}>
@@ -166,11 +167,12 @@ export function WorkTimeline({
                   {(reply.facts.steps as Array<{ step_key: string; label: string; status: string; blocking_count: number }>).map((step) => <li key={step.step_key}>{step.label}：{step.status === "confirmed" ? "已确认" : step.blocking_count ? `${step.blocking_count} 项待处理` : "尚待确认"}</li>)}
                 </ul>
               </details>}
+              <FormattedResult reply={reply} projection={projection} />
               <ProgressDetails key={`${reply.run_id}-${projection.billing_month}-${projection.actor_role}`} reply={reply} projection={projection} onSelectDocument={onSelectDocument} onOpenOrder={onOpenOrder} onOpenWorkflow={onOpenWorkflow} />
-              <FinancialCaseReply key={`financial-case-${reply.run_id}-${projection.billing_month}-${projection.actor_role}`} reply={reply} projection={projection} onFollowUp={onFollowUp} busy={busy} historical={turnIndex < latestFinancialCase} />
-              <CleaningWorkChatReply reply={reply} projection={projection} onFollowUp={onFollowUp} busy={busy} historical={turnIndex < latestWorkChange} />
-              <OrderIdentityChatReply reply={reply} projection={projection} onFollowUp={onFollowUp} busy={busy} historical={turnIndex < latestOrderChange} />
-              <CleaningInvestigationReply reply={reply} projection={projection} onFollowUp={onFollowUp} onSelectDocument={onSelectDocument} busy={busy} />
+              {!reply.output && <FinancialCaseReply key={`financial-case-${reply.run_id}-${projection.billing_month}-${projection.actor_role}`} reply={reply} projection={projection} onFollowUp={onFollowUp} busy={busy} historical={turnIndex < latestFinancialCase} />}
+              {!reply.output && <CleaningWorkChatReply reply={reply} projection={projection} onFollowUp={onFollowUp} busy={busy} historical={turnIndex < latestWorkChange} />}
+              {!reply.output && <OrderIdentityChatReply reply={reply} projection={projection} onFollowUp={onFollowUp} busy={busy} historical={turnIndex < latestOrderChange} />}
+              {!reply.output && <CleaningInvestigationReply reply={reply} projection={projection} onFollowUp={onFollowUp} onSelectDocument={onSelectDocument} busy={busy} />}
               {!hasStructuredProgress(reply, projection) && <QueryResultActions reply={reply} projection={projection} />}
               {!hasStructuredProgress(reply, projection) && <ChatWorkflowActions reply={reply} projection={projection} onOpenWorkflow={onOpenWorkflow} onOpenOrder={onOpenOrder} />}
               <ConversationMemoryReply reply={reply} projection={projection} />

@@ -3,7 +3,7 @@ import type { AssistantReply, CleaningWorkComparison, MonthlyCloseProjection } f
 import styles from "./CleaningWorkChatReply.module.css";
 
 type ChatAction = { kind: string; room_ref: string; service_date: string; service_type?: string; record_id?: string; confirmed_count?: number; amount?: string; unit_price?: string; existing_amount?: string; quantity?: number; payer?: string; related_fees_unchanged?: Array<{ expense_id: string; amount: string }> };
-type ChatFacts = { kind: string; document_id?: string; billing_month: string; state: string; comparison?: CleaningWorkComparison; actions: ChatAction[]; removal_ids: string[]; fee_summary?: { unresolved: Array<{ room_ref: string; service_date: string; reason: string }> } };
+type ChatFacts = { kind: string; document_id?: string; billing_month: string; state: string; comparison?: CleaningWorkComparison; actions: ChatAction[]; removal_ids: string[]; fee_summary?: { actions?: ChatAction[]; recognized?: Array<{ room_ref: string; service_date: string; reason: string }>; unresolved: Array<{ room_ref: string; service_date: string; reason: string }> } };
 const kindLabels: Record<string, string> = { delete: "删除系统记录", add: "补齐历史记录", resolve: "核实重复次数", restore: "恢复已删除记录", fee: "补记保洁费用" };
 const differenceLabels: Record<string, string> = { system_only: "表里没有，系统多出", table_only: "表里有，系统缺少", duplicate: "同一天同房有重复", not_completed: "缺少完成依据", unknown_room: "房号还没有对应上" };
 export function CleaningWorkChatReply({ reply, projection, onFollowUp, busy, historical = false }: { reply: AssistantReply; projection: MonthlyCloseProjection; onFollowUp?: (text: string, runId: string) => void; busy?: boolean; historical?: boolean }) {
@@ -31,6 +31,8 @@ export function CleaningWorkChatReply({ reply, projection, onFollowUp, busy, his
     </div>}
     {facts.state === "completed" && facts.removal_ids?.length > 0 && <div className={styles.actions}><button type="button" disabled={busy || !onFollowUp} onClick={() => follow("恢复刚才删除的记录")}>恢复这次删除的记录</button></div>}
     {!!facts.fee_summary?.unresolved.length && <details open><summary>还有 {facts.fee_summary.unresolved.length} 项费用需核实</summary><ol className={styles.list}>{facts.fee_summary.unresolved.map((item, index) => <li key={index}>{item.service_date} · {item.room_ref}：{item.reason}</li>)}</ol></details>}
+    {facts.state === "report" && !!facts.fee_summary?.actions?.length && <details open><summary>{facts.fee_summary.actions.length} 笔待补记候选（仅查询）</summary><ol className={styles.list}>{facts.fee_summary.actions.map((item, index) => <li key={index}>{item.service_date} · {item.room_ref}：{item.quantity} 次 × ¥{item.unit_price}，已有 ¥{item.existing_amount}，拟补 ¥{item.amount}。需要另行生成并确认方案，本次未修改费用。</li>)}</ol></details>}
+    {!!facts.fee_summary?.recognized?.length && <details open><summary>{facts.fee_summary.recognized.length} 笔沿用已有费用结果</summary><ol className={styles.list}>{facts.fee_summary.recognized.map((item, index) => <li key={index}>{item.service_date} · {item.room_ref}：{item.reason}</li>)}</ol></details>}
     {report && <details open={!facts.fee_summary && (facts.state === "report" || facts.state === "conflict")}>
       <summary>核对结果：已对应 {report.matched_count} 次，剩余 {report.differences.length} 项</summary>
       <p>原表 {report.record_count} 条 · 核实后有效 {report.effective_record_count ?? report.record_count} 次 · 已补齐 {report.recorded_count ?? 0} 次</p>

@@ -1,6 +1,7 @@
 """Read-only conversational progress built from current monthly-close evidence."""
 
 import re
+import json
 from hashlib import sha256
 from typing import Literal
 
@@ -96,6 +97,19 @@ class ProgressDetail(BaseModel):
     next_step: str
     issue_code: str | None = None
     order_id: str | None = None
+    service_date: str | None = None
+    room: str | None = None
+    source: str | None = None
+    document_id: str | None = None
+    ordinal: int | None = None
+
+
+class InvestigationScope(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    topic: str
+    label: str
+    count: int = Field(ge=0)
+    document_id: str | None = None
 
 
 class ProgressFacts(BaseModel):
@@ -113,6 +127,8 @@ class ProgressFacts(BaseModel):
     amount_summary: AmountSummary | None = None
     detail_total: int | None = None
     detail_evidence_hash: str | None = None
+    investigation_scopes: list[InvestigationScope] | None = None
+    selected_ordinal: int | None = None
 
 
 def _detail_next_step(issue):
@@ -172,7 +188,10 @@ def progress_request(text):
     return None
 
 
-async def read_progress(db, cycle, projection, text, focus, *, mode=None, expense_categories=None):
+async def read_progress(db, cycle, projection, text, focus, *, mode=None, expense_categories=None,
+                        document_ids=None, ordinal=None, expected_evidence_hash=None, detail_limit=50):
+    if mode is None and re.search(r"逐项|逐笔|详细|哪几项|(?:差异|问题).*明细", text):
+        mode = "details"
     base = {
         "billing_month": cycle.billing_month,
         "request_text": text[:4000],
@@ -234,6 +253,7 @@ async def read_progress(db, cycle, projection, text, focus, *, mode=None, expens
         for doc in source.documents
     ]
     reports = []
+    report_documents = []
     if visible:
         documents = await db.scalars(
             select(MonthlyCloseDocument)
@@ -245,6 +265,8 @@ async def read_progress(db, cycle, projection, text, focus, *, mode=None, expens
             .options(undefer(MonthlyCloseDocument.content))
         )
         for document in documents:
+            if document_ids and document.document_id not in document_ids:
+                continue
             if (
                 not document.content
                 or sha256(document.content).hexdigest() != document.sha256
@@ -260,6 +282,7 @@ async def read_progress(db, cycle, projection, text, focus, *, mode=None, expens
                             db, entries, cycle.billing_month, document.document_id
                         )
                     )
+                    report_documents.append(document)
             except (BillParseError, ServiceStatementError):
                 continue
         # Overlapping workbooks are separate evidence; never sum them into a fictitious total.
@@ -273,6 +296,10 @@ async def read_progress(db, cycle, projection, text, focus, *, mode=None, expens
             )
         elif reports:
             work_summary = f"有 {len(reports)} 份保洁打扫表，请指定一份查看，避免把重叠记录重复计算。"
+    confirmed_history = getattr(getattr(projection, "final_review", None), "settlements", ())
+    historical_settlements = bool(confirmed_history) and all(
+        item.get("status") in {"confirmed", "paid"} for item in confirmed_history)
+    historical = getattr(cycle, "status", None) == "completed" or historical_settlements
     sources = []
     descriptions = {
         "missing": "还没收到资料",
@@ -299,7 +326,9 @@ async def read_progress(db, cycle, projection, text, focus, *, mode=None, expens
                 "completed",
                 "not_applicable",
             }:
-                detail += "费用资料尚未完成核对。"
+                detail += "当前工具未归档供应商费用核对依据。" if historical else "费用资料尚未完成核对。"
+        if historical:
+            next_step = "如需复查，先对照历史确认记录；本工具中的资料状态不要求重做已完成的对账。"
         sources.append(
             ProgressSource(
                 source_type=source.source_type,
@@ -322,6 +351,11 @@ async def read_progress(db, cycle, projection, text, focus, *, mode=None, expens
     detail_items = None
     detail_total = None
     detail_evidence_hash = None
+    scopes = [InvestigationScope(topic="cleaning_statement", label="保洁打扫差异",
+                                 count=len(report.differences), document_id=doc.document_id)
+              for doc, report in zip(report_documents, reports)]
+    scopes.extend(InvestigationScope(topic=row.step_key, label=row.label, count=row.blocking_count)
+                  for row in steps if row.step_key == focus)
     if focus != "all":
         source = next((row for row in sources if row.source_type == focus), None)
         if source:
@@ -329,6 +363,51 @@ async def read_progress(db, cycle, projection, text, focus, *, mode=None, expens
             message = f"{source.label}：{detail}。当前已归档 {source.document_count} 份资料。{source.next_step}"
             if mode == "format" or re.search(r"格式|哪些列|什么字段|什么内容", text):
                 message = f"{source.label}请发 Excel 文件（.xls 或 .xlsx）。表里应保留{FORMAT_FIELDS[source.source_type]}。可以直接发供应商原表；上传后先查看识别结果，缺少字段或对应不准的地方再补充。"
+            elif focus == "cleaning_statement" and mode == "details" and len(reports) == 1:
+                report, document = reports[0], report_documents[0]
+                detail_total = len(report.differences)
+                detail_evidence_hash = sha256(json.dumps(report.model_dump(mode="json"), sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+                guidance = {
+                    "table_only": "原表有记录、系统缺少。核实实际打扫后，可让我准备补齐记录方案；费用另行核对。",
+                    "system_only": "系统有记录、原表没有。先核实是否漏填原表或系统多记，不直接删除。",
+                    "duplicate": "同日同房有重复记录。核实实际次数，再选择按原表或按实际次数处理。",
+                    "unknown_room": "房号尚不能唯一对应系统房间。请核对原表房号，不猜测关联订单。",
+                    "not_completed": "系统有任务但尚未登记完成。核实实际完成情况后补充完成记录，不重复新增任务。",
+                }
+                detail_items = [ProgressDetail(
+                    subject=f"{row.service_date} · {row.room_ref} · {'续住打扫' if row.service_type == 'instay_cleaning' else '正常打扫'}",
+                    cause=f"原表 {row.table_count} 次，系统 {row.system_count} 条。" + guidance.get(row.status, "两边记录不一致，需核实实际打扫情况。"),
+                    next_step=guidance.get(row.status, "核对原表日期、房间和实际次数后说明处理方式。"),
+                    issue_code=row.status, service_date=row.service_date, room=row.room_ref,
+                    source=f"{document.filename} · " + ("原表第 " + "、".join(map(str, row.source_rows)) + " 行" if row.source_rows else "系统作业记录；原表没有对应行"),
+                    document_id=document.document_id, ordinal=index + 1,
+                ) for index, row in enumerate(report.differences[:detail_limit])]
+                message = f"这份保洁表当前有 {detail_total} 项差异，下面按日期、房间列出依据和下一步。" if detail_total else "已重新核对，这份保洁表当前没有打扫记录差异；费用和供应商付款仍需分别核对。"
+            elif mode == "details" and getattr(projection, "actor_role", None) == "admin" and (focus != "cleaning_statement" or not reports):
+                from app.services.monthly_close.evidence import build_role_workflow_evidence
+                selected = next(item for item in projection.sources if item.source_type == focus)
+                visible_ids = {doc.document_id for doc in selected.documents}
+                evidence = await build_role_workflow_evidence(db, cycle, actor_role="admin")
+                unique = {}
+                for step_evidence in evidence:
+                    for issue in step_evidence.get("issues", []):
+                        if issue.get("source_type") == focus or issue.get("document_id") in visible_ids:
+                            unique[(issue.get("code"), issue.get("resource_id"))] = issue
+                issues = list(unique.values())
+                if not issues and source.state not in {"completed", "not_applicable"}:
+                    issues = [{"subject": source.label, "cause": source.detail,
+                               "next_step": source.next_step, "code": "source_needs_evidence"}]
+                detail_total = len(issues)
+                detail_evidence_hash = sha256(json.dumps({"source": selected.to_dict(), "issues": issues}, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+                detail_items = [ProgressDetail(subject=item.get("subject", source.label),
+                    cause=item.get("cause", item.get("message", "待核实")), next_step=_detail_next_step(item),
+                    issue_code=item.get("code"), order_id=item.get("order_id"),
+                    document_id=item.get("document_id"), room=item.get("room_id"), ordinal=index + 1)
+                    for index, item in enumerate(issues[:detail_limit])]
+                scopes.append(InvestigationScope(topic=focus, label=source.label + "待核对事项", count=detail_total))
+                message = f"{source.label}当前有 {detail_total} 项待核对事项，依据和下一步如下。" if issues else f"{source.label}当前没有待处理事项；这不代表供应商款项已经支付。"
+            elif focus == "cleaning_statement" and mode == "details" and len(reports) > 1:
+                message = "当前有多份保洁表，不能把重叠记录合并成同一组差异。请指定要查看的文件。"
         else:
             step = next((row for row in steps if row.step_key == focus), None)
             if step:
@@ -340,6 +419,10 @@ async def read_progress(db, cycle, projection, text, focus, *, mode=None, expens
                     else "检查未发现阻塞项，尚待确认"
                 )
                 message = f"{step.label}：{state}。请查看本步骤的核对事项。"
+                review = getattr(projection, "final_review", None)
+                confirmed_delivery = bool(getattr(review, "settlements", ())) and all(item.get("status") in {"confirmed", "paid"} for item in review.settlements)
+                if focus in {"settlement_review", "owner_confirmation"} and confirmed_delivery:
+                    message = review.settlement_status_message + " 本工作流步骤尚未登记完成时，只需复核步骤依据，不应重复确认已有业主账单。"
                 if getattr(projection, "actor_role", None) == "admin":
                     from app.services.monthly_close.evidence import (
                         build_role_workflow_evidence,
@@ -363,8 +446,9 @@ async def read_progress(db, cycle, projection, text, focus, *, mode=None, expens
                             next_step=_detail_next_step(item)[:300],
                             issue_code=item.get("code"),
                             order_id=item.get("order_id"),
+                            ordinal=index + 1 if mode == "details" else None,
                         )
-                        for item in issues[:3]
+                        for index, item in enumerate(issues[:detail_limit if mode == "details" else 3])
                     ]
                     if focus == "preflight":
                         fee_notes = selected_step.get("summary", {}).get("fee_explanations", [])
@@ -381,7 +465,7 @@ async def read_progress(db, cycle, projection, text, focus, *, mode=None, expens
                                     message += f"\n{who}：{note['message']}；当前登记 {note.get('amount') or '0.00'} 元。"
                             message += "\n完整明细可在业主结算页的结算检查中展开查看。"
                     if detail_items:
-                        message = f"{step.label}：{state}。\n"
+                        message = (message + "\n") if focus in {"settlement_review", "owner_confirmation"} and confirmed_delivery else f"{step.label}：{state}。\n"
                         shown = 0
                         for index, item in enumerate(detail_items[:3], 1):
                             paragraph = (
@@ -401,9 +485,11 @@ async def read_progress(db, cycle, projection, text, focus, *, mode=None, expens
         pending = [
             row for row in sources if row.state not in {"completed", "not_applicable"}
         ]
-        message = f"{cycle.billing_month} 的整月对账" + (
-            "已经完成。" if cycle.status == "completed" else "还没有完成。"
-        )
+        message = (f"{cycle.billing_month} 的整月对账已经完成。" if cycle.status == "completed" else
+            f"{cycle.billing_month} 已有确认的业主结算。本工作流尚未登记整月完成，不能据此判断历史对账没有完成。" if historical_settlements else
+            f"{cycle.billing_month} 的整月对账还没有完成。")
+        if historical:
+            message += "以下为当前资料与记录的回查结果，不自动重开月份或要求重做历史确认；如有新差异，应先对照原处理依据。"
         settlement_status=getattr(projection.final_review,'settlement_status_message','')
         if settlement_status:
             message += '\n'+settlement_status
@@ -416,7 +502,7 @@ async def read_progress(db, cycle, projection, text, focus, *, mode=None, expens
         ]
         if visible_pending:
             message += (
-                "\n还需处理："
+                ("\n当前工具的资料记录：" if historical else "\n还需处理：")
                 + "；".join(
                     f"{row.label}（{descriptions[row.state]}）"
                     for row in visible_pending
@@ -426,21 +512,26 @@ async def read_progress(db, cycle, projection, text, focus, *, mode=None, expens
         if cleaning_complete and any(
             row.source_type == "cleaning_statement" for row in pending
         ):
-            message += "\n打扫次数已对齐；保洁费用还需供应商费用依据继续核对。"
+            message += "\n打扫次数已对齐；当前工具未归档供应商费用核对依据，不推翻历史处理结果。" if historical else "\n打扫次数已对齐；保洁费用还需供应商费用依据继续核对。"
         remaining = [
             row.label
             for row in steps
             if row.status != "confirmed"
             and row.step_key
             not in {"source_collection", "service_fees", "utilities", "ota_statements"}
+            and not (row.step_key in {"settlement_review", "owner_confirmation"}
+                     and getattr(getattr(projection, "final_review", None), "settlements", ())
+                     and all(item.get("status") in {"confirmed", "paid"} for item in projection.final_review.settlements))
         ]
         if remaining:
-            message += "\n后续还有：" + "、".join(remaining) + "。"
+            message += ("\n本工作流未登记步骤：" if historical else "\n后续还有：") + "、".join(remaining) + "。"
         next_source = next(
             (row for row in pending if row.state == "missing"),
             pending[0] if pending else None,
         )
-        if next_source:
+        if historical:
+            message += "\n如需复查，先查看历史确认与费用依据；本工具未归档的资料不等于当时未对账。"
+        elif next_source:
             message += "\n建议先：" + next_source.next_step
         elif cycle.status != "completed":
             message += "\n下一步：" + projection.recommended_action.label + "。"
@@ -452,6 +543,15 @@ async def read_progress(db, cycle, projection, text, focus, *, mode=None, expens
             "缺失平台订单号也可在聊天里补充：提供系统订单编号和真实平台单号，核对方案后确认保存。查询结果可以复制或下载作交接；之后记录变化需要重新查询。\n"
             "当前不会代替你批准结算，也不支持联网搜索、定时通知或向别人发送消息。可以先问“本月还缺什么，先做哪一步”。"
         )
+    if ordinal and detail_total is not None:
+        if expected_evidence_hash and expected_evidence_hash != detail_evidence_hash:
+            message = "事项已经变化，旧序号不能直接对应新记录。下面是重新读取的当前清单，请按日期、房间重新选择。"
+        elif 1 <= ordinal <= len(detail_items or []):
+            detail_items = [detail_items[ordinal - 1]]
+            message = f"这是当前清单的第 {ordinal} 项，依据和处理建议如下；本次没有修改账目。"
+        else:
+            detail_items = []
+            message = f"当前清单共有 {detail_total} 项，未找到你指定的第 {ordinal} 项。请按当前清单选择，或提供日期与房间。"
     return ProgressFacts(
         **base,
         message=message,
@@ -461,4 +561,6 @@ async def read_progress(db, cycle, projection, text, focus, *, mode=None, expens
         detail_items=detail_items,
         detail_total=detail_total,
         detail_evidence_hash=detail_evidence_hash,
+        investigation_scopes=scopes,
+        selected_ordinal=ordinal if ordinal and expected_evidence_hash == detail_evidence_hash and len(detail_items or []) == 1 else None,
     )

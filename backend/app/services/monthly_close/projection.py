@@ -664,8 +664,8 @@ async def _final_review_projection(
             "amount": format(Decimal(str(row.actual_owner_amount)).quantize(Decimal("0.01")), ".2f"),
             "status": str(getattr(row.status, "value", row.status)),
         } for row in rows)
-    status_message=(f"业主结算共 {settlement_count} 份，已确认 {confirmed_count} 份，已付款 {paid_count} 份。"
-        + ("整月关账已完成。" if state=='verified' else "整月经营关账仍需核对资料与剩余事项，已确认的业主账单无需重复确认。")) if settlement_count and include_financial_detail else ""
+    status_message=(f"业主结算共 {settlement_count} 份，已确认 {confirmed_count} 份，已登记付款 {paid_count} 份；未登记不代表实际未打款。"
+        + ("整月关账已完成。" if state=='verified' else "本工作流尚未登记整月关账；已确认的业主账单无需重复确认，复查差异应先对照原处理依据。")) if settlement_count and include_financial_detail else ""
     return FinalReviewProjection(
         confirmed_settlement_count=confirmed_count,paid_settlement_count=paid_count,
         settlement_status_message=status_message,

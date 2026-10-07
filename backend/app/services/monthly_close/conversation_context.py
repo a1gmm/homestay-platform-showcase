@@ -14,7 +14,7 @@ TOPICS = {
     "utility_expense": r"水电|电费|水费|充值",
     "ota_statement": r"OTA|携程|美团|飞猪|途家|平台账单",
     "operating_expenses": r"运营支出|采购|维修费|日耗|消耗品",
-    "order_integrity": r"订单完整|订单这|订单那|订单.*(?:缺|问题|卡|处理)|平台(?:订单号|单号)",
+    "order_integrity": r"订单完整|订单这|订单那|订单.*(?:缺|问题|卡|处理|差异)|平台(?:订单号|单号)",
     "exception_clearance": r"异常处理|异常事项",
     "preflight": r"结算前|预检",
     "settlement_review": r"业主结算|结算复核",

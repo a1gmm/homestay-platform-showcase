@@ -134,8 +134,9 @@ async def build_plan(db, cycle, document, actor_id, spec, reason):
         from app.services.monthly_close.work_record_fees import plan_work_fees
         if spec.add_missing or spec.delete_extra or spec.restore_ids or spec.duplicate != "ask" or spec.service_type == "cleaning":
             raise MonthlyCloseConflict("fee_plan_mixed", "请先完成打扫记录核对，再单独核对续住保洁费用；退房服务费需按关联订单核对")
-        if preview["comparison"]["differences"]:
-            raise MonthlyCloseConflict("work_not_reconciled", "打扫记录还有差异，请先核实次数，再补记费用")
+        fee_scope = spec.model_copy(update={"service_type": "instay_cleaning"})
+        if any(selected(row, fee_scope) for row in preview["comparison"]["differences"]):
+            raise MonthlyCloseConflict("work_not_reconciled", "所选续住打扫记录还有差异，请先核实次数，再补记费用；其他日期、房间及退房打扫仍分别核对")
         fees = await plan_work_fees(db, document, cycle.billing_month, rooms=spec.rooms, service_date=spec.service_date)
         return {"actions": fees["actions"], "fee_summary": fees,
                 "comparison": preview["comparison"],
@@ -540,6 +541,10 @@ def parse_spec(text, previous, report, billing_month):
     inspect = bool(
         re.search(r"查看|只看|看看|核对|查一下|为什么|怎么|哪些|分析|差异", compact)
     ) and not (wants_delete or align or add)
+    if wants_delete or align or add or re.search(r"保洁记录|打扫记录|正常打扫|退房打扫", compact):
+        # A new activity request cannot inherit a fee/restore operation.
+        spec.repair_fees = False
+        spec.restore_ids = []
     if wants_delete:
         spec.delete_extra = True
     if align:
@@ -611,7 +616,7 @@ def parse_spec(text, previous, report, billing_month):
 
 async def answer_work_chat(
     db, cycle, actor_id, text, document_ids, previous, previous_run_id,
-    *, selection=None, inspect_only=False, restore_only=False, explain_only=False, cancel_only=False,
+    *, selection=None, inspect_only=False, inspect_fees_only=False, restore_only=False, explain_only=False, cancel_only=False,
 ):
     await _admin(db, actor_id)
     base = {"billing_month": cycle.billing_month, "request_text": text[:4000]}
@@ -728,6 +733,13 @@ async def answer_work_chat(
         )
     try:
         preview, raw = await read_report(db, cycle, document, actor_id)
+        if inspect_fees_only:
+            spec = ChatSpec(repair_fees=True, service_type="instay_cleaning")
+            plan = await build_plan(db, cycle, document, actor_id, spec, text.strip()[:1000])
+            fees = plan["fee_summary"]
+            return WorkChatFacts(**base, state="report", spec=spec,
+                message=f"已核对确认过的续住打扫与收费记录：{len(fees['actions'])} 笔具备补记条件，{len(fees.get('recognized', []))} 笔沿用已有费用结果，另有 {len(fees['unresolved'])} 项需要核实。下面列出原因；本次只查询，没有生成补账方案或修改费用。",
+                comparison=plan["comparison"], fee_summary=fees)
         if selection is not None:
             spec = ChatSpec.model_validate(selection)
             known = {row.room_ref for row in raw.differences} | {row["room_ref"] for row in raw.records}
@@ -765,9 +777,9 @@ async def answer_work_chat(
             comparison = preview["comparison"]
             report = WorkLogComparison.model_validate(comparison)
             explanation = ""
-            if explain_only and previous and previous.actions:
+            if explain_only:
                 explanation = "方案按日期、房间和打扫类型逐项对照原表：缺少的记录可补齐，表外记录可删除，重复次数按你核实的结果处理。只有确认方案后才修改；关联费用不会随打扫记录自动删除。\n"
-                if previous.state == "proposal":
+                if previous and previous.state == "proposal":
                     return previous.model_copy(update={"request_text":text[:4000], "message":explanation + "下面保留原方案供你核实；如果记录已经变化，确认时会要求重新生成。"})
             return WorkChatFacts(
                 **base,
@@ -783,7 +795,7 @@ async def answer_work_chat(
             return WorkChatFacts(
                 **base,
                 state="report",
-                message=(f"本次没有可直接补记的续住保洁费用，仍有 {len(plan['fee_summary']['unresolved'])} 项需要核实；打扫次数核对完成不代表费用已核齐。" if spec.repair_fees else "按你指定的范围，没有需要执行的修改。剩余差异在下面；可以继续告诉我具体房间或重复项的实际次数。"),
+                message=(f"本次没有可直接补记的续住保洁费用。{len(plan['fee_summary'].get('recognized', []))} 笔沿用已有费用结果，{len(plan['fee_summary']['unresolved'])} 项需要核实；没有重新收取已有费用。" if spec.repair_fees else "按你指定的范围，没有需要执行的修改。剩余差异在下面；可以继续告诉我具体房间或重复项的实际次数。"),
                 comparison=plan["comparison"],
                 spec=spec,
                 reason=reason,

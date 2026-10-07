@@ -114,7 +114,10 @@ _SOURCE_LABELS = {
     "ota_statement": "OTA 平台账单",
     "operating_expenses": "其他运营支出",
 }
+from app.services.monthly_close.result_output import FormattedResultFacts, ResultOutput, build_document, output_request, present_document
+
 ReadTool = Literal[
+    "formatted_result",
     "get_month_status",
     "get_source_status",
     "get_document_status",
@@ -347,6 +350,7 @@ class AssistantReply(_SafeReplyDTO):
     narration_degraded: bool
     conversation_id: str
     run_id: str
+    output: ResultOutput | None = None
 
     @model_validator(mode="after")
     def validate_server_owned_structure(self):
@@ -355,7 +359,9 @@ class AssistantReply(_SafeReplyDTO):
         if self.intent not in {"read_query", "action_plan", "action_result"} and self.tool is not None and not (self.intent == "clarification" and self.tool == "agent_clarification"):
             raise ValueError("non-read reply cannot expose a tool")
         facts_model: type[_SafeReplyDTO]
-        if self.tool == "financial_case":
+        if self.tool == "formatted_result":
+            facts_model = FormattedResultFacts
+        elif self.tool == "financial_case":
             facts_model = FinancialCaseFacts
         elif self.tool == "cleaning_work_chat":
             facts_model = WorkChatFacts
@@ -398,6 +404,9 @@ class AssistantReply(_SafeReplyDTO):
         if legacy_work_spec:
             # Preserve the canonical bytes used to verify pre-fee chat history.
             self.facts["spec"].pop("repair_fees", None)
+        if facts_model is FinancialCaseFacts and self.facts.get("report_snapshot") is None:
+            # Preserve hashes of financial replies saved before full report exports.
+            self.facts.pop("report_snapshot", None)
         if self.recommended_action:
             self.recommended_action = RecommendedActionDTO.model_validate(
                 self.recommended_action
@@ -411,7 +420,21 @@ class AssistantReply(_SafeReplyDTO):
         return self
 
     def to_dict(self) -> dict[str, Any]:
-        return self.model_dump(mode="json")
+        payload = self.model_dump(mode="json")
+        if self.output is None:
+            payload.pop("output", None)  # Preserve hashes of all prior durable replies.
+        return payload
+
+
+def _attach_requested_output(reply, text):
+    request = output_request(text)
+    if request and reply.intent == "read_query" and reply.facts.get("billing_month"):
+        try:
+            document = build_document(reply, datetime.now(timezone.utc).isoformat())
+            reply.output = ResultOutput(document=present_document(document, request, text), presentation=request)
+        except ValueError:
+            reply.message = reply.message[:400] + "\n查询已保留，但结果超出当前整理范围。请缩小查询范围后再指定输出格式。"
+    return reply
 
 
 def redact_text(text: str) -> str:
@@ -1233,6 +1256,12 @@ async def list_monthly_close_chat_history(db, cycle, actor):
         reply = _validated_durable_reply(run, message, expected_scope=_audience_scope(role))
         if reply.tool == "cleaning_work_chat" and reply.facts.get("document_id") not in visible_ids:
             continue
+        if reply.tool == "formatted_result":
+            from app.services.monthly_close.result_delivery import source_reply
+            try:
+                await source_reply(db, cycle, actor, reply.run_id)
+            except (LookupError, PermissionError, ValueError):
+                continue
         if reply.tool == "financial_case":
             try:
                 await financial_case_chat._service().validate_attachments(
@@ -1326,8 +1355,21 @@ async def _load_semantic_context(db, cycle, actor_id, projection, text, context_
         if run.permission_snapshot.get("role") != "admin":
             continue
         reply = _validated_durable_reply(run, message, expected_scope="finance")
-        if reply.tool not in {"cleaning_work_chat", "review_month", "agent_clarification", "investigate_cleaning", "get_document_status", "order_identity_chat", "conversation_memory"}:
+        # A format change preserves the original read scope for the next question.
+        display_run_id = reply.run_id
+        if reply.tool == "formatted_result":
+            from app.services.monthly_close.result_delivery import source_reply
+            try:
+                reply = await source_reply(db, cycle, {"user_id": actor_id, "role": "admin"}, display_run_id)
+            except (LookupError, PermissionError, ValueError):
+                continue
+        if reply.tool not in {"cleaning_work_chat", "review_month", "agent_clarification", "investigate_cleaning", "get_document_status", "order_identity_chat", "conversation_memory", "financial_case"}:
             continue
+        if reply.tool == "financial_case":
+            try:
+                await financial_case_chat._service().validate_attachments(db, cycle.cycle_id, [s["source_id"] for s in reply.facts.get("sources", [])])
+            except (LookupError, PermissionError, ValueError):
+                continue
         facts = reply.facts
         doc_id = facts.get("document_id")
         if reply.tool == "get_document_status" and len(facts.get("documents", [])) == 1:
@@ -1340,16 +1382,27 @@ async def _load_semantic_context(db, cycle, actor_id, projection, text, context_
             question = "补充订单平台单号"
         elif reply.tool == "conversation_memory":
             question = "查看或更新本月已保存的处理原则"
+        elif reply.tool == "financial_case":
+            question = "查看财务资料的暂算报告" if facts.get("report_snapshot") else "核对财务资料"
         if _looks_sensitive(question):
             continue
         ref = f"H{len(history)}"
-        item = {"ref":ref, "question":aliased_question(question), "tool":reply.tool,
+        item = {"ref":ref, "display_run_id":display_run_id, "question":aliased_question(question), "tool":reply.tool,
                 "focus":facts.get("focus"), "query_mode":facts.get("query_mode"), "state":facts.get("state"),
                 "document_ref":reverse_docs.get(doc_id)}
         if reply.tool == "order_identity_chat":
             item["focus"] = "order_integrity"
         if facts.get("amount_summary"):
             item["expense_categories"] = facts["amount_summary"].get("category_filter", [])
+        if facts.get("investigation_scopes"):
+            item["investigation_scopes"] = [
+                {"topic": entry["topic"], "label": entry["label"], "count": entry["count"],
+                 "document_ref": reverse_docs.get(entry.get("document_id"))}
+                for entry in facts["investigation_scopes"]
+                if not entry.get("document_id") or entry["document_id"] in reverse_docs
+            ]
+            item["detail_evidence_hash"] = facts.get("detail_evidence_hash")
+            item["visible_ordinals"] = [row.get("ordinal") or index + 1 for index, row in enumerate(facts.get("detail_items") or [])]
         if reply.tool == "investigate_cleaning":
             item["focus"] = "cleaning_fees"
             selected_case = facts.get("selected") or {}
@@ -1364,14 +1417,16 @@ async def _load_semantic_context(db, cycle, actor_id, projection, text, context_
         item["has_restorable_result"] = bool(facts.get("removal_ids"))
         refs[ref] = reply
         history.append(item)
-    if context_run_id and context_run_id not in {reply.run_id for reply in refs.values()}:
+    if context_run_id and context_run_id not in {item["display_run_id"] for item in history}:
         # A supplied reference must never silently fall back to another actor/old plan.
         raise ValueError("conversation reference is not available")
     context = {"billing_month":cycle.billing_month, "question":aliased_question(text),
                "history":history,
-               "explicit_context":next((key for key, reply in refs.items() if reply.run_id == context_run_id), None),
+               "explicit_context":next((item["ref"] for item in history if item["display_run_id"] == context_run_id), None),
                "documents":[{"ref":ref, "source_type":doc.source_type} for ref,doc in zip(doc_refs, documents[:30], strict=True)],
                "source_states":{source.source_type:source.state for source in projection.sources}}
+    for item in history:
+        item.pop("display_run_id", None)
     notes = await _load_conversation_memory(db, cycle, actor_id)
     context["remembered_requirements"] = [
         {"topic": note.topic, "instruction": aliased_question(re.sub(r"ORD-[A-Za-z0-9-]+", "[系统订单]", order_identity_chat.local_privacy_text(note.text), flags=re.IGNORECASE))}
@@ -1500,6 +1555,7 @@ async def _answer_financial_case_message(
             recommended_action={}, narration_degraded=False,
             conversation_id=conversation_id, run_id=run_id,
         )
+        reply = _attach_requested_output(reply, text)
         terminal_reply, _won = await _complete_run(
             db, run_id, reply=reply,
             status="waiting_user" if validated.state in {"proposal", "needs_information"} else "succeeded",
@@ -1537,6 +1593,24 @@ async def answer_monthly_close_message(
             await on_progress({"stage":stage, "message":message})
 
     await progress("received", "已收到，正在读取当前月份和对话记录")
+    from app.services.monthly_close.result_output import formatting_only
+    if role == "admin" and not attachment_ids and not _looks_sensitive(text) and formatting_only(text):
+        from app.services.monthly_close.result_delivery import answer_formatted
+        return await answer_formatted(db, cycle, actor, text, context_run_id)
+
+    # Viewing a formatted plan must preserve the exact plan for a later explicit
+    # confirmation. Resolve only an owned, integrity-checked formatting turn;
+    # unavailable sources stay pinned so they cannot select an older plan.
+    if role == "admin" and not attachment_ids:
+        previous = await financial_case_chat.previous_reply(db, cycle, actor, context_run_id)
+        if previous and previous.tool == "formatted_result":
+            from app.services.monthly_close.result_delivery import source_reply
+            context_run_id = previous.run_id
+            try:
+                context_run_id = (await source_reply(db, cycle, actor, previous.run_id)).run_id
+            except (LookupError, PermissionError, ValueError):
+                pass
+
     attachment_ids = await financial_case_chat.resolve_operation_attachment_ids(
         db, cycle, actor, text, attachment_ids, context_run_id
     )
@@ -1557,6 +1631,7 @@ async def answer_monthly_close_message(
     semantic_context = None
     semantic_selection = None
     semantic_inspect = False
+    semantic_inspect_fees = False
     semantic_restore = False
     semantic_cancel = False
     semantic_explain = False
@@ -1723,9 +1798,16 @@ async def answer_monthly_close_message(
                 )
             attachments = await _validate_attachments(db, cycle, actor, attachment_ids)
     projection = await build_monthly_close_projection(db, cycle, actor)
-    if use_semantic:
+    local_read_reference = None
+    if use_semantic or (role == "admin" and not attachment_ids and not control and not memory_mode and not order_mode and not _looks_sensitive(text)):
         try:
             semantic_context, semantic_docs, semantic_refs = await _load_semantic_context(db, cycle, actor_id, projection, text, context_run_id)
+            from app.services.monthly_close.investigation_context import read_reference
+            if not semantic_agent.month_scope_question(cycle.billing_month, text, strict=True):
+                local_read_reference = read_reference(text, semantic_context)
+            if local_read_reference:
+                use_semantic = True
+                intent_tokens, unsafe_input = ("semantic_agent",), False
         except ValueError:
             semantic_error = "CONTEXT_UNAVAILABLE"
     durable_input = (
@@ -1863,7 +1945,8 @@ async def answer_monthly_close_message(
             try:
                 scope_question = semantic_agent.month_scope_question(cycle.billing_month, text, strict=True)
                 amount = conversation_context.amount_request(text, semantic_context["history"], semantic_context.get("explicit_context"))
-                semantic_result = semantic_agent.SemanticDecision(tool="clarify", question=scope_question) if scope_question else semantic_agent.SemanticDecision.model_validate(amount) if amount else _repeat_read_decision(text, semantic_refs, context_run_id)
+                fee_review = semantic_agent.work_fee_review_request(text)
+                semantic_result = semantic_agent.SemanticDecision(tool="clarify", question=scope_question) if scope_question else fee_review if fee_review else semantic_agent.SemanticDecision.model_validate(local_read_reference) if local_read_reference else semantic_agent.SemanticDecision.model_validate(amount) if amount else _repeat_read_decision(text, semantic_refs, context_run_id)
                 repeated_read = semantic_result is not None and not scope_question
                 if semantic_result is None:
                     semantic_result = semantic_agent.fee_repair_request(text)
@@ -1903,9 +1986,10 @@ async def answer_monthly_close_message(
                     ordinal=semantic_result.case_ordinal, room=semantic_result.room,
                 )
                 decision = AssistantDecision(intent="read_query", tool="investigate_cleaning")
-            elif semantic_result.tool in {"inspect_cleaning", "preview_cleaning", "preview_restore", "cancel_plan"}:
+            elif semantic_result.tool in {"inspect_cleaning", "inspect_work_fees", "preview_cleaning", "preview_restore", "cancel_plan"}:
                 work_chat = True
                 semantic_inspect = semantic_result.tool == "inspect_cleaning"
+                semantic_inspect_fees = semantic_result.tool == "inspect_work_fees"
                 semantic_restore = semantic_result.tool == "preview_restore"
                 semantic_cancel = semantic_result.tool == "cancel_plan"
                 semantic_explain = semantic_result.mode == "explain"
@@ -2075,11 +2159,18 @@ async def answer_monthly_close_message(
         selected_document = next((doc for source in projection.sources for doc in source.documents if doc.document_id in work_document_ids), None)
         facts = DocumentStatusFacts(documents=attachments, request_text=redact_text(text), billing_month=current_cycle.billing_month, work_record_count=getattr(selected_document, "work_record_count", None)).model_dump(mode="json")
     elif month_route:
-        facts = (await read_progress(db, current_cycle, projection, redact_text(text), month_route, mode=semantic_result.mode if semantic_result else None, expense_categories=semantic_result.expense_categories if semantic_result else None)).model_dump(mode="json")
+        previous_scope = semantic_refs.get(semantic_result.context_ref) if semantic_result else None
+        facts = (await read_progress(db, current_cycle, projection, redact_text(text), month_route,
+            mode=semantic_result.mode if semantic_result else None,
+            expense_categories=semantic_result.expense_categories if semantic_result else None,
+            document_ids=work_document_ids,
+            ordinal=semantic_result.case_ordinal if semantic_result else None,
+            expected_evidence_hash=previous_scope.facts.get("detail_evidence_hash") if previous_scope else None,
+        )).model_dump(mode="json")
     elif work_chat:
         if not control and conversation_context.explanation_only(text):
             semantic_selection, semantic_inspect, semantic_restore, semantic_explain, semantic_cancel = None, True, False, True, False
-        chat_facts = await answer_work_chat(db, current_cycle, actor_id, text, work_document_ids, previous_work_chat, previous_work_run_id, selection=semantic_selection, inspect_only=semantic_inspect, restore_only=semantic_restore, explain_only=semantic_explain, cancel_only=semantic_cancel)
+        chat_facts = await answer_work_chat(db, current_cycle, actor_id, text, work_document_ids, previous_work_chat, previous_work_run_id, selection=semantic_selection, inspect_only=semantic_inspect, inspect_fees_only=semantic_inspect_fees, restore_only=semantic_restore, explain_only=semantic_explain, cancel_only=semantic_cancel)
         facts = chat_facts.model_dump(mode="json")
     elif investigation_request is not None:
         investigation = await investigate_cleaning(
@@ -2216,6 +2307,7 @@ async def answer_monthly_close_message(
         conversation_id=conversation_id,
         run_id=run_id,
     )
+    reply = _attach_requested_output(reply, text)
     terminal_status: Literal["succeeded", "waiting_user", "degraded"] = (
         "waiting_user"
         if decision.intent == "clarification"

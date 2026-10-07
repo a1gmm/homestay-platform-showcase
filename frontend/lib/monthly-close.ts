@@ -190,7 +190,13 @@ export interface MonthlyCloseReceiptView {
   analysis_state: MonthlyCloseProjectedDocumentSummary["analysis_state"];
 }
 
+export interface ReconciliationOutput {
+  document: { title: string; billing_month: string; queried_at: string; summary: string; caveats: string[];
+    sections: Array<{ title: string; columns: string[]; rows: Array<Array<string | number | null>>; note: string }> };
+  presentation: { style: "detail" | "summary" | "table" | "checklist"; formats: Array<"txt" | "md" | "csv" | "json" | "xlsx" | "docx" | "pdf" | "html"> };
+}
 export interface AssistantReply {
+  output?: ReconciliationOutput;
   message: string;
   intent: "read_query" | "clarification" | "write_request" | "sensitive_input" | "action_plan" | "action_result";
   tool: string | null;
