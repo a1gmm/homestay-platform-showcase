@@ -343,6 +343,7 @@ export default function MonthlyClosePage() {
   return (
     <div className="monthly-close-page" style={{ display: "flex", flexDirection: "column", gap: 20 }}>
       <PageHeader
+        style={{ marginBottom: 0 }}
         title={assistantEnabled ? "月结助理" : "月结中心"}
         subtitle={assistantEnabled
           ? undefined

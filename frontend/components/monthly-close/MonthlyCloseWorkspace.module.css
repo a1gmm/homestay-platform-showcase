@@ -1,0 +1,87 @@
+.workspace { width: 100%; max-width: 1280px; margin: 0 auto; display: grid; grid-template-columns: minmax(0, 1fr) 280px; align-items: start; gap: 32px; }
+.workspace .chat { width: 100%; max-width: 920px; min-width: 0; margin: 0; height: calc(100dvh - 180px); min-height: 540px; border: 0; border-radius: 0; background: var(--shell); }
+.workspace .chat :global(.mcw-chat-header) { padding: 0 0 16px; min-height: 64px; gap: 12px; }
+.workspace .chat :global(.mcw-assistant-identity strong) { font-size: 16px; }
+.workspace .chat :global(.mcw-assistant-identity small) { display: flex; align-items: baseline; gap: 6px; font-size: 12px; line-height: 1.6; }
+.statusDot { display: inline-block; flex-shrink: 0; width: 6px; height: 6px; border-radius: 50%; background: var(--sage); }
+.workspace :global(.mcw-header-actions) { gap: 4px; }
+.workspace :global(.mcw-header-actions .mcw-progress-button) { border-color: transparent; padding: 0 12px; font-size: 13px; color: var(--stone); }
+.workspace .chat :global(.mcw-conversation) { padding: 24px 0 16px; scrollbar-gutter: stable; }
+.workspace .chat :global(.mcw-assistant-bubble) { background: transparent; border: 0; padding-top: 4px; padding-bottom: 4px; }
+.workspace .chat :global(.mcw-avatar) { background: var(--sand); color: var(--stone); border-radius: 8px; }
+.workspace .chat :global(.mcw-user-bubble) { background: var(--sand); color: var(--ink); border: 0; }
+.workspace .chat :global(.mcw-composer) { width: 100%; box-sizing: border-box; margin: 12px 0 0; padding: 14px 16px 12px; border-radius: 16px; background: var(--sand); }
+.workspace .chat :global(.mcw-composer:focus-within) { border-color: var(--stone); }
+.workspace .chat :global(.mcw-composer textarea) { min-height: 64px; padding: 8px 0; }
+.workspace .chat :global(.mcw-composer textarea::placeholder) { color: var(--stone); }
+.workspace .chat :global(.mcw-icon-button) { background: transparent; border-color: transparent; }
+.workspace .chat :global(.mcw-composer-status) { font-size: 12px; }
+.workspace .chat :global(#monthly-close-message-shortcuts) { display: none; }
+.composerLabel { display: block; color: var(--stone); font-size: 12px; line-height: 1.6; }
+.composerNote { color: var(--stone); margin: 10px 0 0; text-align: center; font-size: 12px; line-height: 1.6; }
+.welcome { width: 100%; padding: 0 4px 12px; }
+.eyebrow { font-size: 13px; color: var(--stone); }
+.welcome h2 { margin: 12px 0; font-size: clamp(24px, 2.2vw, 32px); font-weight: 500; line-height: 1.4; color: var(--ink); }
+.welcome p { font-size: 15px; line-height: 1.8; color: var(--stone); margin: 0; }
+.workspace .chat.emptyChat { height: auto; }
+.workspace .emptyChat :global(.mcw-conversation) { justify-content: flex-end; flex: 0 0 auto; height: auto; min-height: 0; margin-top: clamp(48px, 12dvh, 120px); padding-bottom: 12px; }
+.workspace .emptyChat :global(.mcw-timeline:empty) { display: none; }
+.workspace .emptyChat :global(.mcw-composer) { margin-top: 0; }
+.workspace .emptyChat .composerNote { margin-bottom: auto; padding-bottom: 32px; }
+.suggestions { display: flex; flex-wrap: wrap; gap: 4px 16px; margin-top: 12px; }
+.suggestions button { min-height: 44px; padding: 0 4px; border: 0; border-radius: 999px; background: transparent; color: var(--stone); font: inherit; font-size: 13px; cursor: pointer; display: inline-flex; align-items: center; gap: 10px; }
+.suggestions button:hover:not(:disabled) { color: var(--ink); background: var(--sand); }
+.suggestions button:disabled { opacity: .5; cursor: not-allowed; }
+.context { min-width: 0; border-left: 1px solid var(--linen); padding: 4px 0 16px 24px; color: var(--ink); max-height: calc(100dvh - 180px); overflow-y: auto; scrollbar-width: thin; }
+.contextHeading { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 24px; }
+.contextHeading h2 { margin: 0; font-size: 16px; font-weight: 500; }
+.contextHeading > span { color: var(--stone); font-size: 12px; }
+.sourceStatus { margin: -12px 0 24px; font-size: 12px; line-height: 1.8; color: var(--stone); }
+.outcome { font-size: 13px; line-height: 1.7; padding-bottom: 24px; }
+.outcome h3 { margin: 0 0 16px; font-size: 13px; font-weight: 500; color: var(--stone); }
+.outcome dl { margin: 0; }
+.outcome dt { margin-top: 16px; color: var(--ink); font-size: 14px; }
+.outcome dd { color: var(--stone); padding-top: 4px; }
+.outcome details { margin-top: 12px; color: var(--stone); }
+.context :global(.mcw-progress-button) { font-size: 13px; text-align: left; max-width: 100%; line-height: 1.6; padding: 8px 14px; cursor: pointer; }
+.context > section[aria-label="本月对账任务"] { border-top: 1px solid var(--linen); border-bottom: 0; padding: 24px 0; max-height: none; overflow: visible; }
+.context > section[aria-label="本月对账任务"] p { margin-top: 8px; }
+.context > section[aria-label="本月对账任务"] button { background: var(--shell); color: var(--ink); border-color: var(--linen); }
+.context > section[aria-label="本月对账任务"] button:hover:not(:disabled) { background: var(--sand); }
+.guide { border-top: 1px solid var(--linen); color: var(--stone); font-size: 13px; line-height: 1.8; padding-top: 12px; }
+.guide summary { min-height: 44px; cursor: pointer; padding-top: 10px; }
+.guide p { margin: 8px 0; }
+.privacyNote { padding: 12px 0 0; color: var(--stone); font-size: 13px; margin: 0; }
+.context button:focus-visible, .context summary:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+@media (max-width: 1199px) {
+  .workspace { gap: 20px; grid-template-columns: minmax(0, 1fr) 248px; }
+  .context { padding-left: 20px; }
+  .workspace .chat :global(.mcw-chat-header) { align-items: flex-start; flex-direction: column; gap: 4px; }
+}
+@media (max-width: 1023px) {
+  .workspace { grid-template-columns: minmax(0, 1fr); max-width: 920px; gap: 32px; }
+  .workspace .chat { height: calc(100dvh - 220px); min-height: 520px; }
+  .workspace .chat :global(.mcw-chat-header) { flex-direction: row; align-items: center; }
+  .context { max-height: none; border-left: 0; border-top: 1px solid var(--linen); padding: 24px 0; }
+  .contextHeading { margin-bottom: 16px; }
+  .outcome dl { display: grid; grid-template-columns: 100px minmax(0,1fr); gap: 12px; }
+  .outcome dt { margin-top: 0; }
+  .outcome dd { padding-top: 0; }
+}
+@media (max-width: 640px) {
+  .workspace { gap: 24px; }
+  .workspace .chat { height: auto; min-height: 520px; }
+  .workspace .chat :global(.mcw-chat-header) { flex-direction: column; align-items: flex-start; padding-bottom: 12px; }
+  .workspace .chat :global(.mcw-assistant-identity small) { max-width: none; }
+  .workspace .chat :global(.mcw-header-actions) { margin-left: -12px; }
+  .workspace .chat :global(.mcw-conversation) { height: 48dvh; min-height: 260px; padding: 20px 0 12px; }
+  .workspace .emptyChat :global(.mcw-conversation) { height: auto; min-height: 150px; flex: 0 0 auto; margin-top: 0; }
+  .welcome { padding-bottom: 8px; }
+  .welcome h2 { font-size: 24px; }
+  .welcome p { font-size: 14px; }
+  .workspace .chat :global(.mcw-composer) { padding: 12px; scroll-margin-bottom: calc(120px + env(safe-area-inset-bottom, 0px)); }
+  .workspace .chat :global(.mcw-composer-actions .mcw-composer-status) { display: block; font-size: 11px; }
+  .suggestions { gap: 0 12px; }
+  .suggestions button { font-size: 12px; gap: 6px; }
+  .workspace .emptyChat .composerNote { padding-bottom: 0; }
+}

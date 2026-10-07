@@ -3,6 +3,7 @@
 import { type ClipboardEvent, type DragEvent, type ReactNode, useEffect, useRef, useState } from "react";
 import { ArrowUpOutlined, FileExcelOutlined, FileImageOutlined, PaperClipOutlined } from "@ant-design/icons";
 import { Drawer, Modal } from "antd";
+import styles from "./MonthlyCloseWorkspace.module.css";
 
 import type {
   AssistantReply,
@@ -438,14 +439,21 @@ export function MonthlyCloseWorkspace({
     void receiveFiles(files);
   };
 
+  const isEmptyConversation = replies.length === 0 && exchanges.length === 0 && allFiles.length === 0
+    && events.length === 0 && actionableInboxItems.length === 0 && !sending && !inlineReview;
+  const prepareQuestion = (text: string) => {
+    setMessage(text);
+    document.getElementById("monthly-close-agent-message")?.focus();
+  };
+
   return (
-    <section className="mcw-chat" role="region" aria-label="月结助理工作台" data-desktop-columns="single-chat">
+    <div className={styles.workspace}>
+    <section className={`mcw-chat ${styles.chat}${isEmptyConversation ? ` ${styles.emptyChat}` : ""}`} role="region" aria-label="月结助理工作台" data-desktop-columns="single-chat">
       <header className="mcw-chat-header">
         <div className="mcw-assistant-identity">
-          <span className="mcw-avatar" aria-hidden="true">月</span>
           <span>
             <strong>{monthLabel(projection.billing_month)}对账</strong>
-            <small>{finalizationVerified ? "整月关账已完成" : projection.final_review.confirmed_settlement_count ? "业主结算已有确认 · 可查看历史结果" : "进行中"}</small>
+            <small><span className={styles.statusDot} aria-hidden="true" />{finalizationVerified ? "整月关账已完成" : projection.final_review.confirmed_settlement_count ? "业主结算已有确认 · 可查看历史结果" : "进行中"}</small>
           </span>
         </div>
         <div className="mcw-header-actions">
@@ -458,48 +466,7 @@ export function MonthlyCloseWorkspace({
         </div>
       </header>
 
-      <MonthOutcome projection={projection} fileCount={allFiles.length} onFiles={() => setProgressOpen(true)}
-        onFinish={!privacyMode && projection.actor_role === "admin" && onOpenWorkflow ? () => onOpenWorkflow("final_review") : undefined} />
-      {privacyMode && <p>隐私演示模式：可查看进度和记录，暂不能发送、上传或修改资料。</p>}
-
-      {taskAvailable && <MonthlyCloseTaskProgress
-        key={`${scopeKey}:${projection.billing_month}`}
-        month={projection.billing_month}
-        ownerSettlementsConfirmed={projection.final_review.settlement_count > 0 && projection.final_review.confirmed_settlement_count === projection.final_review.settlement_count}
-        task={monthlyTask.task}
-        loading={monthlyTask.loading}
-        pending={monthlyTask.pending}
-        busy={sending || uploadingCount > 0}
-        error={monthlyTask.error}
-        onCommand={async (input) => {
-          const generation = uploadRequest.current;
-          const result = await monthlyTask.command(input);
-          if (result && input.action === "start" && generation === uploadRequest.current) setPendingFiles([]);
-        }}
-        onAction={async (action) => {
-          if (action.proposal_id) {
-            setTaskProposal({ scope: scopeKey, month: projection.billing_month, id: action.proposal_id });
-            return;
-          }
-          await followUpInvestigation(action.text, action.context_run_id, action.attachment_ids ?? []);
-          await monthlyTask.refresh();
-        }}
-        questionAction={(question) => {
-          const step = question.step_key?.replace(/^confirmation:/, "");
-          if (step && onOpenTaskStep) {
-            const target = chatWorkflowTarget(projection, step);
-            if (!target.reason && target.stepKey) return { label: `查看${target.label}`, run: () => onOpenTaskStep(step) };
-          }
-          const source = projection.sources.find((item) => item.source_id === question.source_id);
-          if (source && onOpenWorkflow) {
-            const target = chatWorkflowTarget(projection, source.source_type);
-            if (!target.reason) return { label: `查看${target.label}`, run: () => onOpenWorkflow(source.source_type) };
-          }
-          return null;
-        }}
-        onRefresh={monthlyTask.refresh}
-        onAnswer={() => conversationRef.current?.parentElement?.querySelector("textarea")?.focus()}
-      />}
+      {privacyMode && <p className={styles.privacyNote}>隐私演示模式：可查看进度和记录，暂不能发送、上传或修改资料。</p>}
 
       <main ref={conversationRef} className="mcw-conversation" aria-label="与月结助理的对话"
         onWheel={() => { manualScroll.current = true; }}
@@ -514,15 +481,11 @@ export function MonthlyCloseWorkspace({
         else if (manualScroll.current) followLatest.current = false;
         if (followLatest.current) setNewReplies(false);
       }}>
-        <div className="mcw-message-row mcw-message-assistant">
-          <span className="mcw-avatar mcw-message-avatar" aria-hidden="true">月</span>
-          <div className="mcw-bubble mcw-assistant-bubble">
-            <div style={{ fontWeight: 500 }}>{onReceiveCaseFile ? "把原始表格和截图发到这里，一起核对" : "把你手头已有的表格直接发给我"}</div>
-            <div style={{ marginTop: 6, color: tokens.anyu.color.stone, lineHeight: 1.7 }}>
-              {onReceiveCaseFile ? `每批最多 20 份。先保存原件并核对；补充说明后，先确认来源解释，再确认具体记账方案。截图金额需逐项核实。当前工作区为 ${projection.billing_month}，可在同一聊天说明其他月份的费用，按方案逐笔确认；报告可按所选月份汇总。` : "不用先选资料类别。你可以补一句“这是8月保洁记录”，我会识别内容、开始核对，判断不准时再问你。"}
-            </div>
-          </div>
-        </div>
+        {isEmptyConversation && <div className={styles.welcome}>
+          <span className={styles.eyebrow}>本月对账 · {Number(projection.billing_month.split("-")[1])} 月</span>
+          <h2>一起把这个月的账对清楚</h2>
+          <p>上传账单、粘贴截图，或直接说说你想核对什么。</p>
+        </div>}
 
         {!actionIsGenericUpload && !actionLivesWithDocument && (
           <div className="mcw-message-row mcw-message-assistant">
@@ -554,7 +517,7 @@ export function MonthlyCloseWorkspace({
           </div>
         )}
 
-        {!privacyMode && ["admin", "finance"].includes(projection.actor_role) && (
+        {!isEmptyConversation && !privacyMode && ["admin", "finance"].includes(projection.actor_role) && (
           <div style={{ marginBottom: 12 }}>
             <button type="button" className="mcw-secondary-button" style={{ ...touchButton, background: tokens.anyu.color.shell, color: tokens.anyu.color.ink.default, border: `1px solid ${tokens.anyu.color.linen}` }} disabled={sending || uploadingCount > 0} onClick={() => void followUpInvestigation("继续查保洁差异")}>
               查保洁差异 / 继续上次调查
@@ -675,6 +638,7 @@ export function MonthlyCloseWorkspace({
         {onReceiveCaseFile && pendingFiles.length > 0 && <div className="mcw-upload-progress">原件已保存，尚未记账。可补一句“核对这些资料，先列出待确认项”，再点击发送。</div>}
         {composerError && <div role="alert" className="mcw-composer-error" style={{ whiteSpace: "pre-wrap" }}>{composerError}</div>}
 
+        <label className={styles.composerLabel} htmlFor="monthly-close-agent-message">{onReceiveCaseFile ? "把原始表格和截图发到这里，一起核对" : "把你手头已有的表格直接发给我"}</label>
         <textarea
           id="monthly-close-agent-message"
           aria-label="给月结助理的说明"
@@ -717,6 +681,66 @@ export function MonthlyCloseWorkspace({
         </div>
       </form>
 
+      {isEmptyConversation && <div className={styles.suggestions} aria-label="对账问题建议">
+        {[
+          ["查看本月待办", "本月还有哪些事项需要核对？先列出已有依据和下一步。"],
+          ["核对保洁费用", "检查保洁和续住费用有没有差异，先不要补账。"],
+          ["整理对账报表", "把本月已有的核对结果整理成表格，并提供 Excel 下载。"],
+        ].map(([label, text]) => <button key={label} type="button" disabled={privacyMode || sending}
+          onClick={() => prepareQuestion(text)}>{label}<span aria-hidden="true">↗</span></button>)}
+      </div>}
+      <p className={styles.composerNote}>核对结果有据可查，记账方案由你确认。</p>
+    </section>
+    <aside className={styles.context} aria-label="本月对账概况">
+      <div className={styles.contextHeading}><h2>本月概况</h2><span>{monthLabel(projection.billing_month)}</span></div>
+      <p className={styles.sourceStatus} role="status" aria-label="本月资料进度">已收 {allFiles.length} 份资料 · 缺资料 {projection.sources.filter((source) => source.state === "missing").length} 类</p>
+      <MonthOutcome projection={projection} fileCount={allFiles.length} onFiles={() => setProgressOpen(true)}
+        onFinish={!privacyMode && projection.actor_role === "admin" && onOpenWorkflow ? () => onOpenWorkflow("final_review") : undefined} />
+
+      {taskAvailable && <MonthlyCloseTaskProgress
+        key={`${scopeKey}:${projection.billing_month}`}
+        month={projection.billing_month}
+        ownerSettlementsConfirmed={projection.final_review.settlement_count > 0 && projection.final_review.confirmed_settlement_count === projection.final_review.settlement_count}
+        task={monthlyTask.task}
+        loading={monthlyTask.loading}
+        pending={monthlyTask.pending}
+        busy={sending || uploadingCount > 0}
+        error={monthlyTask.error}
+        onCommand={async (input) => {
+          const generation = uploadRequest.current;
+          const result = await monthlyTask.command(input);
+          if (result && input.action === "start" && generation === uploadRequest.current) setPendingFiles([]);
+        }}
+        onAction={async (action) => {
+          if (action.proposal_id) {
+            setTaskProposal({ scope: scopeKey, month: projection.billing_month, id: action.proposal_id });
+            return;
+          }
+          await followUpInvestigation(action.text, action.context_run_id, action.attachment_ids ?? []);
+          await monthlyTask.refresh();
+        }}
+        questionAction={(question) => {
+          const step = question.step_key?.replace(/^confirmation:/, "");
+          if (step && onOpenTaskStep) {
+            const target = chatWorkflowTarget(projection, step);
+            if (!target.reason && target.stepKey) return { label: `查看${target.label}`, run: () => onOpenTaskStep(step) };
+          }
+          const source = projection.sources.find((item) => item.source_id === question.source_id);
+          if (source && onOpenWorkflow) {
+            const target = chatWorkflowTarget(projection, source.source_type);
+            if (!target.reason) return { label: `查看${target.label}`, run: () => onOpenWorkflow(source.source_type) };
+          }
+          return null;
+        }}
+        onRefresh={monthlyTask.refresh}
+        onAnswer={() => conversationRef.current?.parentElement?.querySelector("textarea")?.focus()}
+      />}
+
+      <details className={styles.guide}>
+        <summary>资料上传与核对说明</summary>
+        <p>{onReceiveCaseFile ? `每批最多 20 份。先保存原件并核对；补充说明后，先确认来源解释，再确认具体记账方案。截图金额需逐项核实。当前工作区为 ${projection.billing_month}，可在同一聊天说明其他月份的费用，按方案逐笔确认；报告可按所选月份汇总。` : "不用先选资料类别。你可以补一句“这是8月保洁记录”，我会识别内容、开始核对，判断不准时再问你。"}</p>
+      </details>
+    </aside>
       <Drawer
         title={`${monthLabel(projection.billing_month)} · 本月进度`}
         width={420}
@@ -929,6 +953,6 @@ export function MonthlyCloseWorkspace({
         }
         @media (prefers-reduced-motion:reduce) { * { scroll-behavior:auto !important; transition:none !important; } }
       `}</style>
-    </section>
+    </div>
   );
 }

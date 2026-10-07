@@ -1,4 +1,5 @@
 "use client";
+import styles from "./MonthlyCloseWorkspace.module.css";
 import type { MonthlyCloseProjection } from "@/lib/monthly-close";
 
 export function MonthOutcome({ projection, fileCount, onFiles, onFinish }: {
@@ -9,9 +10,9 @@ export function MonthOutcome({ projection, fileCount, onFiles, onFinish }: {
   const paid = review.paid_settlement_count ?? 0;
   const complete = review.state === "verified";
   const ownersDone = review.settlement_count > 0 && confirmed === review.settlement_count;
-  return <section aria-label="本月当前结果" style={{ padding: "12px 20px", flexShrink: 0, borderBottom: "1px solid var(--linen)", lineHeight: 1.6, fontSize: 14 }}>
-    <strong>本月当前结果</strong>
-    <dl style={{ margin: "8px 0", display: "grid", gridTemplateColumns: "auto minmax(0, 1fr)", gap: "4px 16px" }}>
+  return <section className={styles.outcome} aria-label="本月当前结果">
+    <h3>结算进度</h3>
+    <dl>
       <dt>业主账单</dt><dd style={{ margin: 0 }}>{ownersDone ? `${confirmed} 份已确认，可以查看和下载` : review.settlement_count ? `${review.settlement_count} 份中 ${confirmed} 份已确认，其余需复核` : "尚未生成，先核对本月记录与费用"}</dd>
       <dt>付款登记</dt><dd style={{ margin: 0 }}>{review.settlement_count ? `已登记 ${paid} 份，未登记 ${Math.max(0, review.settlement_count - paid)} 份；未登记不代表实际未打款` : "生成并确认账单后，按实际打款登记"}</dd>
       <dt>公司经营账</dt><dd style={{ margin: 0 }}>{complete ? "已核验并关账" : "本工作流尚未关账；历史处理结果以已有确认记录为准"}</dd>

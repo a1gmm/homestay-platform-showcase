@@ -2493,8 +2493,8 @@
     {
       "executable": false,
       "path": "frontend/app/(dashboard)/finance/monthly-close/page.tsx",
-      "sha256": "4e54104abbbf9588126590bb19df1b851ee9ca7126977ad4db8972c0b73db3c6",
-      "size": 40322
+      "sha256": "305ef548c4050e97f48a13efcd6729fb456d6af28200e3fd3fc77bed7e7b6dcc",
+      "size": 40358
     },
     {
       "executable": false,
@@ -3099,8 +3099,8 @@
     {
       "executable": false,
       "path": "frontend/components/monthly-close/MonthOutcome.tsx",
-      "sha256": "f39c3b086eb5f870c7be850b4332265031eec8e70fb4695349a91e290f4897ee",
-      "size": 2457
+      "sha256": "face6f813c53736c07b8a4429fdf526a7ccda4950a3d340ce37227300ac0067b",
+      "size": 2302
     },
     {
       "executable": false,
@@ -3128,9 +3128,15 @@
     },
     {
       "executable": false,
+      "path": "frontend/components/monthly-close/MonthlyCloseWorkspace.module.css",
+      "sha256": "67860b826aa1a0c03a954cbd3f112292e2526c5fff0f195f3fe2575ea7e840b2",
+      "size": 7408
+    },
+    {
+      "executable": false,
       "path": "frontend/components/monthly-close/MonthlyCloseWorkspace.tsx",
-      "sha256": "acb0c11cdc0d57e9cb63df25b955a3120e4afa392ea3d3a82a72289ddec9f83c",
-      "size": 54632
+      "sha256": "2fa59b938527ed79fe6774801ebcbbc276b80589028db9365d48d749236a84c0",
+      "size": 56507
     },
     {
       "executable": false,
@@ -4441,6 +4447,6 @@
       "size": 920
     }
   ],
-  "revision": "407139584106fe42ae5127e5bd6980eaef69d551",
+  "revision": "99e32bf41aabca7589b168a3cd9739f863e8752a",
   "version": 1
 }
