@@ -70,6 +70,8 @@ export function ServiceMappingReview({
   const [mappingModalReady, setMappingModalReady] = useState(false);
   const [analysisUnavailable, setAnalysisUnavailable] = useState(false);
   const [advancedOpen, setAdvancedOpen] = useState(false);
+  const onFinishedRef = useRef(onFinished);
+  useEffect(() => { onFinishedRef.current = onFinished; }, [onFinished]);
   const mountedRef = useRef(true);
   useEffect(() => {
     mountedRef.current = true;
@@ -100,6 +102,7 @@ export function ServiceMappingReview({
       );
       setAnalysis(response.data);
       setMapping(response.data.mapping);
+      if (response.data.work_log) await onFinishedRef.current();
     } catch (error) {
       message.error(extractErrorMessage(error, "表格结构识别失败，请稍后重试"));
       setAnalysisUnavailable(true);

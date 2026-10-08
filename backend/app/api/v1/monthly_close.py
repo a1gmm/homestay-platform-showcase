@@ -2853,7 +2853,7 @@ async def analyze_monthly_close_service_document(
     db: AsyncSession = Depends(get_db),
 ):
     try:
-        _, document = await _cycle_document(db, billing_month, document_id)
+        cycle, document = await _cycle_document(db, billing_month, document_id)
         if document.source_type not in {"cleaning_statement", "linen_statement"}:
             raise HTTPException(
                 422,
@@ -2872,7 +2872,13 @@ async def analyze_monthly_close_service_document(
             )
             entries = parse_cleaning_work_log(document.content, document.filename, billing_month)
             analysis.work_log = await compare_cleaning_work_log(db, entries, billing_month, document.document_id)
+            from app.services.monthly_close.cleaning_recognition import refresh_cleaning_recognition
+            if current["role"] == "admin":
+                await refresh_cleaning_recognition(db, cycle, document, current)
+                await db.commit()
         return analysis
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
     except ServiceStatementError as exc:
         raise _service_statement_error(exc) from exc
     except MonthlyCloseConflict as exc:

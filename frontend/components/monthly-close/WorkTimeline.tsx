@@ -22,7 +22,7 @@ const eventLabel: Record<string, string> = {
 
 function receiptDetail(receipt: MonthlyCloseReceiptView) {
   if (receipt.processing_job_state === "failed_safe" || receipt.classification_state === "failed") {
-    return "文件已经保存。请重新识别；仍然失败时，让管理员调整读取方式。";
+    return "文件已经保存，但还没读出可核对的记录。先点“重新识别”；仍未成功时，点“查看原表并确认列”，核对日期、房号等列的位置。";
   }
   if (receipt.processing_job_state === "queued") {
     return "文件已经保存，正在等待系统读取。你可以留在本页查看进度。";
@@ -45,6 +45,7 @@ export function WorkTimeline({
   onSelectDocument,
   onRequestDelete,
   onFollowUp,
+  onPrepareReply,
   onOpenOrder,
   onOpenWorkflow,
   busy,
@@ -62,7 +63,8 @@ export function WorkTimeline({
   onConfirmFields: (documentId: string) => void;
   onSelectDocument?: (documentId: string) => void;
   onRequestDelete?: (document: MonthlyCloseProjection["sources"][number]["documents"][number]) => void;
-  onFollowUp?: (text: string, contextRunId: string) => void;
+  onFollowUp?: (text: string, contextRunId: string, attachmentIds?: string[]) => void;
+  onPrepareReply?: (question: string, contextRunId: string) => void;
   onOpenOrder?: (orderId: string) => void;
   onOpenWorkflow?: (focus: string) => void;
   busy?: boolean;
@@ -104,7 +106,7 @@ export function WorkTimeline({
                   {allowDocumentActions && progress.stage === "problem" && document.storage_state === "stored" && (
                     <>
                       <button type="button" className="mcw-secondary-button" style={touchButton} onClick={() => onRetryAnalysis(document.document_id)}>重新识别</button>
-                      <button type="button" className="mcw-secondary-button" style={touchButton} onClick={() => onConfirmFields(document.document_id)}>调整读取方式</button>
+                      <button type="button" className="mcw-secondary-button" style={touchButton} onClick={() => onConfirmFields(document.document_id)}>查看原表并确认列</button>
                     </>
                   )}
                   {allowDocumentActions && onRequestDelete && (
@@ -169,7 +171,7 @@ export function WorkTimeline({
               </details>}
               <FormattedResult reply={reply} projection={projection} />
               <ProgressDetails key={`${reply.run_id}-${projection.billing_month}-${projection.actor_role}`} reply={reply} projection={projection} onSelectDocument={onSelectDocument} onOpenOrder={onOpenOrder} onOpenWorkflow={onOpenWorkflow} />
-              {!reply.output && <FinancialCaseReply key={`financial-case-${reply.run_id}-${projection.billing_month}-${projection.actor_role}`} reply={reply} projection={projection} onFollowUp={onFollowUp} busy={busy} historical={turnIndex < latestFinancialCase} />}
+              {!reply.output && <FinancialCaseReply key={`financial-case-${reply.run_id}-${projection.billing_month}-${projection.actor_role}`} reply={reply} projection={projection} onFollowUp={onFollowUp} onPrepareReply={onPrepareReply} onReviewDocument={allowDocumentActions ? onConfirmFields : undefined} busy={busy} historical={turnIndex < latestFinancialCase} />}
               {!reply.output && <CleaningWorkChatReply reply={reply} projection={projection} onFollowUp={onFollowUp} busy={busy} historical={turnIndex < latestWorkChange} />}
               {!reply.output && <OrderIdentityChatReply reply={reply} projection={projection} onFollowUp={onFollowUp} busy={busy} historical={turnIndex < latestOrderChange} />}
               {!reply.output && <CleaningInvestigationReply reply={reply} projection={projection} onFollowUp={onFollowUp} onSelectDocument={onSelectDocument} busy={busy} />}

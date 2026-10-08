@@ -128,6 +128,7 @@ export function MonthlyCloseWorkspace({
     else setNewReplies(true);
   }, [replies.length, assistantBusy]);
   const [message, setMessage] = useState("");
+  const [replyContext, setReplyContext] = useState<{ question: string; runId: string } | null>(null);
   const [uploadingCount, setUploadingCount] = useState(0);
   const [pendingFiles, setPendingFiles] = useState<PendingFile[]>([]);
   const [composerError, setComposerError] = useState<string | null>(null);
@@ -183,6 +184,7 @@ export function MonthlyCloseWorkspace({
   useEffect(() => {
     uploadRequest.current += 1;
     setMessage("");
+    setReplyContext(null);
     setPendingFiles([]);
     setComposerError(null);
     setUploadingCount(0);
@@ -345,7 +347,10 @@ export function MonthlyCloseWorkspace({
     sendingRequest.current = true;
     setSending(true);
     setWaitingLong(false);
-    setPendingMessage(text || "请查看我刚上传的月结资料");
+    const context = replyContext;
+    const outgoingText = context ? `关于以下问题：${context.question}\n我的补充：${text || "请查看刚上传的附件"}` : text || "请查看我刚上传的月结资料";
+    setPendingMessage(outgoingText);
+    setReplyContext(null);
     setMessage("");
     followLatest.current = true;
     manualScroll.current = false;
@@ -354,14 +359,15 @@ export function MonthlyCloseWorkspace({
     const generation = uploadRequest.current;
     try {
       const reply = await onSendMessage(
-        text || "请查看我刚上传的月结资料",
+        outgoingText,
         pendingFiles.map((file) => file.attachmentId),
+        ...(context ? [context.runId] : []),
       );
       if (generation !== uploadRequest.current) return;
       if (text) {
         setExchanges((current) => [...current, {
           id: reply?.run_id ?? `local-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`,
-          userText: text,
+          userText: outgoingText,
           assistantReply: reply || undefined,
         }]);
       }
@@ -371,6 +377,7 @@ export function MonthlyCloseWorkspace({
       if (generation === uploadRequest.current) {
         setComposerError(extractErrorMessage(error, "消息没有发送成功，请重试"));
         setMessage((draft) => draft || text);
+        setReplyContext((current) => current ?? context);
       }
     } finally {
       if (generation === uploadRequest.current) {
@@ -442,6 +449,7 @@ export function MonthlyCloseWorkspace({
   const isEmptyConversation = replies.length === 0 && exchanges.length === 0 && allFiles.length === 0
     && events.length === 0 && actionableInboxItems.length === 0 && !sending && !inlineReview;
   const prepareQuestion = (text: string) => {
+    setReplyContext(null);
     setMessage(text);
     document.getElementById("monthly-close-agent-message")?.focus();
   };
@@ -525,7 +533,12 @@ export function MonthlyCloseWorkspace({
           </div>
         )}
         <WorkTimeline
-          onFollowUp={(text, contextRunId) => void followUpInvestigation(text, contextRunId)}
+          onFollowUp={(text, contextRunId, attachmentIds) => void followUpInvestigation(text, contextRunId, attachmentIds)}
+          onPrepareReply={(question, runId) => {
+            if (privacyMode || sending || uploadingCount > 0) return;
+            setReplyContext({ question, runId });
+            document.getElementById("monthly-close-agent-message")?.focus();
+          }}
           onOpenWorkflow={onOpenWorkflow}
           onOpenOrder={onOpenOrder}
           busy={privacyMode || sending || uploadingCount > 0}
@@ -638,6 +651,10 @@ export function MonthlyCloseWorkspace({
         {onReceiveCaseFile && pendingFiles.length > 0 && <div className="mcw-upload-progress">原件已保存，尚未记账。可补一句“核对这些资料，先列出待确认项”，再点击发送。</div>}
         {composerError && <div role="alert" className="mcw-composer-error" style={{ whiteSpace: "pre-wrap" }}>{composerError}</div>}
 
+        {replyContext && <div className={styles.replyContext} role="status" aria-label="正在补充的问题">
+          <span>正在补充：{replyContext.question}</span>
+          <button type="button" onClick={() => setReplyContext(null)}>取消针对这项回复</button>
+        </div>}
         <label className={styles.composerLabel} htmlFor="monthly-close-agent-message">{onReceiveCaseFile ? "把原始表格和截图发到这里，一起核对" : "把你手头已有的表格直接发给我"}</label>
         <textarea
           id="monthly-close-agent-message"
@@ -656,7 +673,7 @@ export function MonthlyCloseWorkspace({
           }}
           aria-describedby="monthly-close-message-shortcuts"
           rows={2}
-          placeholder={dragActive ? "松开即可添加文件" : onReceiveCaseFile ? "说明要核对什么，可同时添加多份 Excel 和截图" : "发消息，或把 Excel 文件拖到这里"}
+          placeholder={dragActive ? "松开即可添加文件" : replyContext ? "直接写你知道的情况，不清楚可写“待核实”" : onReceiveCaseFile ? "说明要核对什么，可同时添加多份 Excel 和截图" : "发消息，或把 Excel 文件拖到这里"}
         />
         <div id="monthly-close-message-shortcuts" className="mcw-composer-status">Enter 发送 · Shift + Enter 换行</div>
         <div className="mcw-composer-actions">

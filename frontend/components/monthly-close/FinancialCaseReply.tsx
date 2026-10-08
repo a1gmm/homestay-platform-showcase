@@ -2,13 +2,16 @@
 import { useState } from "react";
 import { monthlyCloseApi } from "@/lib/api";
 import { extractErrorMessage } from "@/lib/api-errors";
-import type { AssistantReply, FinancialCaseFacts, MonthlyCloseProjection } from "@/lib/monthly-close";
+import type { AssistantReply, FinancialCaseFacts, FinancialCaseIssue, MonthlyCloseProjection } from "@/lib/monthly-close";
 import { downloadBlob } from "@/lib/utils";
 import styles from "./CleaningWorkChatReply.module.css";
 
-export function FinancialCaseReply({ reply, projection, onFollowUp, busy = false, historical = false }: {
+export function FinancialCaseReply({ reply, projection, onFollowUp, onPrepareReply, onReviewDocument, busy = false, historical = false }: {
   reply: AssistantReply; projection: MonthlyCloseProjection;
-  onFollowUp?: (text: string, contextRunId: string) => void; busy?: boolean; historical?: boolean;
+  onFollowUp?: (text: string, contextRunId: string, attachmentIds?: string[]) => void;
+  onPrepareReply?: (question: string, contextRunId: string) => void;
+  onReviewDocument?: (documentId: string) => void;
+  busy?: boolean; historical?: boolean;
 }) {
   const [exporting, setExporting] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
@@ -16,11 +19,43 @@ export function FinancialCaseReply({ reply, projection, onFollowUp, busy = false
   if (reply.tool !== "financial_case" || reply.facts.projection_version !== "financial-case-v1"
     || projection.actor_role !== "admin" || reply.facts.billing_month !== projection.billing_month) return null;
   const facts = reply.facts as unknown as FinancialCaseFacts;
+  const recognitionUpdated = !historical && !facts.ledger_scope && !facts.order_scope && facts.sources.some((source) => {
+    const current = projection.financial_case?.sources.find((item) => item.source_id === source.source_id);
+    return current && current.fact_count !== source.fact_count;
+  });
+  historical = historical || recognitionUpdated;
   const valueText = (value: unknown) => value == null || typeof value === "string" && !value.trim() ? "待确认" : String(value);
+  const visibleIssues = facts.issues.filter((issue) => issue.code !== "no_source_facts" || !facts.issues.some(
+    (other) => other.code === "cleaning_parse_error" && other.source_id === issue.source_id));
+  const postableCount = facts.metrics.find((metric) => metric.label === "可新增支出")?.value;
+  const hasPostableExpenses = postableCount !== undefined && Number(postableCount) > 0;
+  const issueMessage = (issue: FinancialCaseIssue) => ({
+    cleaning_parse_error: /第\d+行/.test(issue.message) ? issue.message : "这份保洁表还没读出打扫记录，日期或房号没有识别成功。请打开原表，核对日期和房号所在的列。",
+    no_source_facts: "文件已保存，但还没读出可核对的明细。请补充表格说明或清晰原表，暂时不能据此记账。",
+    cleaning_evidence_only: "已读到打扫日期、房间和类型。下一步核对系统是否漏记或重复；打扫次数不能直接当作收费金额。",
+  }[issue.code] ?? issue.message);
+  const renderIssue = (issue: FinancialCaseIssue, index: number) => {
+    const source = facts.sources.find((source) => source.source_id === issue.source_id);
+    const linkedId = projection.financial_case?.sources.find((item) => item.source_id === issue.source_id)?.document_id;
+    const documentId = linkedId && projection.sources.some((item) => item.documents.some((doc) => doc.document_id === linkedId)) ? linkedId : undefined;
+    const question = `${source ? `《${source.filename}》：` : ""}${issueMessage(issue)}`;
+    return <li key={`${issue.code}-${index}`}>
+      {source && <div>来源：{source.filename}</div>}
+      {!source && issue.source_id && <div>来源：相关原始资料</div>}
+      <p style={{ margin: "4px 0", whiteSpace: "pre-wrap" }}>{issueMessage(issue)}</p>
+      {!historical && <div className={styles.actions}>
+        {issue.code === "cleaning_parse_error" && documentId && onReviewDocument
+          ? <button type="button" disabled={busy} onClick={() => onReviewDocument(documentId)}>查看原表并确认列</button>
+          : issue.code === "cleaning_evidence_only" && source
+          ? <button type="button" disabled={busy || !onFollowUp} onClick={() => follow("核对保洁记录", [source.source_id])}>核对打扫记录</button>
+          : onPrepareReply && <button type="button" disabled={busy} onClick={() => onPrepareReply(question, reply.run_id)}>补充这项信息</button>}
+      </div>}
+    </li>;
+  };
   const isInterpretation = facts.proposal_kind === "interpretation";
   const reportScope = facts.report_months.length === 1 ? facts.report_months[0]
     : facts.report_months.length > 1 ? `${facts.report_months[0]}至${facts.report_months.at(-1)}-所选月份` : null;
-  const follow = (text: string) => onFollowUp?.(text, reply.run_id);
+  const follow = (text: string, attachmentIds?: string[]) => attachmentIds ? onFollowUp?.(text, reply.run_id, attachmentIds) : onFollowUp?.(text, reply.run_id);
   const exportReport = async () => {
     if (exporting || !reportScope) return;
     setExporting(true); setExportError(null); setExportNotice(null);
@@ -68,15 +103,25 @@ export function FinancialCaseReply({ reply, projection, onFollowUp, busy = false
     {exportNotice && <div role="status">{exportNotice}</div>}
   </div>;
   return <div className={styles.reply} aria-label="资料对账结果">
+    {recognitionUpdated && <div role="status">
+      <p>资料已重新识别。下面是上次回复，请重新核对查看最新问题。</p>
+      <div className={styles.actions}><button type="button" disabled={busy || !onFollowUp} onClick={() => follow("核对这些资料")}>查看最新核对结果</button></div>
+    </div>}
     <p className={styles.caption} style={{ whiteSpace: "pre-wrap" }}>{facts.message || reply.message}</p>
-    {facts.metrics.length > 0 && <dl className={styles.metrics}>{facts.metrics.map((metric, index) => <div key={`${metric.label}-${index}`}>
-      <dt>{metric.label}</dt><dd>{valueText(metric.value)}{metric.detail && <small>{metric.detail}</small>}</dd>
-    </div>)}</dl>}
-    {facts.issues.length > 0 && <details>
-      <summary>查看 {facts.issues.length} 项待核对问题</summary>
-      <ul className={styles.list}>{facts.issues.map((issue, index) => <li key={`${issue.code}-${index}`}>
-        <div>{issue.message}</div>{issue.source_id && <small>来源：{facts.sources.find((source) => source.source_id === issue.source_id)?.filename ?? "相关原始资料"}</small>}
-      </li>)}</ul>
+    {visibleIssues.length > 0 && <section aria-label="需要你处理的问题">
+      <p className={styles.caption}>{historical ? "当时尚待核对" : "下一步，先处理这里的问题"}（{visibleIssues.length} 项）</p>
+      <ol className={styles.list} style={{ marginTop: 12 }}>{visibleIssues.slice(0, 3).map(renderIssue)}</ol>
+      {visibleIssues.length > 3 && <details><summary>查看其余 {visibleIssues.length - 3} 项问题</summary>
+        <ol className={styles.list} start={4}>{visibleIssues.slice(3).map((issue, index) => renderIssue(issue, index + 3))}</ol>
+      </details>}
+      {!historical && <p>知道情况就点“补充这项信息”回复；不清楚的可以说“待核实”。需要查看原表时，先按对应按钮打开。</p>}
+    </section>}
+    {facts.metrics.length > 0 && <details open={visibleIssues.length === 0 || facts.state === "proposal" ? true : undefined}>
+      <summary>查看汇总数字</summary>
+      {facts.metrics.some((metric) => metric.label === "本月系统已记支出") && <p>“系统已记支出”是系统里已有的账，不代表这次上传的费用已经入账。对应记录为 0，也不代表没有发生费用。</p>}
+      <dl className={styles.metrics}>{facts.metrics.map((metric, index) => <div key={`${metric.label}-${index}`}>
+        <dt>{metric.label}</dt><dd>{valueText(metric.value)}{metric.detail && <small>{metric.detail}</small>}</dd>
+      </div>)}</dl>
     </details>}
     {facts.sources.length > 0 && <details>
       <summary>查看 {facts.sources.length} 份原始资料</summary>
@@ -86,7 +131,7 @@ export function FinancialCaseReply({ reply, projection, onFollowUp, busy = false
       </li>)}</ul>
     </details>}
     {facts.sources.length === 0 && !facts.issues.some((issue) => issue.code === "pending_review") && facts.proposal_kind !== "business_correction" && <p>还没有可供核对的原始资料。请在下方添加 Excel 或截图，并说明要核对的月份。</p>}
-    {facts.details.length > 0 && <details open={facts.state === "proposal" && facts.proposal_kind === "business_correction" ? true : undefined}>
+    {facts.details.length > 0 && <details open={facts.state === "proposal" ? true : undefined}>
       <summary>{facts.state === "proposal" ? isInterpretation ? "查看待保存的来源解释" : "查看拟执行变更与依据" : "查看核对明细与依据"}</summary>
       <dl className={styles.metrics}>{facts.details.map((detail, index) => <div key={`${detail.label}-${index}`}><dt>{detail.label}</dt><dd>{valueText(detail.value)}</dd></div>)}</dl>
     </details>}
@@ -101,10 +146,11 @@ export function FinancialCaseReply({ reply, projection, onFollowUp, busy = false
         <div className={styles.actions}>
         {facts.state === "needs_information" ? <span>请按上方问题回复“文件名／原表行或房间＋需要补充的信息”；金额或付款情况不清楚时可直接说“待核实”。</span> : <>
           <button type="button" disabled={busy || !onFollowUp} onClick={() => follow("核对这些资料")}>重新核对资料</button>
-          {(facts.state !== "completed" || isInterpretation) && facts.sources.some((source) => source.kind !== "checklist" && source.kind !== "feedback") && <button type="button" className={styles.primary} disabled={busy || !onFollowUp} onClick={() => follow("生成记账方案")}>生成记账方案</button>}
+          {(facts.state !== "completed" || isInterpretation) && (hasPostableExpenses || isInterpretation && facts.state === "completed") && <button type="button" className={styles.primary} disabled={busy || !onFollowUp} onClick={() => follow("生成记账方案")}>查看待入账费用</button>}
           {facts.state === "completed" && <button type="button" disabled={busy || !onFollowUp} onClick={() => follow("生成利润报告")}>生成利润报告</button>}
         </>}
       </div></>}
+      {postableCount !== undefined && Number(postableCount) === 0 && facts.state !== "proposal" && <p>目前没有可以直接入账的明细。先处理上面的问题，或重新核对资料；这不表示本月费用为零。</p>}
       {facts.export_ready && <div className={styles.actions}>
         <button type="button" disabled={busy || exporting || !reportScope} onClick={() => void exportReport()}>{exporting ? "正在下载利润报告" : "下载利润报告 Excel"}</button>
         <span>{reportScope ? `报告月份：${facts.report_months.join("、")}` : "报告月份待确认，请先说明需要哪几个月的报告。"}</span>

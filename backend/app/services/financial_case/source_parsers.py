@@ -320,8 +320,8 @@ def _cleaning(result, data, filename, sheets, digest):
     handled = {s for s, rows in sheets.items() if _header(rows, {"日期", "正常打扫房间号", "续住房间"})}
     try:
         entries = parse_cleaning_work_log(data, filename, None)
-    except ServiceStatementError:
-        _issue(result, "cleaning_parse_error", "保洁日期或房间结构无法可靠解析，请核对原表；未生成部分记录", severity="error")
+    except ServiceStatementError as exc:
+        _issue(result, "cleaning_parse_error", f"{exc}。请核对这一行的日期和房号；本次未导入打扫记录。", severity="error")
         return handled
     for ordinal, entry in enumerate(entries or []):
         fact = _fact(digest, entry.source_sheet, entry.source_row, "cleaning_work",

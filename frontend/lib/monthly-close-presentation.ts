@@ -107,7 +107,7 @@ export function presentDocumentProgress(
     return {
       stage: "problem",
       label: "识别未完成",
-      detail: "文件已经保存。请重新识别；仍然失败时，让管理员调整读取方式。",
+      detail: "文件已经保存，但还没读出可核对的记录。先点“重新识别”；仍未成功时，点“查看原表并确认列”，核对日期、房号等列的位置。",
     };
   }
   if (sourceState === "processing") {

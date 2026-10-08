@@ -116,7 +116,15 @@ def parse_cleaning_work_log(
                 current_date = None
                 continue
             if raw_date:
-                current_date = _date(cell(date_col), index, datemode, billing_month)
+                try:
+                    current_date = _date(cell(date_col), index, datemode, billing_month)
+                except ServiceStatementError as exc:
+                    if not rooms_present:
+                        # Monthly templates often retain an unused 31st day.
+                        # Never carry a prior date across an invalid empty row.
+                        current_date = None
+                        continue
+                    raise ServiceStatementError(f"{sheet}：{exc}") from exc
                 if billing_month and current_date.strftime("%Y-%m") != billing_month:
                     raise ServiceStatementError(
                         f"{sheet}第{index}行日期不属于{billing_month}"

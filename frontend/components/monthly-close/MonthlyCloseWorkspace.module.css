@@ -85,3 +85,9 @@
   .suggestions button { font-size: 12px; gap: 6px; }
   .workspace .emptyChat .composerNote { padding-bottom: 0; }
 }
+
+.replyContext { display: flex; gap: 8px; align-items: flex-start; padding: 12px 0; color: var(--stone); font-size: 13px; line-height: 1.7; }
+.replyContext span { min-width: 0; overflow-wrap: anywhere; white-space: pre-wrap; }
+.replyContext button { flex-shrink: 0; min-height: 44px; border: 1px solid var(--linen); border-radius: 999px; background: var(--shell); color: var(--ink); padding: 8px 12px; font: inherit; cursor: pointer; }
+.replyContext button:hover { background: var(--sand); }
+@media (max-width: 640px) { .replyContext { flex-direction: column; } }

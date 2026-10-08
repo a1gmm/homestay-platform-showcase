@@ -86,7 +86,7 @@ export default function MonthlyClosePage() {
   const [reopenReason, setReopenReason] = useState("");
   const [uploadSourceType, setUploadSourceType] = useState<string | null>(null);
   const [selectedActionDetail, setSelectedActionDetail] = useState<{ scopeKey: string; destination: MonthlyCloseActionDestination } | null>(null);
-  const [selectedReview, setSelectedReview] = useState<{ scopeKey: string; sourceType: string; mode: "review" | "read_only"; detail: MonthlyCloseProjectedDocument } | null>(null);
+  const [selectedReview, setSelectedReview] = useState<{ scopeKey: string; openSequence: number; sourceType: string; mode: "review" | "read_only"; detail: MonthlyCloseProjectedDocument } | null>(null);
   const reviewRequestGeneration = useRef(0);
   const orderRequestGeneration = useRef(0);
   const [activeWorkflow, setActiveWorkflow] = useState<{ scopeKey: string; focus: string } | null>(null);
@@ -135,6 +135,12 @@ export default function MonthlyClosePage() {
     && projection?.sources.some((source) => source.documents.some((document) => document.document_id === selectedReview.detail.document_id))
       ? selectedReview
       : null;
+  useEffect(() => {
+    if (!renderedReview || privacyMode) return;
+    const panel = document.querySelector<HTMLElement>('[aria-label="聊天中的资料核对"]');
+    panel?.scrollIntoView?.({ block: "start" });
+    panel?.focus({ preventScroll: true });
+  }, [renderedReview, privacyMode]);
 
   useEffect(() => {
     reviewRequestGeneration.current += 1;
@@ -180,7 +186,7 @@ export default function MonthlyClosePage() {
     try {
       const detail = await close.loadEvidence(documentId);
       if (reviewRequestGeneration.current !== generation || activeScope.current !== scopeKey) return;
-      setSelectedReview({ scopeKey, sourceType: document.source_type, mode, detail });
+      setSelectedReview({ scopeKey, openSequence: generation, sourceType: document.source_type, mode, detail });
       setActionDetail(null);
     } catch (error) {
       if (reviewRequestGeneration.current === generation && activeScope.current === scopeKey) message.error(extractErrorMessage(error, "资料详情加载失败，请刷新后重试"));
@@ -229,7 +235,7 @@ export default function MonthlyClosePage() {
         setOrderStatus({ scopeKey, message: extractErrorMessage(error, "订单读取失败，请重新点击该订单重试。"), error: true });
     }
   };
-  const confirmFields = (documentId: string) => { void openDocumentReview(documentId); };
+  const confirmFields = (documentId: string) => { void openDocumentReview(documentId, "review", false); };
   const deleteCurrentDocument = async (document: MonthlyCloseProjectedDocumentSummary): Promise<DocumentRemovalResult> => {
     const latestInbox = await close.inbox.refetch();
     const inboxItems = latestInbox.data ?? close.inbox.data ?? [];
@@ -423,13 +429,13 @@ export default function MonthlyClosePage() {
           onStopMessage={close.stopMessage}
           onOpenWorkflow={!privacyMode && isAdmin ? openWorkflow : undefined}
           onOpenOrder={isAdmin ? (orderId) => { if (privacyMode) router.push(`/orders?order_id=${encodeURIComponent(orderId)}`); else void openOrder(orderId); } : undefined}
-          inlineReview={!privacyMode && (actionDetail != null || renderedReview != null || renderedWorkflow != null) ? <section aria-label="聊天中的资料核对" style={{ marginTop: 24, minWidth: 0, borderTop: "1px solid var(--linen)", paddingTop: 16 }}>
+          inlineReview={!privacyMode && (actionDetail != null || renderedReview != null || renderedWorkflow != null) ? <section tabIndex={-1} aria-label="聊天中的资料核对" style={{ marginTop: 24, minWidth: 0, borderTop: "1px solid var(--linen)", paddingTop: 16 }}>
             <Button onClick={() => { reviewRequestGeneration.current += 1; setActionDetail(null); setSelectedReview(null); setActiveWorkflow(null); }}>收起处理区</Button>
         {renderedWorkflow?.focus === "final_review" && projection ? <FinishMonthReview
           key={currentScopeKey} projection={projection} steps={close.cycle.data?.steps ?? []}
           onFinished={close.refresh} onOpenStep={openWorkflow} onClose={() => setActiveWorkflow(null)}
         /> : renderedWorkflow ? renderStepPanel(close.cycle.data?.steps.find((item) => item.step_key === chatWorkflowTarget(projection, renderedWorkflow.focus).stepKey)) : null}
-        {renderedReview ? <DocumentReview key={`${month}-${renderedReview.detail.document_id}`} billingMonth={month} review={renderedReview} role={role} onFinished={async () => { await Promise.all([close.projection.refetch(), close.sourceProposals.refetch()]); }} /> : null}
+        {renderedReview ? <DocumentReview key={`${month}-${renderedReview.detail.document_id}-${renderedReview.openSequence}`} billingMonth={month} review={renderedReview} role={role} onFinished={async () => { await Promise.all([close.projection.refetch(), close.sourceProposals.refetch()]); }} /> : null}
         {actionDetail?.kind === "source_workflow" && actionDetail.sourceType === "system_service_fees" ? (
           <SystemServiceFeeReview
             key={`${currentScopeKey}:${actionDetail.sourceId}`}
@@ -466,11 +472,7 @@ export default function MonthlyClosePage() {
           onPermanentDeleteInbox={isAdmin ? async (itemId) => { await close.permanentlyDeleteInbox.mutateAsync(itemId); } : undefined}
           onMarkNotApplicable={isAdmin ? async (sourceType, reason) => { await close.markNotApplicable.mutateAsync({ sourceType, reason }); } : undefined}
           onDeleteDocument={isAdmin ? deleteCurrentDocument : undefined}
-          onRetryAnalysis={(documentId) => {
-            const document = documentById(documentId);
-            if (!document) return;
-            void close.retryAnalysis.mutateAsync(document).then(() => message.success("已重新开始分析")).catch((error) => message.error(extractErrorMessage(error, "重新分析失败")));
-          }}
+          onRetryAnalysis={(documentId) => { void openDocumentReview(documentId, "review", false); }}
           onConfirmFields={confirmFields}
           onReviewDocument={(documentId) => { void openDocumentReview(documentId); }}
           onRequestEvidence={(documentId) => close.loadEvidence(documentId)}
