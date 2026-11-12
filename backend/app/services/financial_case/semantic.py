@@ -128,6 +128,9 @@ def _selected_facts(decision, sources):
 
 
 def _read_or_pause_guard(text, fallback, billing_month):
+    # Preventing duplicate entries is a constraint, not a request to stop all work.
+    text = re.sub(r"(?:避免|不要|不能|防止|不再)重复(?:入账|记账)", "", text)
+    text = re.sub(r"(?:不能|不要)把记账日期当(?:作)?付款日期", "", text)
     pause = re.search(r"(?:不要|先别|暂不|暂停|停止|别|不)[^，,。；;]{0,8}(?:记账|入账|执行|修改|生成方案)", text)
     preview = re.search(r"(?:先|只|给我|生成|看看).{0,10}(?:方案|预览)", text) and not re.search(
         r"(?:不要|先别|暂不|暂停|停止|别|不)[^，,。；;]{0,8}(?:方案|预览)", text)
@@ -143,6 +146,43 @@ def _read_or_pause_guard(text, fallback, billing_month):
         return Decision(action="clarify", months=[billing_month],
                         question="需要先核对哪份资料中的哪一笔费用及其承担方？当前不生成记账方案。")
     return None
+
+
+def source_payment_interpretation(text, billing_month, sources):
+    """Preview explicit whole-file utility payer facts even without a model.
+
+    Exact file identity and an explicit whole-file scope are required. This only
+    proposes interpretations; amounts, dates and ledger changes stay controlled.
+    """
+    selected = [s for s in sources if s.get('filename') and
+                (f"《{s['filename']}》" in text or s['source_id'] in text)]
+    if len(selected) != 1:
+        return None
+    source = selected[0]
+    answer = text.split('我的补充：', 1)[-1]
+    if not re.search(r'全部|整份|这份表', answer):
+        return None
+    if re.search(r'[？?]|第\s*\d+\s*行|其中|除外|除去|只有|仅|分别|部分|不是|不由|不确定|可能|假设|待确认', answer):
+        return None
+    facts = source.get('parsed', {}).get('facts', [])
+    if not facts or any(f.get('kind') != 'source_expense' or f.get('category') not in
+                        {'water', 'electricity', 'utility', 'property', 'property_fee'} for f in facts):
+        return None
+    counts = re.findall(r'(\d+)\s*(?:笔|项|条)', answer)
+    if any(int(count) != len(facts) for count in counts):
+        return None
+    payers = {party for word, party in [('公司', 'company'), ('业主', 'owner')]
+              if re.search(word + r'(?:来|全额)?承担', answer)}
+    paid = {party for word, party in [('公司', 'company'), ('业主', 'owner')]
+            if re.search(word + r'(?:已|先|实际)?(?:垫付|付款|支付)', answer)}
+    if len(payers) != 1 or len(paid) != 1:
+        return None
+    periods = _months(answer, billing_month, sources)
+    if len(periods) != 1:
+        return None
+    return Decision(action='interpret', source_ids=[source['source_id']], months=periods,
+        interpretation=Interpretation(payer=next(iter(payers)), paid_by=next(iter(paid)),
+                                      business_month=periods[0], note=answer[:500]))
 
 
 def _ground_model_decision(decision, text, sources):
@@ -355,7 +395,7 @@ payer 是费用承担方；paid_by 是实际付款人。用户说“业主承担
 不能发明来源、行号、关联编号、日期或金额。输入行被截断而无法找到目标时澄清，不能猜测未展示的行。只输出 JSON，不输出代码围栏。
 聚合订单的 evidence_row_numbers 表示同一事实包含的原始调整行；用户提到其中一行时可选对应事实，但 rows 必须填写展示的规范 row，不能把调整行号虚构为独立事实。
 requested_fact_keys 是服务端按用户明确提到的完整订单号匹配到的当前事实；问题中的长编号可能已脱敏，使用这些匹配结果理解所指订单，不要另猜订单。
-image_expense_candidate 是图片金额候选。只有用户本轮明确核实图片/截图金额或要求按图中的金额处理，才可提出 candidate_confirmed=true，仍须服务端显示预览并再次确认。合计、优惠和分房明细不能重复选择；选择净额时不得同时选择同一费用的分房明细。用户只给业务月份而未给具体日时可以建议按月末归集，但 date_basis=month_end_accrual 只有用户明确说月末/月底/按月归集时才能填；其他情况下解释缺少日期。expense_date 必须来自用户明确说的日期；room_ref 只能是明确指定或来源已有房号。discount_allocation=proportional 仅在用户明确要求按比例分摊优惠时填写；不能擅自把优惠全部给一个房间。
+image_expense_candidate 是图片或补充说明中的金额候选。只有用户本轮明确核实原件/补充说明金额或要求按图中的金额处理，才可提出 candidate_confirmed=true，仍须服务端显示预览并再次确认。合计、优惠和分房明细不能重复选择；选择净额时不得同时选择同一费用的分房明细。用户只给业务月份而未给具体日时可以建议按月末归集，但 date_basis=month_end_accrual 只有用户明确说月末/月底/按月归集时才能填；其他情况下解释缺少日期。expense_date 必须来自用户明确说的日期；room_ref 只能是明确指定或来源已有房号。discount_allocation=proportional 仅在用户明确要求按比例分摊优惠时填写；不能擅自把优惠全部给一个房间。
 """
 
 
@@ -369,11 +409,48 @@ async def call_model(context):
 
 
 async def interpret(text: str, billing_month: str, previous_texts: list[str], sources: list[dict]) -> Decision | None:
+    marker = re.search(r'【待核明细：([^|\]】]+)\|([^】]+)】', text)
+    if marker is None:
+        return await _interpret(text, billing_month, previous_texts, sources)
+    source = next((s for s in sources if s['source_id'] == marker[1]), None)
+    fact = next((f for f in source.get('parsed', {}).get('facts', []) if f['key'] == marker[2]), None) if source else None
+    if not fact or not fact.get('sheet') or not fact.get('row1based', fact.get('row')):
+        return Decision(action='clarify', question='这条原件明细暂不能定位，请打开原件核实；本次未修改账目。')
+    answer = text.split('我的补充：', 1)[-1].strip()
+    if re.search(r'不清楚|不确定|待核实|不知道', answer):
+        return Decision(action='clarify', question='已保留这项待核实。请查清实际情况后再补充；本次未修改账目。')
+    parties = {'公司垫付，业主承担': ('owner', 'company'), '公司支付，公司承担': ('company', 'company'),
+               '业主自己支付并承担': ('owner', 'owner')}
+    if answer == '生成记账方案':
+        decision = Decision(action='plan', source_ids=[source['source_id']], months=[billing_month])
+    elif answer in parties:
+        payer, paid_by = parties[answer]
+        decision = Decision(action='interpret', source_ids=[source['source_id']],
+                            interpretation=Interpretation(payer=payer, paid_by=paid_by, note=answer))
+    else:
+        decision = await _interpret(text, billing_month, previous_texts, sources)
+    if decision and decision.action in {'interpret', 'plan'}:
+        # A card refers to one fact. Even a model's whole-file interpretation
+        # cannot widen that scope; the existing preview and approval still apply.
+        decision.source_ids = [source['source_id']]
+        decision.rows = [RowSelection(source_id=source['source_id'], sheet=fact['sheet'], row=fact.get('row1based', fact.get('row')))]
+        return validate_decision(decision, sources)
+    return decision
+
+
+async def _interpret(text: str, billing_month: str, previous_texts: list[str], sources: list[dict]) -> Decision | None:
     user_history=[item.removeprefix("用户：") for item in previous_texts if not item.startswith("助理上次回答：")]
     fallback = deterministic(text, billing_month, user_history, sources)
     guard = _read_or_pause_guard(text, fallback, billing_month)
     if guard is not None:
         return guard
+    # Product buttons carry exact intents. Do not ask a model to reinterpret a
+    # posting preview as another source-classification change.
+    if text.strip() in {"生成记账方案", "生成费用方案", "查看待入账费用"}:
+        return Decision(action="plan", months=[billing_month])
+    explicit_payment = source_payment_interpretation(text, billing_month, sources)
+    if explicit_payment is not None:
+        return validate_decision(explicit_payment, sources)
     if fallback is not None and fallback.action == "ledger":
         return fallback
     if not settings.MONTHLY_CLOSE_ASSISTANT_MODEL_ENABLED or not settings.DEEPSEEK_API_KEY:

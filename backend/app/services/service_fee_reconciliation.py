@@ -11,7 +11,6 @@ from uuid import uuid4
 from sqlalchemy import and_, extract, or_, select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.cleaning_pricing import OWNER_SELF_CHECKOUT_CLEANING_FEE
 from app.models.expense import Expense, ExpenseCategory, ExpensePayer
 from app.models.order import Order, OrderStatus, is_owner_self_order
 from app.models.order_room import OrderRoom
@@ -182,6 +181,7 @@ async def plan_service_fee_reconciliation(
 
     expected: list[PlannedServiceFee] = []
     unresolved: list[UnresolvedServiceFee] = []
+    confirmed_self_cleaning_keys: set[tuple[str, str, ExpenseCategory]] = set()
 
     def in_scope(value: date | None) -> bool:
         return (
@@ -373,14 +373,14 @@ async def plan_service_fee_reconciliation(
             for order_room, _, _ in rows
         )
         owner_self = is_owner_self_order(final_order)
-        from app.services.reconciliation_policy import service_cost_payer
+        from app.services.reconciliation_policy import confirmed_cost_bearer, service_cost_payer, checkout_cleaning_amount
         payer = service_cost_payer(final_order)
+        if owner_self and confirmed_cost_bearer(final_order.metadata_) is not None:
+            confirmed_self_cleaning_keys.add((final_order.order_id, final_room.room_id, ExpenseCategory.cleaning))
         candidates = (
             (
                 ExpenseCategory.cleaning,
-                OWNER_SELF_CHECKOUT_CLEANING_FEE
-                if owner_self
-                else fees.checkout_cleaning_fee,
+                checkout_cleaning_amount(final_order, fees),
             ),
             (ExpenseCategory.laundry, fees.laundry_fee_per_room * final_room.beds),
             (ExpenseCategory.daily_supplies, fees.consumable_fee_per_room_night * nights),
@@ -508,7 +508,9 @@ async def plan_service_fee_reconciliation(
             continue
         if len(existing) == 1:
             expense_id, current_amount, current_expense_date, current_payer = existing[0]
-            if detect_corrections and (
+            # An explicitly confirmed self-stay must use its dedicated cleaning
+            # rate. Other historical tariffs still require opt-in correction.
+            if (detect_corrections or key in confirmed_self_cleaning_keys) and (
                 current_amount != amount
                 or current_expense_date != planned.expense_date
                 or current_payer != planned.payer

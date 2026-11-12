@@ -484,6 +484,7 @@ async def verify_attempt(
     if prelock_proposal is not None and prelock_proposal.proposal_type in {
         "ota_reconciliation",
         "ota_appeal_adjudication",
+        "generate_owner_settlements",
     }:
         from app.services.monthly_close.financial_lock import (
             acquire_month_financial_lock,

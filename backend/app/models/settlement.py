@@ -90,6 +90,9 @@ class OwnerSettlementItem(Base):
         unique=True,
         nullable=True,
     )
+    fee_adjustment_id: Mapped[str | None] = mapped_column(
+        String(24), ForeignKey('settlement_fee_adjustments.adjustment_id'), unique=True, nullable=True
+    )
     owner_expenses: Mapped[Decimal] = mapped_column(Numeric(10, 2), default=Decimal("0"))
     share_ratio_snapshot: Mapped[Decimal] = mapped_column(Numeric(4, 3), default=Decimal("0.600"))
     owner_net_amount: Mapped[Decimal] = mapped_column(Numeric(10, 2), default=Decimal("0"))
@@ -112,14 +115,15 @@ def _reject_sponsorship_correction_line_mutation(
     history = state.attrs.sponsorship_adjustment_id.history
     persisted_correction = target.sponsorship_adjustment_id is not None
     was_correction = any(value is not None for value in history.deleted)
-    if persisted_correction or was_correction:
+    fee_history = state.attrs.fee_adjustment_id.history
+    if persisted_correction or was_correction or target.fee_adjustment_id or any(fee_history.deleted):
         raise ValueError("sponsorship settlement correction lines are append-only")
 
 
 def _reject_sponsorship_correction_line_delete(
     _mapper, _connection, target: OwnerSettlementItem
 ) -> None:
-    if target.sponsorship_adjustment_id is not None:
+    if target.sponsorship_adjustment_id is not None or target.fee_adjustment_id is not None:
         raise ValueError("sponsorship settlement correction lines are append-only")
 
 

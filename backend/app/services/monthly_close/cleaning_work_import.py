@@ -15,7 +15,7 @@ from app.models.user import User
 from app.services.audit import log_action_tx
 from app.services.monthly_close.cleaning_work_log import (
     compare_cleaning_work_log,
-    parse_cleaning_work_log,
+    parse_work_document,
 )
 from app.services.monthly_close.service_reconciliation import (
     _resolve_room_reference,
@@ -59,15 +59,13 @@ async def preview_work_import(
         raise MonthlyCloseConflict(
             "document_hash_changed", "原文件校验失败，请重新核实文件"
         )
-    entries = parse_cleaning_work_log(
-        document.content, document.filename, cycle.billing_month
-    )
+    entries = parse_work_document(document, cycle.billing_month)
     if entries is None:
         raise MonthlyCloseConflict(
             "not_cleaning_work_log", "该文件不是按天填写房间的保洁工作记录"
         )
     comparison = await compare_cleaning_work_log(
-        db, entries, cycle.billing_month, document.document_id
+        db, entries, cycle.billing_month, document.document_id, source_scope=True
     )
     aliases = _room_alias_index(
         list((await db.execute(select(Room.room_id, Room.room_name))).tuples())
@@ -194,11 +192,9 @@ async def confirm_work_import(
         db.add(record)
         ids.append(record.record_id)
     await db.flush()
-    entries = parse_cleaning_work_log(
-        document.content, document.filename, cycle.billing_month
-    )
+    entries = parse_work_document(document, cycle.billing_month)
     after = await compare_cleaning_work_log(
-        db, entries, cycle.billing_month, document.document_id
+        db, entries, cycle.billing_month, document.document_id, source_scope=True
     )
     result = {
         "import_id": batch.import_id,

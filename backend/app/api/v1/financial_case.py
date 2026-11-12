@@ -81,16 +81,16 @@ async def export(billing_month: str, db: DBSession, user: Admin, months: str | N
     if not cycle: raise HTTPException(404,'月份不存在')
     sources=await service.load_sources(db,cycle.cycle_id)
     if not sources: raise HTTPException(404,'尚未上传资料')
-    from app.services.financial_case.reporting import build_report, export_workbook
+    from app.services.financial_case.reporting import export_workbook
     report_months = months.split(',') if months else service._months('从开始累计',billing_month,sources)
     import re
     if len(report_months)>120 or any(not re.fullmatch(r'20\d{2}-(0[1-9]|1[0-2])',m) for m in report_months):
         raise HTTPException(422,'月份格式无效')
     import asyncio
     payloads = [service.source_payload(s) for s in sources]
-    decisions = {k:v for s in sources for k,v in s.decisions.items()}
+    report, _ = await service.report_snapshot(db, cycle, sources, report_months)
     def render():
-        return export_workbook(build_report(payloads,decisions,report_months),payloads)
+        return export_workbook(report,payloads)
     data = await asyncio.to_thread(render)
     return Response(data,media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
         headers={'Content-Disposition':f"attachment; filename*=UTF-8''{quote('对账报告-'+billing_month+'.xlsx')}",'Cache-Control':'no-store'})

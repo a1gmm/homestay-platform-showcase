@@ -15,12 +15,12 @@ MAX_MONTHLY_CLOSE_INTAKE_BODY_BYTES = (
 )
 
 
-async def _send_too_large(send: Callable[[dict[str, Any]], Awaitable[None]]) -> None:
+async def _send_too_large(send: Callable[[dict[str, Any]], Awaitable[None]], *, support: bool = False) -> None:
     body = json.dumps(
         {
             "detail": {
-                "code": "document_too_large",
-                "message": "文件超过 10MB",
+                "code": "feedback_too_large" if support else "document_too_large",
+                "message": "反馈过大，请选择 3MB 以内的截图" if support else "文件超过 10MB",
             }
         },
         ensure_ascii=False,
@@ -47,12 +47,14 @@ class MonthlyCloseIntakeBodyLimitMiddleware:
         self.max_body_bytes = max_body_bytes
 
     async def __call__(self, scope, receive, send) -> None:
+        support = str(scope.get("path", "")).rstrip("/") == "/api/v1/monthly-close-support/feedback"
+        max_body_bytes = 5 * 1024 * 1024 if support else self.max_body_bytes
         if not (
             scope.get("type") == "http"
             and scope.get("method") == "POST"
-            and str(scope.get("path", "")).startswith(
+            and (support or str(scope.get("path", "")).startswith(
                 "/api/v1/monthly-close/intake/"
-            )
+            ))
         ):
             await self.app(scope, receive, send)
             return
@@ -61,11 +63,11 @@ class MonthlyCloseIntakeBodyLimitMiddleware:
         content_length = headers.get(b"content-length")
         if content_length is not None:
             try:
-                if int(content_length) > self.max_body_bytes:
-                    await _send_too_large(send)
+                if int(content_length) > max_body_bytes:
+                    await _send_too_large(send, support=support)
                     return
             except ValueError:
-                await _send_too_large(send)
+                await _send_too_large(send, support=support)
                 return
 
         received = 0
@@ -76,7 +78,7 @@ class MonthlyCloseIntakeBodyLimitMiddleware:
             message = await receive()
             if message.get("type") == "http.request":
                 received += len(message.get("body", b""))
-                if received > self.max_body_bytes:
+                if received > max_body_bytes:
                     overflow = True
                     return {"type": "http.disconnect"}
             return message
@@ -91,4 +93,4 @@ class MonthlyCloseIntakeBodyLimitMiddleware:
             if not overflow:
                 raise
         if overflow:
-            await _send_too_large(send)
+            await _send_too_large(send, support=support)

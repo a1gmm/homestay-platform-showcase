@@ -4,13 +4,15 @@ import React, { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { roomsApi, extractErrorMessage, isDuplicateOrderError } from "@/lib/api";
-import { createOrdersAndMarkSeen } from "@/lib/create-orders";
+import { extractConflictOrderId } from "@/lib/api-errors";
+import { createOrdersAndMarkSeen, PartialOrderCreationError } from "@/lib/create-orders";
+import { createOrderDecisionResolver } from "@/components/orders/confirmOrderCreation";
 import { useNewOrderStore } from "@/lib/new-order-store";
 import {
   Form, Input, Select, Button,
   Card, Row, Col, Typography, Space, Alert, message, Radio, Modal,
 } from "antd";
-import type { BookingType, RoomOut } from "@/lib/types";
+import type { BookingType, RoomOut, OrderCreate } from "@/lib/types";
 import { isPhonePriceExempt } from "@/lib/types";
 import { MobileInput } from "@/components/ui/MobileInput";
 import { MobileInputNumber } from "@/components/ui/MobileInputNumber";
@@ -32,6 +34,7 @@ export default function NewOrderPage() {
   const router = useRouter();
   const qc = useQueryClient();
   const [form] = Form.useForm();
+  const resumeGuest = useRef<string | null>(null);
   const [channel, setChannel] = useState<string>("self_acquired");
   // 订单类型决定必填星号：试住/自住单豁免手机号、实收（客人实付已全局选填）。
   const bookingType = Form.useWatch("booking_type", form) as BookingType | undefined;
@@ -49,10 +52,21 @@ export default function NewOrderPage() {
 
   const createMutation = useMutation({
     // 同客多间「自动拆单」：payloads 为 N 张单房 payload，逐张顺序建单。兄弟单已带
-    // allow_duplicate，只有第一张可能触发「同客重复单」拦截（见 mutateWithDupConfirm）。
+    // allow_duplicate，只有第一张可能触发「同客重复单」拦截（见 submitOrders）。
     // markSeen 在 helper 的循环内逐单调（不是等 onSuccess）——否则多房单建到一半时
     // 新订单轮询醒来，会把已建好的单弹给刚录完它的前台自己。
-    mutationFn: (payloads: any[]) => createOrdersAndMarkSeen(payloads, markSeen),
+    mutationFn: (payloads: any[]) => createOrdersAndMarkSeen(payloads, markSeen, createOrderDecisionResolver()),
+    meta: { silent: true },
+    onError: (e) => {
+      if (e instanceof PartialOrderCreationError) {
+        resumeGuest.current = form.getFieldValue("guest_name");
+        form.setFieldValue("rooms", (form.getFieldValue("rooms") ?? []).slice(e.createdIds.length));
+        form.setFieldValue("ota_owner_revenue", e.remainingPayloads.length === 1
+          ? e.remainingPayloads[0].ota_owner_revenue : undefined);
+        void qc.invalidateQueries({ queryKey: ["orders"] });
+      }
+      void qc.invalidateQueries({ queryKey: ["rooms"] });
+    },
     onSuccess: (_data, payloads: any[]) => {
       const n = payloads?.length ?? 1;
       message.success(
@@ -68,26 +82,10 @@ export default function NewOrderPage() {
       router.push("/orders");
     },
   });
+  const conflictOrderId = extractConflictOrderId(createMutation.error);
 
-  // 同客同日期重复单：后端 409（duplicate_order）拦下 → 弹确认，
-  // 用户确认「同名不同客」后第一张也带 allow_duplicate 重发整批。
-  const mutateWithDupConfirm = (payloads: any[]) =>
-    createMutation.mutate(payloads, {
-      onError: (err) => {
-        if (!isDuplicateOrderError(err)) return;
-        Modal.confirm({
-          title: "疑似重复订单",
-          content: extractErrorMessage(err),
-          okText: "确为不同客人，继续创建",
-          cancelText: "返回检查",
-          okButtonProps: { danger: true },
-          onOk: () =>
-            createMutation.mutate(
-              payloads.map((p) => ({ ...p, allow_duplicate: true }))
-            ),
-        });
-      },
-    });
+  // Decisions are handled inside the per-order loop, so an earlier room is never retried.
+  const submitOrders = (payloads: OrderCreate[]) => createMutation.mutate(payloads);
 
   const onFinish = (values: any) => {
     // Multi-room: 把每行 RoomFormRow 转成后端 OrderRoomCreate（与甘特图快速建单共用同一逻辑）
@@ -117,6 +115,7 @@ export default function NewOrderPage() {
       channel: values.channel,
       platform_order_id: values.platform_order_id || null,
       guest_name: values.guest_name,
+      allow_duplicate: resumeGuest.current === values.guest_name || undefined,
       guest_phone: values.guest_phone || null,
       booking_type: (values.booking_type || "normal") as BookingType,
       rooms,
@@ -147,11 +146,11 @@ export default function NewOrderPage() {
         okText: "确定这样保存",
         cancelText: "返回修改",
         okButtonProps: { danger: true },
-        onOk: () => mutateWithDupConfirm(splitOrderPayloadByRoom(payload)),
+        onOk: () => submitOrders(splitOrderPayloadByRoom(payload)),
       });
       return;
     }
-    mutateWithDupConfirm(splitOrderPayloadByRoom(payload));
+    submitOrders(splitOrderPayloadByRoom(payload));
   };
 
   const isPlatform = PLATFORM_CHANNELS.has(channel);
@@ -167,17 +166,25 @@ export default function NewOrderPage() {
         </div>
       </div>
 
-      {createMutation.isError && (
+      {createMutation.isError && !isDuplicateOrderError(createMutation.error) && (
         <Alert
           type="error"
           message={extractErrorMessage(createMutation.error)}
+          description={conflictOrderId ? (
+            <Button href={`/orders?order_id=${encodeURIComponent(conflictOrderId)}`}
+              target="_blank" rel="noopener noreferrer" style={{ minHeight: 44 }}>
+              查看占用订单
+            </Button>
+          ) : undefined}
           style={{ marginBottom: 16, borderRadius: 8 }}
           showIcon closable
+          onClose={() => createMutation.reset()}
         />
       )}
 
       <Form
         form={form}
+        disabled={createMutation.isPending}
         layout="vertical"
         onFinish={onFinish}
         initialValues={{
@@ -189,6 +196,7 @@ export default function NewOrderPage() {
           rooms: [{ guests_count: 0 }],
         }}
         onValuesChange={(changed, _all) => {
+          if (createMutation.isError) createMutation.reset();
           if (changed.channel) setChannel(changed.channel);
           // issue#103 Step 3: 客人价默认带入实收，仅当该行 list_price 为空时（不覆盖用户已填值）
           if (changed.rooms) syncRoomRowsListPrice(changed.rooms as any[], form);

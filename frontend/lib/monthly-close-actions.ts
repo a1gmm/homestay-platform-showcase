@@ -55,6 +55,7 @@ export function resolveMonthlyCloseAction(
     case "reopen_cycle":
       return cycle() ? { kind: "reopen", cycleId: action.target_id } : invalid();
     case "start_final_review":
+    case "review_owner_settlements":
       return cycle() ? { kind: "final_review", cycleId: action.target_id } : invalid();
     case "none":
       return cycle() ? { kind: "no_op", status: "complete" } : invalid();
@@ -73,6 +74,6 @@ export function resolveMonthlyCloseAction(
 
 export const MONTHLY_CLOSE_ACTION_KINDS: readonly MonthlyCloseRecommendedActionKind[] = [
   "confirm_analysis", "confirm_inbox", "confirm_workflow_step", "continue_analysis", "escalate", "none",
-  "provide_source", "review_source_reconciliation", "reopen_cycle", "start_final_review", "view_blocker", "view_remediation",
+  "provide_source", "review_source_reconciliation", "review_owner_settlements", "reopen_cycle", "start_final_review", "view_blocker", "view_remediation",
   "view_workflow_blocker", "upload_own_source", "wait", "wait_for_assignment", "wait_for_review",
 ];

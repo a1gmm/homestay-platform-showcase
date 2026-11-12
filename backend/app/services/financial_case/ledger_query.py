@@ -9,8 +9,37 @@ from app.models.expense import ExpensePayer, EXPENSE_CATEGORY_LABELS
 from app.services.reconciliation_policy import confirmed_cost_bearer
 
 
+def room_number(value):
+    return re.sub(r'(?:号房|房)$', '', str(value).strip())
+
+
+def room_refs(text):
+    refs = re.findall(r'(?<![\dA-Za-z-])(\d{3,5})(?:号房|房|(?=的?(?:保洁|打扫)))', text)
+    refs += re.findall(r'(?:房间|房号)\s*(\d{3,5})(?!\d)', text)
+    return set(refs)
+
+
+def stated_dates(text, month):
+    from datetime import date, timedelta
+    values = set(re.findall(r'(?<!\d)(20\d{2}-\d{2}-\d{2})(?!\d)', text))
+    for year, m, first, last in re.findall(r'(?:(20\d{2})年)?(1[0-2]|0?[1-9])月([0-3]?\d)[日号]?(?:至|到|—|-)([0-3]?\d)[日号]', text):
+        try:
+            start, end = date(int(year or month[:4]), int(m), int(first)), date(int(year or month[:4]), int(m), int(last))
+            if end < start:
+                raise ValueError('reversed date range')
+            values.update((start + timedelta(days=offset)).isoformat() for offset in range((end-start).days + 1))
+        except ValueError:
+            values.add('invalid-date')
+    for year, m, day in re.findall(r'(?:(20\d{2})年)?(1[0-2]|0?[1-9])月([0-3]?\d)[日号]', text):
+        try:
+            values.add(date(int(year or month[:4]), int(m), int(day)).isoformat())
+        except ValueError:
+            values.add('invalid-date')  # Invalid dates must not broaden a query.
+    return {'invalid-date'} if 'invalid-date' in values else values
+
+
 def is_scope_followup(text):
-    return bool(re.search(r'这些|那些|刚才|那.*呢|排除|不算|去掉|只看|为什么少|为什么多|怎么少|怎么多', text))
+    return bool(re.search(r'这些|那些|这笔|该笔|这条|刚才|那.*呢|排除|不算|去掉|只看|为什么少|为什么多|怎么少|怎么多', text))
 
 
 async def summarize(db, rows, text, previous_texts, months, category_label, prior_scope=None):
@@ -25,7 +54,15 @@ async def summarize(db, rows, text, previous_texts, months, category_label, prio
     orders={o.order_id:o for o in await db.scalars(select(Order).where(Order.order_id.in_({r.order_id for r in rows if r.order_id})))}
     floor_matches=re.findall(r'(?<!\d)(\d{1,2})\s*层',text) or prior_scope.get('floors', []) or re.findall(r'(?<!\d)(\d{1,2})\s*层',query)
     floors={int(f) for f in floor_matches} or set(prior_scope.get('floors', []))
-    room_refs=set(re.findall(r'(?<!\d)(\d{3,5})(?:房|号房)',text)) or set(prior_scope.get('rooms', []))
+    explicit_rooms=room_refs(text)
+    refs=explicit_rooms or set(prior_scope.get('rooms', []))
+    if explicit_rooms and not re.search(r'(?<!\d)\d{1,2}\s*层', text):
+        floors=set()  # A newly named room replaces an earlier floor selection.
+    dates=stated_dates(text, months[0])
+    expense_ids=set(re.findall(r'EXP-[A-Za-z0-9-]+', text))
+    order_ids=set(re.findall(r'ORD-[A-Za-z0-9-]+', text))
+    if re.search(r'这笔|该笔|这条', text) and not (explicit_rooms or dates or expense_ids or order_ids):
+        expense_ids=set(prior_scope.get('expense_ids') or [])
     if re.search(r'全部楼层|所有楼层|两层合计', text):floors=set()
     exclude_reception=bool(prior_scope.get('exclude_reception') or re.search(r'(?:排除|不算|去掉|不含|除去)\s*(?:公司)?接待',query))
     if re.search(r'加回.*接待|包含.*接待',text):exclude_reception=False
@@ -35,10 +72,13 @@ async def summarize(db, rows, text, previous_texts, months, category_label, prio
     def floor(room):
         if room is None:return None
         if room.floor is not None:return room.floor
-        name=str(room.room_name or '')
+        name=room_number(room.room_name or '')
         return int(name[:-2]) if re.fullmatch(r'\d{3,5}',name) else None
     selected=[e for e in rows if (not floors or floor(rooms.get(e.room_id)) in floors)
-        and (not room_refs or str(getattr(rooms.get(e.room_id),'room_name','')) in room_refs)
+        and (not refs or room_number(getattr(rooms.get(e.room_id),'room_name','')) in refs)
+        and (not dates or str(e.expense_date) in dates)
+        and (not expense_ids or e.expense_id in expense_ids)
+        and (not order_ids or e.order_id in order_ids)
         and (payer is None or e.payer==payer)
         and not (exclude_reception and e.order_id in orders and confirmed_cost_bearer(orders[e.order_id].metadata_)==ExpensePayer.company)]
     cleaning_kind=prior_scope.get('cleaning_kind')
@@ -53,7 +93,8 @@ async def summarize(db, rows, text, previous_texts, months, category_label, prio
     company=sum((e.amount for e in selected if e.payer==ExpensePayer.company),Decimal(0))
     owner=amount-company
     scope='、'.join(months)+((' · '+'、'.join(str(f)+'层' for f in sorted(floors))) if floors else '')
-    if room_refs:scope+=' · '+'、'.join(sorted(room_refs))+'房'
+    if refs:scope+=' · '+'、'.join(sorted(refs))+'房'
+    if dates:scope+=' · '+'、'.join(sorted(dates))
     if exclude_reception:scope+=' · 排除已确认公司接待'
     message=f'{scope}，系统已记{category_label}共 {len(selected)} 笔，合计 {amount:,.2f} 元。其中台账标记业主承担 {owner:,.2f} 元、公司承担 {company:,.2f} 元。供应商实际付款另行核对，未记账不等于没有费用。'
     details=[]
@@ -89,5 +130,8 @@ async def summarize(db, rows, text, previous_texts, months, category_label, prio
         settlement_note='；'.join(included.get(e.expense_id,[])) or '当前结算明细未列入这笔业主扣费'
         details.append(dict(label=f'{e.expense_date} · {room.room_name if room else "公共费用"}{name}',
             value=f'{EXPENSE_CATEGORY_LABELS[e.category]} · {e.description or "无备注"} · {e.amount:.2f} 元 · {"业主" if e.payer==ExpensePayer.owner else "公司"}承担；{lineage}。付款人：{paid}；付款日：{e.payment_date or "未登记"}；{settlement_note}。'))
-    return message,details,dict(months=months,floors=sorted(floors),rooms=sorted(room_refs),
+    from .expense_confirmation import snapshot
+    return message,details,dict(months=months,floors=sorted(floors),rooms=sorted(refs),
+        expense_ids=[e.expense_id for e in selected],
+        confirmed_expense=snapshot(selected[0]) if len(selected)==1 else None,
         exclude_reception=exclude_reception,payer=payer.value if payer else None,cleaning_kind=cleaning_kind)

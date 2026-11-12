@@ -912,6 +912,11 @@ def export_workbook(report: dict, sources: list[dict]) -> bytes:
         cell = overview.cell(navigation_row, column)
         cell.hyperlink = f"#'{target}'!A1"
         cell.font = Font(name=font_name, size=11, color=stone, underline="single")
+    if report.get('receipt_confirmations'):
+        table('到账确认说明', ['来源', '已确认到账金额', '确认口径'], [
+            [source_map.get(item['source_id'], {}).get('filename', '平台账单'), amount(item['amount']), item['note']]
+            for item in report['receipt_confirmations']], [38, 22, 70],
+            '此表记录人工确认；不作为到账日期、账户或银行流水凭据。', numeric_columns=(2,))
     workbook.active = 0
     output = io.BytesIO()
     workbook.save(output)

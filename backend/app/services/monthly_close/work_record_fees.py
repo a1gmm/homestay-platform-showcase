@@ -17,6 +17,7 @@ from app.core.datetime_helpers import today_cn
 from app.models.cleaning_request import CleaningRequest
 from app.models.cleaning_work_record import CleaningWorkRecord
 from app.models.expense import Expense, ExpenseCategory, ExpensePayer
+from app.models.monthly_close import MonthlyCloseDocument
 from app.models.order import Order, OrderStatus, is_owner_self_order
 from app.models.order_room import OrderRoom
 from app.models.room import Room
@@ -31,10 +32,28 @@ def digest(value):
 
 async def plan_work_fees(db, document, billing_month, *, rooms=(), service_date=None):
     """Return a read-only proposal and explicit unresolved rows, without guesses."""
+    from app.services.monthly_close.cleaning_work_log import compare_cleaning_work_log, parse_work_document
+    comparison = await compare_cleaning_work_log(db, parse_work_document(document, billing_month),
+        billing_month, document.document_id, source_scope=True)
+    # A replacement workbook may match history imported from an earlier version.
+    # Scope by the selected sheet's events, while retaining each record's origin.
+    record_ids = [row["record_id"] for row in comparison.records]
     records = list(await db.scalars(select(CleaningWorkRecord).where(
-        CleaningWorkRecord.document_id == document.document_id,
+        CleaningWorkRecord.record_id.in_(record_ids),
     ).order_by(CleaningWorkRecord.service_date, CleaningWorkRecord.room_id)))
     room_ids = {r.room_id for r in records}
+    first = date.fromisoformat(billing_month + "-01")
+    last = date(first.year + (first.month == 12), 1 if first.month == 12 else first.month + 1, 1)
+    known_records = list(await db.scalars(select(CleaningWorkRecord).where(
+        CleaningWorkRecord.room_id.in_(room_ids), CleaningWorkRecord.service_date >= first,
+        CleaningWorkRecord.service_date < last)))
+    origins = {row.document_id: row for row in await db.scalars(select(MonthlyCloseDocument).where(
+        MonthlyCloseDocument.document_id.in_({r.document_id for r in known_records})))}
+    # Other confirmed visits can explain a different day's existing charge,
+    # but cannot add fee actions outside the selected workbook.
+    verified_records = [r for r in known_records if r.document_id in origins
+        and origins[r.document_id].cycle_id == document.cycle_id
+        and origins[r.document_id].sha256 == r.document_sha256]
     room_map = {r.room_id: r for r in await db.scalars(select(Room).where(Room.room_id.in_(room_ids)))}
     fees = await get_service_fees(db)
     expenses = list(await db.scalars(select(Expense).where(
@@ -68,7 +87,10 @@ async def plan_work_fees(db, document, billing_month, *, rooms=(), service_date=
                     quantity=record.quantity)
         def block(reason):
             unresolved.append({**base, "reason": reason})
-        if record.document_sha256 != document.sha256 or record.service_date.strftime("%Y-%m") != billing_month:
+        origin = origins.get(record.document_id)
+        if (origin is None or origin.cycle_id != document.cycle_id
+                or record.document_sha256 != origin.sha256
+                or record.service_date.strftime("%Y-%m") != billing_month):
             block("原表版本或月份不一致，需要重新核实")
             continue
         if record.service_date > today_cn():
@@ -109,7 +131,7 @@ async def plan_work_fees(db, document, billing_month, *, rooms=(), service_date=
                    and not (e.is_service_fee and e.payer == payer and e.amount in (Decimal("0"), unit) and any(r.expense_id == e.expense_id and r.request_date != record.service_date for r in requests))
                    and not (e.description.startswith("续住打扫") and e.is_service_fee and e.payer == payer and any(
                        r.room_id == e.room_id and r.service_date == e.expense_date and r.record_id != record.record_id
-                       and r.service_type == "instay_cleaning" and e.amount in (Decimal("0"), unit * r.quantity) for r in records))]
+                       and r.service_type == "instay_cleaning" and e.amount in (Decimal("0"), unit * r.quantity) for r in verified_records))]
         if unknown:
             block("同一订单或日期还有未明确关联的保洁费用，需排除重复计费")
             continue
@@ -155,6 +177,7 @@ async def plan_work_fees(db, document, billing_month, *, rooms=(), service_date=
                         "payer": payer.value, "amount": str(expected - paid),
                         "unit_price": str(unit), "existing_amount": str(paid), "expected_amount": str(expected),
                         "document_id": document.document_id, "document_sha256": document.sha256,
+                        "record_document_id": record.document_id, "record_document_sha256": record.document_sha256,
                         "source_sheet": record.source_sheet, "source_row": record.source_row,
                         "matched_expense_ids": sorted(e.expense_id for e in matches),
                         "description": f"续住打扫 {room.room_name}（历史费用补齐）"}

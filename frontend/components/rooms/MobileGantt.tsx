@@ -13,6 +13,7 @@ import { ORDER_STATUS_LABEL, orderStatusHex } from "@/lib/status-display";
 import type { CalendarRoom, CalendarDay } from "@/lib/types";
 import { CLEANING_STATUSES, CLEANING_CELL, TRIAL_BADGE } from "./constants";
 import { StaySettlementLabel } from "@/components/ui/StaySettlementLabel";
+import { OverdueRoomNotice } from "./OverdueRoomNotice";
 
 // 后台移动端房态甘特图（路线 B）。
 // 仿已上线的 components/owner/OwnerGanttView：sticky 双轴 + 状态色条 + 滚到今天 + 行虚拟化。
@@ -224,7 +225,7 @@ export function MobileGantt({
     days.forEach((d) => {
       const used = rooms.filter((r) => {
         const cell = r.days?.[d];
-        return !!cell && cell.status !== "cancelled";
+        return (!!cell && cell.status !== "cancelled") || r.overdue_stay?.as_of_date === d;
       }).length;
       m[d] = { used, total };
     });
@@ -499,7 +500,9 @@ export function MobileGantt({
                       borderRight: `0.5px solid ${tokens.anyu.color.linen}`,
                     }}
                   >
-                    <div
+                    {room.overdue_stay?.as_of_date === todayStr ? (
+                      <OverdueRoomNotice room={room} onOrderClick={onOrderClick} />
+                    ) : <div
                       style={{
                         display: "flex",
                         flexDirection: "column",
@@ -536,7 +539,7 @@ export function MobileGantt({
                           {roomTypeById?.[room.room_id] || room.room_name}
                         </div>
                       )}
-                    </div>
+                    </div>}
                   </td>
                   {days.map((day, idx) => {
                     const cell = room.days?.[day];
@@ -547,6 +550,7 @@ export function MobileGantt({
                       !!cell && (isStart || startsSettlementLabels(prev, cell));
                     const isEnd = !!cell && (idx === days.length - 1 || !isSameBlock(cell, next));
                     const isToday = day === todayStr;
+                    const overdueEmptyCell = isToday && !cell && room.overdue_stay?.as_of_date === day;
                     // 已离店的单（已退房/已完成）不在「今天」盖住「保洁中」：客人已走、房在打扫，
                     // 该显示保洁中而非残留「待退房」条（与桌面 GanttView 同口径）。在住/将到店照常画。
                     const departedCell =
@@ -586,6 +590,8 @@ export function MobileGantt({
                             // 有订单 → 订单详情抽屉；锁房/屏蔽或无回调 → 内置只读详情
                             if (cell.order_id && onOrderClick) onOrderClick(cell.order_id);
                             else openDetailFor(room.room_id, idx);
+                          } else if (overdueEmptyCell) {
+                            onOrderClick?.(room.overdue_stay!.order_id);
                           } else if (!privacyMode && onCellClick) {
                             // 空格 → 快速排房/开单
                             onCellClick(room.room_id, day);
@@ -707,6 +713,13 @@ export function MobileGantt({
                                 {cell.free_room_kind === "mixed" ? "含免房" : "免房"}
                               </span>
                             )}
+                          </div>
+                        ) : overdueEmptyCell ? (
+                          <div title={`原定 ${room.overdue_stay!.expected_checkout_date} 退房，系统仍记为在住`}
+                            style={{ color: tokens.anyu.color.clay, background: tokens.anyu.color.sand,
+                              border: `1px dashed ${tokens.anyu.color.clay}`, borderRadius: 8, margin: 2,
+                              fontSize: 10, textAlign: "center", padding: "4px 0" }}>
+                            未退
                           </div>
                         ) : cleaningEmptyCell ? (
                           // 兜底金盒：今天格空、旁边也没有可叠标的已退房订单条

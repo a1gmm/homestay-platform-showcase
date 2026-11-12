@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
-import { extractErrorMessage } from "@/lib/api-errors";
+import { extractErrorMessage, extractConflictOrderId } from "@/lib/api-errors";
 import {
   Modal,
   Form,
@@ -13,6 +13,7 @@ import {
   Typography,
   message,
   Tooltip,
+  Alert,
 } from "antd";
 import { EditOutlined, QuestionCircleOutlined } from "@ant-design/icons";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -130,13 +131,23 @@ export default function EditOrderModal({ open, order, onClose }: Props) {
 
   const updateMutation = useMutation({
     mutationFn: (payload: any) => ordersApi.update(order.order_id, payload),
+    // The form owns save errors; suppress the global fallback toast as well.
+    meta: { silent: true },
     onSuccess: () => {
       message.success("订单已更新");
       invalidateOrderWithAudit(queryClient, order.order_id);
       onClose();
     },
-    onError: (e: any) => message.error(extractErrorMessage(e, "更新失败")),
+    onError: () => {
+      void queryClient.invalidateQueries({ queryKey: ["rooms"] });
+    },
   });
+  const { reset: resetUpdateMutation } = updateMutation;
+  const conflictOrderId = extractConflictOrderId(updateMutation.error);
+
+  useEffect(() => {
+    resetUpdateMutation();
+  }, [open, order?.order_id, resetUpdateMutation]);
 
   const handleSubmit = (values: any) => {
     const submitIsPlatform = PLATFORM_CHANNELS.has(values.channel);
@@ -227,7 +238,25 @@ export default function EditOrderModal({ open, order, onClose }: Props) {
         style={isMobile ? { top: 12, paddingBottom: 0, maxWidth: "100vw" } : undefined}
         destroyOnHidden
       >
-      <Form form={form} layout="vertical" onFinish={handleSubmit}>
+      <Form form={form} layout="vertical" onFinish={handleSubmit}
+        onValuesChange={() => { if (updateMutation.isError) resetUpdateMutation(); }}>
+        {updateMutation.isError && (
+          <Alert
+            type="error"
+            showIcon
+            message="订单未保存"
+            description={<>
+              <div>{extractErrorMessage(updateMutation.error, "更新失败，请重试")}</div>
+              {conflictOrderId ? (
+                <Button href={`/orders?order_id=${encodeURIComponent(conflictOrderId)}`}
+                  target="_blank" rel="noopener noreferrer" style={{ minHeight: 44, marginTop: 8 }}>
+                  查看占用订单
+                </Button>
+              ) : null}
+            </>}
+            style={{ marginBottom: 16 }}
+          />
+        )}
         <Row gutter={16}>
           <Col xs={24} sm={12}>
             <Form.Item

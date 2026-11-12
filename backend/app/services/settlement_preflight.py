@@ -138,6 +138,12 @@ async def _pricing_issues(
         orders[order.order_id] = order
 
     issues: list[SettlementPreflightIssue] = []
+    from app.services.reconciliation_policy import confirmed_cost_bearer
+    for order, room in {o.order_id:(o,r) for o,r in rows}.values():
+        if is_owner_self_order(order) and confirmed_cost_bearer(order.metadata_) is None:
+            issues.append(SettlementPreflightIssue(
+                code='self_stay_bearer_unconfirmed', order_id=order.order_id, room_id=room.room_id,
+                message='请确认是房东安排的人入住，还是公司员工入住：前者退房保洁65元由房东承担，后者30元由公司承担。仅标记“自住”不能确定。'))
     for order_id, commission in totals.items():
         order = orders[order_id]
         subsidy = safe_decimal((order.metadata_ or {}).get("ota_subsidy"))
@@ -183,12 +189,14 @@ async def _expense_issues(
                 amount=amount,
             ))
             continue
-        from app.services.reconciliation_policy import service_cost_payer
+        from app.services.reconciliation_policy import service_cost_payer, confirmed_cost_bearer
+        if is_owner_self_order(order) and confirmed_cost_bearer(order.metadata_) is None:
+            continue  # The order-level question above is the authoritative blocker.
         service_category = expense.category.value in ("cleaning", "laundry", "daily_supplies")
-        if is_owner_self_order(order) or (service_category and service_cost_payer(order) == ExpensePayer.company):
+        if (is_owner_self_order(order) or service_category) and service_cost_payer(order) == ExpensePayer.company:
             issues.append(SettlementPreflightIssue(
                 code="owner_self_owner_expense" if is_owner_self_order(order) else "company_reception_owner_expense",
-                message="业主自住费用应由公司承担，请先把费用承担方改为公司。" if is_owner_self_order(order) else "已确认公司承担的服务费仍扣给业主，请按接待确认记录更正承担方。",
+                message="已确认公司员工入住的费用仍扣给房东，请按确认记录更正为公司承担。" if is_owner_self_order(order) else "已确认公司承担的服务费仍扣给业主，请按接待确认记录更正承担方。",
                 order_id=expense.order_id,
                 room_id=expense.room_id,
                 expense_id=expense.expense_id,

@@ -291,12 +291,12 @@ async def advance_task(db, cycle, actor, checkpoint):
     # Generate the owner bills only after all upstream factual gates pass. No
     # draft/confirmed bill is overwritten without its own reviewed proposal.
     checks = {c["key"]: c for c in delivery["checks"]}
-    upstream = [c for c in delivery["checks"] if c["key"].startswith("step:") and c["key"] != "step:settlement_review"]
+    upstream = [c for c in delivery["checks"] if (c["key"].startswith(("step:", "original:", "document:")) or c["key"] in {"sources_present", "execution_clearance"}) and c["key"] != "step:settlement_review"]
     incomplete_coverage = checks.get("settlement_coverage", {}).get("status") == "blocked"
     missing_bills = checks.get("settlements_present", {}).get("status") == "blocked" or incomplete_coverage
     stale_packages = any(c["key"].startswith("package:") and c["status"] == "blocked" for c in delivery["checks"])
     rebuild_pending = stale_packages or incomplete_coverage
-    if not actions and not stage_errors and cycle.status != "completed" and upstream and all(c["status"] == "passed" for c in upstream) and (missing_bills or stale_packages):
+    if not actions and not stage_errors and cycle.status != "completed" and upstream and all(c["status"] == "passed" for c in upstream) and (missing_bills or stale_packages or incomplete_coverage):
         from app.services.monthly_close.finalization import build_settlement_proposal
         try:
             from app.api.v1.settlements import build_settlement_plan_snapshot

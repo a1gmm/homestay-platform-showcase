@@ -13,6 +13,7 @@ export type MonthlyCloseRecommendedActionKind =
   | "provide_source"
   | "review_source_reconciliation"
   | "review_work_log"
+  | "review_owner_settlements"
   | "reopen_cycle"
   | "start_final_review"
   | "view_blocker"
@@ -62,6 +63,7 @@ export interface MonthlyCloseFinalReview {
 }
 
 export interface MonthlyCloseProjectedDocumentSummary {
+  work_review_state?: "records_pending" | "fees_pending" | "checked";
   work_record_count?: number;
   document_id: string;
   receipt_id?: string;
@@ -111,9 +113,21 @@ export interface MonthlyCloseProjection {
   workflow_evidence: Array<Record<string, unknown>>;
   final_close_blockers: string[];
   final_review: MonthlyCloseFinalReview;
+  business_progress?: {
+    billing_check: "passed" | "needs_review" | "unavailable";
+    billing_issue_count: number | null;
+    offline_order_count: number;
+    offline_pending_count: number;
+    offline_confirmed_count: number;
+    offline_confirmed_amount: string;
+    disputed_bill_count: number;
+    new_materials_since_bills: boolean;
+    bill_drift_count: number;
+    scope_note: string;
+  };
   recommended_action: MonthlyCloseRecommendedAction;
   financial_case?: {
-    sources: Array<{ source_id: string; filename: string; kind: string; version: number; document_id: string | null; source_types: string[]; state: string; fact_count: number; reviewed_fact_count: number; posted_fact_count: number; matched_fact_count: number; pending_count: number }>;
+    sources: Array<{ source_id: string; filename: string; kind: string; version: number; document_id: string | null; source_types: string[]; state: string; fact_count: number; reviewed_fact_count: number; posted_fact_count: number; matched_fact_count: number; pending_count: number; reconciliation_state?: string | null; reconciled_record_count?: number | null; receipt_confirmation?: { amount: string; confirmed_by: string; confirmed_at: string; proposal_id: string } | null }>;
     pending_issues: Array<{ issue_key: string; source_id: string | null; code: string; message: string; step_key: string }>;
     snapshot_hash: string | null;
   };
@@ -237,7 +251,16 @@ export interface FinancialCaseFacts {
   proposal_kind?: "interpretation" | "posting" | "business_correction" | null;
   report_months: string[];
   export_ready: boolean;
-  ledger_scope?: { months: string[]; categories: string[]; floors: number[]; rooms: string[]; exclude_reception: boolean; payer: string | null; cleaning_kind: string | null } | null;
+  packet?: {
+    sources: Array<{ source_id: string; document_id: string | null; filename: string; kind: string; label: string; summary: string; note: string; other_version_count: number }>;
+    questions: Array<{ source_id: string | null; code: string; title: string; count: number; examples: string[] }>;
+    notes: string[];
+    excluded_source_count: number;
+    offline: { count: number; pending_count: number; truncated: boolean; note: string; rows: Array<{
+      order_id: string; room: string; checkout: string; amount: string | null; received: string; confirmed_received?: string | null; refunded: string; difference: string | null; needs_review: boolean;
+    }> };
+  } | null;
+  ledger_scope?: { months: string[]; categories: string[]; floors: number[]; rooms: string[]; exclude_reception: boolean; payer: string | null; cleaning_kind: string | null; confirmation_recorded?: boolean } | null;
   order_scope?: { version: "order-query-scope-v1"; run_id: string; actor_id: string; cycle_id: string; billing_month: string; control_version: number; cycle_status: string; order_ids: string[]; snapshot_hash: string; issue_hash: string } | null;
 }
 
@@ -335,6 +358,7 @@ export interface ServiceStatementAnalysis {
 
 export interface CleaningWorkComparison {
     recorded_count?: number;
+    outside_source_count?: number;
     effective_record_count?: number;
     resolutions?: CleaningWorkResolution[];
     importable_count?: number;
@@ -848,4 +872,11 @@ export interface CleaningWorkResolution extends CleaningWorkResolutionSelection 
   confirmed_by: string;
   created_at: string;
   state: "applied" | "stale";
+}
+
+export interface OwnerCompletion {
+  billing_month: string; cycle_id: string; scope: "owner_reconciliation_v1";
+  completed: boolean; ready: boolean; blockers: string[]; evidence_hash: string;
+  settlements: Array<{ settlement_id: string; owner_name: string; amount: string; status: string }>;
+  total_amount: string;
 }

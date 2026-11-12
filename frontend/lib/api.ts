@@ -779,16 +779,30 @@ export const settlementsApi = {
     api.get<OwnerSettlementOut[]>("/settlements", { params }),
   detail: (id: string) => api.get<SettlementDetail>(`/settlements/${id}`),
   generate: (year: number, month: number, overwrite = false) =>
-    api.post<{ generated: number; regenerated: number; skipped_locked: number; billing_month: string }>(
-      "/settlements/generate", null, { params: { year, month, overwrite } }),
+    api.post<{ generated?: number; regenerated?: number; skipped_locked?: number; billing_month?: string; proposal_id?: string; proposal_type?: string }>(
+      "/settlements/generate", null, { ...monthlyCloseScopedRequestConfig(), params: { year, month, overwrite } }),
   preflight: (year: number, month: number) =>
     api.get<SettlementPreflightReport>("/settlements/preflight", { params: { year, month } }),
   confirm: (id: string) => api.post(`/settlements/${id}/confirm`),
   dispute: (id: string, notes: string) => api.post(`/settlements/${id}/dispute`, { notes }),
 };
 
+// 使用帮助和问题反馈独立于财务来源及月结任务。
+export const monthlyCloseSupportApi = {
+  guidePage: (page: number, signal?: AbortSignal) => api.get<Blob>(`/monthly-close-support/guide/pages/${page}`, { ...monthlyCloseScopedRequestConfig(signal), responseType: "blob" }),
+  guide: (signal?: AbortSignal) => api.get<Blob>("/monthly-close-support/guide", { ...monthlyCloseScopedRequestConfig(signal), responseType: "blob" }),
+  list: (month: string, offset = 0, signal?: AbortSignal) => api.get<{ items: import("./monthly-close-support").MonthlyCloseFeedback[]; total: number }>("/monthly-close-support/feedback", { ...monthlyCloseScopedRequestConfig(signal), params: { billing_month: month, offset } }),
+  create: (input: import("./monthly-close-support").MonthlyCloseFeedbackInput, signal?: AbortSignal) => api.post<import("./monthly-close-support").MonthlyCloseFeedback>("/monthly-close-support/feedback", input, monthlyCloseScopedRequestConfig(signal)),
+  update: (id: string, input: { revision: number; status: import("./monthly-close-support").FeedbackStatus; reply: string }, signal?: AbortSignal) => api.patch<import("./monthly-close-support").MonthlyCloseFeedback>(`/monthly-close-support/feedback/${id}`, input, monthlyCloseScopedRequestConfig(signal)),
+  screenshot: (id: string, signal?: AbortSignal) => api.get<Blob>(`/monthly-close-support/feedback/${id}/screenshot`, { ...monthlyCloseScopedRequestConfig(signal), responseType: "blob" }),
+};
+
 // ─── 管理员固定九步月结 ────────────────────────────────────────────────────
 export const monthlyCloseApi = {
+  getReviewQueue: (billingMonth: string, signal?: AbortSignal) =>
+    api.get<import("./monthly-close-review").ReviewQueue>(`/monthly-close/${billingMonth}/review-queue`, monthlyCloseScopedRequestConfig(signal)),
+  enableProposalControl: (billingMonth: string, expectedVersion: number) =>
+    api.post(`/monthly-close/${billingMonth}/write-control`, { owner: "assistant", expected_version: expectedVersion }, monthlyCloseScopedRequestConfig()),
   getTask: (billingMonth: string, signal?: AbortSignal) =>
     api.get<{ task: import("./monthly-close-task").MonthlyCloseTask | null }>(`/monthly-close/${billingMonth}/task`, monthlyCloseScopedRequestConfig(signal)),
   updateTask: (billingMonth: string, input: import("./monthly-close-task").MonthlyCloseTaskCommand, signal?: AbortSignal) =>
@@ -805,16 +819,18 @@ export const monthlyCloseApi = {
   },
   listMessages: (billingMonth: string) =>
     api.get<{ replies: AssistantReply[] }>(`/monthly-close/${billingMonth}/messages`),
-  postMessage: (billingMonth: string, text: string, attachmentIds: string[] = [], contextRunId?: string) =>
+  postMessage: (billingMonth: string, text: string, attachmentIds: string[] = [], contextRunId?: string, reviewContext?: import("./monthly-close-review").ReviewContext) =>
     api.post<AssistantReply>(`/monthly-close/${billingMonth}/messages`, {
       text,
       attachment_ids: attachmentIds,
       ...(contextRunId ? { context_run_id: contextRunId } : {}),
+      ...(reviewContext ? { review_context: reviewContext } : {}),
     }),
-  postMessageStream: async (billingMonth: string, text: string, attachmentIds: string[], contextRunId: string | undefined, onProgress: (progress: AssistantProgress) => void, signal?: AbortSignal) => {
+  postMessageStream: async (billingMonth: string, text: string, attachmentIds: string[], contextRunId: string | undefined, onProgress: (progress: AssistantProgress) => void, signal?: AbortSignal, reviewContext?: import("./monthly-close-review").ReviewContext) => {
     const reader = createChatStreamReader(onProgress);
     const response = await api.post<string>(`/monthly-close/${billingMonth}/messages`, {
       text, attachment_ids: attachmentIds, ...(contextRunId ? { context_run_id: contextRunId } : {}),
+      ...(reviewContext ? { review_context: reviewContext } : {}),
     }, {
       headers: { Accept: "text/event-stream" }, responseType: "text", timeout: 90000, signal,
       onDownloadProgress: (progress) => {
@@ -1083,6 +1099,10 @@ export const monthlyCloseApi = {
   ),
   getProposal: (billingMonth: string, proposalId: string, signal?: AbortSignal) =>
     api.get<MonthlyCloseProposalView>(`/monthly-close/${billingMonth}/proposals/${proposalId}`, monthlyCloseScopedRequestConfig(signal)),
+  previewOwnerCompletion: (month: string, signal?: AbortSignal) =>
+    api.get<import("./monthly-close").OwnerCompletion>(`/monthly-close/${month}/owner-completion`, monthlyCloseScopedRequestConfig(signal)),
+  completeOwnerReconciliation: (month: string, evidenceHash: string, signal?: AbortSignal) =>
+    api.post<import("./monthly-close").OwnerCompletion>(`/monthly-close/${month}/owner-completion`, { evidence_hash: evidenceHash }, monthlyCloseScopedRequestConfig(signal)),
   createFinalizationProposal: (billingMonth: string, requestId: string, signal?: AbortSignal) =>
     api.post<MonthlyCloseProposalView>(`/monthly-close/${billingMonth}/finalization-proposals`, { request_id: requestId }, monthlyCloseScopedRequestConfig(signal)),
   approveProposal: (billingMonth: string, proposalId: string, requestId: string, signal?: AbortSignal) =>
@@ -1091,6 +1111,10 @@ export const monthlyCloseApi = {
     api.post(`/monthly-close/${billingMonth}/proposals/${proposalId}/reject`, { reason, request_id: requestId }, monthlyCloseScopedRequestConfig(signal)),
   executeProposal: (billingMonth: string, proposalId: string, requestId: string, signal?: AbortSignal) =>
     api.post(`/monthly-close/${billingMonth}/proposals/${proposalId}/execute`, { request_id: requestId }, monthlyCloseScopedRequestConfig(signal)),
+  reviewSettlementReplacements: (billingMonth: string, requestId: string, signal?: AbortSignal) =>
+    api.post<{ billing_month: string; resolved_count: number; remaining_count: number }>(
+      `/monthly-close/${billingMonth}/actions/review-settlement-replacements`,
+      { request_id: requestId }, monthlyCloseScopedRequestConfig(signal)),
   verifyAttempt: (billingMonth: string, attemptId: string, requestId: string, signal?: AbortSignal) =>
     api.post(`/monthly-close/${billingMonth}/attempts/${attemptId}/verify`, { request_id: requestId }, monthlyCloseScopedRequestConfig(signal)),
 };

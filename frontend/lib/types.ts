@@ -480,6 +480,11 @@ export interface OrderCreate {
   // 同客同日期重复单拦截（409 duplicate_order）的覆盖开关：
   // 用户确认「同名不同客」后带 true 重发。
   allow_duplicate?: boolean;
+  continuation?: {
+    action: "link" | "separate";
+    fingerprint: string;
+    order_id?: string | null;
+  };
 }
 
 export interface OrderOut {
@@ -1146,6 +1151,12 @@ export interface CalendarRoom {
   room_name: string;
   room_status: RoomStatus;
   days: Record<string, CalendarDay>;
+  /** Today's actual arrival evidence; does not extend booked nights or prices. */
+  overdue_stay?: {
+    order_id: string;
+    expected_checkout_date: string;
+    as_of_date: string;
+  };
 }
 
 // ─── Auth ────────────────────────────────────────────────────────────────────

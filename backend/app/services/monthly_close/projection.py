@@ -103,6 +103,7 @@ class ProjectedDocument:
     work_record_count: int = 0
     analysis_kind: str | None = None
     analysis_message: str | None = None
+    work_review_state: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {key: value for key, value in asdict(self).items() if value is not None}
@@ -118,6 +119,7 @@ class ProjectedDocument:
             **({"analysis_kind": self.analysis_kind} if self.analysis_kind else {}),
             **({"analysis_message": self.analysis_message} if self.analysis_message else {}),
             **({"work_record_count": self.work_record_count} if self.work_record_count else {}),
+            **({"work_review_state": self.work_review_state} if self.work_review_state else {}),
             **(
                 {"uploaded_at": self.uploaded_at}
                 if self.uploaded_at is not None
@@ -181,10 +183,12 @@ class MonthlyCloseProjection:
     final_review: FinalReviewProjection
     recommended_action: RecommendedAction
     financial_case: dict[str, Any] | None = None
+    business_progress: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
             **({"financial_case": self.financial_case} if self.financial_case is not None else {}),
+            **({"business_progress": self.business_progress} if self.business_progress is not None else {}),
             "projection_version": self.projection_version,
             "computed_at": self.computed_at,
             "input_hash": self.input_hash,
@@ -513,11 +517,11 @@ def _source_state(
         return "processing"
     if any(document.analysis_state == "not_started" for document in documents):
         return "needs_action"
-    if any(document.analysis_state == "work_log_ready" for document in documents):
+    if any(document.analysis_state == "work_log_ready" and document.work_review_state != "checked" for document in documents):
         return "needs_action"
     if supplier_residual:
         return "needs_action"
-    if documents and all(document.analysis_state == "ready" for document in documents):
+    if documents and all(document.analysis_state == "ready" or document.work_review_state == "checked" for document in documents):
         return "completed"
     if requirement["state"] == "uploaded":
         # A global uploaded marker without an actor-visible document is not
@@ -554,7 +558,12 @@ async def _final_review_projection(
     approval_state = "not_started"
     proposal_id = latest_proposal.proposal_id if latest_proposal is not None else None
     attempt_id = None
-    if cycle.status == "reopened":
+    if cycle.status == "completed" and snapshot.get("scope") == "owner_reconciliation_v1":
+        from app.services.monthly_close.owner_completion import is_fresh
+        state = "verified" if await is_fresh(db, cycle) else "stale"
+        approval_state = "approved"
+        proposal_id = None
+    elif cycle.status == "reopened":
         state = "reopened"
     elif isinstance(verified, dict) and all(
         isinstance(verified.get(key), str) and verified.get(key)
@@ -630,17 +639,11 @@ async def _final_review_projection(
             )
             or 0
         )
-        settlement_total = format(
-            Decimal(
-                await db.scalar(
-                    select(
-                        func.coalesce(func.sum(OwnerSettlement.actual_owner_amount), 0)
-                    ).where(OwnerSettlement.billing_month == cycle.billing_month)
-                )
-                or 0
-            ).quantize(Decimal("0.01")),
-            ".2f",
-        )
+        from sqlalchemy.orm import selectinload
+        from app.services.owner_settlement import settlement_current_amounts
+        current_bills = list(await db.scalars(select(OwnerSettlement).where(
+            OwnerSettlement.billing_month == cycle.billing_month).options(selectinload(OwnerSettlement.items))))
+        settlement_total = format(sum((settlement_current_amounts(b).actual_owner_amount for b in current_bills), Decimal(0)), '.2f')
     confirmed_count=paid_count=0
     if include_financial_detail:
         from app.models.settlement import SettlementStatus
@@ -661,11 +664,11 @@ async def _final_review_projection(
         delivery_rows = tuple({
             "settlement_id": row.settlement_id, "billing_month": row.billing_month,
             "owner_name": row.name or "未登记姓名的业主",
-            "amount": format(Decimal(str(row.actual_owner_amount)).quantize(Decimal("0.01")), ".2f"),
+            "amount": format(settlement_current_amounts(next(b for b in current_bills if b.settlement_id == row.settlement_id)).actual_owner_amount, ".2f"),
             "status": str(getattr(row.status, "value", row.status)),
         } for row in rows)
     status_message=(f"业主结算共 {settlement_count} 份，已确认 {confirmed_count} 份，已登记付款 {paid_count} 份；未登记不代表实际未打款。"
-        + ("整月关账已完成。" if state=='verified' else "本工作流尚未登记整月关账；已确认的业主账单无需重复确认，复查差异应先对照原处理依据。")) if settlement_count and include_financial_detail else ""
+        + ("本月业主对账已完成。" if state=='verified' else "业主账单确认后，可完成本月业主对账。已有账单无需重复生成。")) if settlement_count and include_financial_detail else ""
     return FinalReviewProjection(
         confirmed_settlement_count=confirmed_count,paid_settlement_count=paid_count,
         settlement_status_message=status_message,
@@ -840,10 +843,10 @@ def _recommend_action(
             target_id=inbox_action_id,
         )
     work_document = next((document for source in sources for document in source.documents
-                          if document.analysis_state == "work_log_ready"), None)
+                          if document.analysis_state == "work_log_ready" and document.work_review_state != "checked"), None)
     if work_document is not None and actor_role == "admin":
         return RecommendedAction(
-            kind="review_work_log", label="核对保洁记录与续住费用",
+            kind="review_work_log", label="核对续住保洁费用" if work_document.work_review_state == "fees_pending" else "核对保洁记录与续住费用",
             reason_code="work_log_separate_reconciliation", target_type="document",
             target_id=work_document.document_id,
         )
@@ -1161,18 +1164,30 @@ async def build_monthly_close_projection(
             )
 
     # Original-file accounting can finish without the legacy adapter processing
-    # its archived copy. Only live expense matches may supersede that marker.
+    # its archived copy. Only live accounting/review matches supersede that marker.
     if financial_case is not None:
         completed_documents = {source["document_id"] for source in financial_case["sources"]
-                               if source["document_id"] and source["expense_complete"]
-                               and source["kind"] == "utility"}
+                               if source["document_id"] and not source['pending_count'] and (
+                                   source['kind'] == 'utility' and source['expense_complete'] or
+                                   source['kind'] == 'ota' and source.get('reconciliation_state') == 'matched')}
         for source_type, documents in documents_by_source.items():
             documents_by_source[source_type] = [
                 replace(document, analysis_state="ready", analysis_kind="financial_case",
-                        analysis_message="原件费用已核对，当前账本已匹配。")
+                        analysis_message="原件与当前账目已核对，实际收付款凭据另行核实。")
                 if document.document_id in completed_documents else document for document in documents
             ]
     sources: list[MonthlyCloseSourceProjection] = []
+    if actor_role == "admin":
+        from app.services.monthly_close.work_progress import current_work_progress
+        work_states = await current_work_progress(db, cycle, [document.document_id
+            for documents in documents_by_source.values() for document in documents
+            if document.analysis_state == "work_log_ready" or document.work_record_count > 0])
+        for source_type, documents in documents_by_source.items():
+            documents_by_source[source_type] = [replace(document,
+                analysis_state="work_log_ready", analysis_kind="cleaning_work_log",
+                work_review_state=work_states[document.document_id])
+                if document.document_id in work_states and document.analysis_state not in {"queued", "running"}
+                else document for document in documents]
     for source_type in source_types:
         requirement = requirement_by_source.get(source_type)
         if requirement is None:
@@ -1191,8 +1206,12 @@ async def build_monthly_close_projection(
         originals = [source for source in (financial_case or {}).get("sources", [])
                      if source_type in source["source_types"]]
         if originals and state in {"missing", "blocked"}:
-            state = "completed" if all(source["expense_complete"] for source in originals) else "needs_action"
-        if originals and any(source["pending_count"] for source in originals) and state == "completed":
+            state = "completed" if all(source["expense_complete"] or source.get('reconciliation_state') == 'matched'
+                                       for source in originals) else "needs_action"
+        from app.services.financial_case.packet import GUIDANCE_CODES
+        original_ids = {source["source_id"] for source in originals}
+        if originals and any(issue.get("source_id") in original_ids and issue["code"] not in GUIDANCE_CODES
+                             for issue in (financial_case or {}).get("pending_issues", [])) and state == "completed":
             state = "needs_action"
         sources.append(
             MonthlyCloseSourceProjection(
@@ -1347,7 +1366,16 @@ async def build_monthly_close_projection(
         completed_evidence_current=completed_evidence_current,
         finalization_state=final_review.state,
     )
+    progress = None
+    if actor_role == "admin":
+        from app.services.financial_case.packet import offline_review
+        from app.services.monthly_close.business_progress import business_progress, prefer_bill_review, has_new_materials, current_bill_drift
+        progress = business_progress(evidence_rows or [], final_review, await offline_review(db, cycle.billing_month),
+                                     new_materials=await has_new_materials(db, cycle) if final_review.settlement_count else False,
+                                     bill_drift_count=await current_bill_drift(db, cycle) if final_review.settlement_count else 0)
+        recommended_action = prefer_bill_review(recommended_action, progress, final_review, cycle.status, cycle.cycle_id)
     hash_material = {
+        "business_progress": progress,
         "financial_case": financial_case,
         "projection_version": PROJECTION_VERSION,
         "cycle_id": cycle.cycle_id,
@@ -1395,6 +1423,7 @@ async def build_monthly_close_projection(
         final_close_blockers=final_close_blockers,
         final_review=final_review,
         recommended_action=recommended_action,
+        business_progress=progress,
         financial_case=financial_case,
     )
 
@@ -1450,8 +1479,10 @@ async def get_visible_projection_document(
     if actor_role == "admin":
         from app.services.monthly_close.financial_case_bridge import build_financial_case_snapshot
         financial_case = await build_financial_case_snapshot(db, cycle)
-        if any(source["document_id"] == document_id and source["expense_complete"]
-               and source["kind"] == "utility" for source in financial_case["sources"]):
+        if any(source["document_id"] == document_id and not source['pending_count'] and (
+                source['kind'] == 'utility' and source['expense_complete'] or
+                source['kind'] == 'ota' and source.get('reconciliation_state') == 'matched')
+               for source in financial_case["sources"]):
             document = replace(document, analysis_state="ready", analysis_kind="financial_case",
-                               analysis_message="原件费用已核对，当前账本已匹配。")
+                               analysis_message="原件与当前账目已核对，实际收付款凭据另行核实。")
     return document

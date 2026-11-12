@@ -145,7 +145,7 @@ async def describe_room_conflict(
         if overdue:
             return {
                 "kind": "overdue", "order_id": overdue.order_id,
-                "message": f"房间 {room_id} 有超期在住订单（{overdue.order_id}），预计 {overdue.checkout_date} 退房，尚未办理退房。请核实客人是否离店：已离店请办理退房，仍在住请处理续住或选择其他房间。",
+                "message": f"房间 {room_id} 有超期在住订单（{overdue.order_id}），预计 {overdue.checkout_date} 退房，尚未办理退房。同一位客人续住请在原订单中关联续住或延长日期；其他客人请选择其他房间。已离店的客人请核实后办理退房。",
             }
     q = (select(OrderRoom).join(Order, Order.order_id == OrderRoom.order_id)
          .where(OrderRoom.room_id == room_id, Order.is_deleted == False,

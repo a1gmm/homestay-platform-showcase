@@ -500,6 +500,12 @@
     },
     {
       "executable": false,
+      "path": "backend/app/alembic/versions/monthlyclose1016_support.py",
+      "sha256": "c563441d1594f83f90adce5f9406aff1eaccd77b68b48d2a384437cb76295b57",
+      "size": 1980
+    },
+    {
+      "executable": false,
       "path": "backend/app/alembic/versions/releaseannounce0822_account_receipts.py",
       "sha256": "13db82fd604f2372be83bf9a838d8c8326c6cb1b4b8706b1bfc5db7c817e8644",
       "size": 889
@@ -515,6 +521,12 @@
       "path": "backend/app/alembic/versions/settlement0910_details.py",
       "sha256": "129ee22889dddd2c093499b9934b98c219cc7a6d95edab57b4dd06ff76c8f6c3",
       "size": 535
+    },
+    {
+      "executable": false,
+      "path": "backend/app/alembic/versions/settlement1018_fee_correction.py",
+      "sha256": "07b4bd817e0890d80a208ce0f31ffd23cb0d39d407b5cf50bfc2cbbb8159059e",
+      "size": 3584
     },
     {
       "executable": false,
@@ -567,8 +579,8 @@
     {
       "executable": false,
       "path": "backend/app/api/v1/billing_recon.py",
-      "sha256": "a68ebc21f4eb1b8c4c53fd438032c69e0abf3e0a550f7d90235b89ee30886090",
-      "size": 28683
+      "sha256": "59fa8afcc30c5fb647f7acb60ef10e7dec1bd3c5a22dcf6624a381642111bc01",
+      "size": 28754
     },
     {
       "executable": false,
@@ -603,8 +615,8 @@
     {
       "executable": false,
       "path": "backend/app/api/v1/export.py",
-      "sha256": "a776e6100351dd585f318c6e66960c572c0c7b0a629fcd1e912d9c9cf09740a9",
-      "size": 62374
+      "sha256": "5b5a10cd5c8d7b4db30a50a2baa9d9009ee912b5d927023faca9ecd1c9e6f86c",
+      "size": 63598
     },
     {
       "executable": false,
@@ -621,8 +633,8 @@
     {
       "executable": false,
       "path": "backend/app/api/v1/financial_case.py",
-      "sha256": "cfd6a3e9ffb2bce172c17d0246d4926f61eb69ad63c87f93e37b3c8884d2f920",
-      "size": 5452
+      "sha256": "b8168c2a82bbada231097ab8deb3715a9d54f7e1e3f4d30cf1a64bc55d925d79",
+      "size": 5409
     },
     {
       "executable": false,
@@ -669,8 +681,14 @@
     {
       "executable": false,
       "path": "backend/app/api/v1/monthly_close.py",
-      "sha256": "1cc8cf92a23e7b9bc981d565a25c9312dd6ace5ccfc47e6082f7b2c07de6bbc2",
-      "size": 135653
+      "sha256": "2e601dbdfe708d803dc2b8b56756f5a6085a8cdc9be0562f17e978c52393673f",
+      "size": 140719
+    },
+    {
+      "executable": false,
+      "path": "backend/app/api/v1/monthly_close_support.py",
+      "sha256": "7f1873cd0b719286886cf412555fc1a9861d58bb21108024bb57735902c93593",
+      "size": 8763
     },
     {
       "executable": false,
@@ -681,8 +699,8 @@
     {
       "executable": false,
       "path": "backend/app/api/v1/orders.py",
-      "sha256": "2e97d2dfc35aeea3efe653dad4dd311e5d93e145397c20081a13d0d489fffdc8",
-      "size": 162835
+      "sha256": "2da114fc0b2da4e3ecadd5133d83dc623f4aaf096409243cee069f465d6b77a5",
+      "size": 164392
     },
     {
       "executable": false,
@@ -717,8 +735,8 @@
     {
       "executable": false,
       "path": "backend/app/api/v1/rooms.py",
-      "sha256": "b4598b756ed1a9d4c1877c1cf1f982da0462dbc55ee40d9d20ad9ba785fcaf9f",
-      "size": 36803
+      "sha256": "560da6ad25e52e24dea6b8f32d30c3db1f8404c7fff5d13841f88899aba82e81",
+      "size": 37570
     },
     {
       "executable": false,
@@ -729,8 +747,8 @@
     {
       "executable": false,
       "path": "backend/app/api/v1/settlements.py",
-      "sha256": "87d43698a49aa43ecd097dab87b8a8b3ef6acae667d3984d451934306b98b35e",
-      "size": 61049
+      "sha256": "bf3b9e8d656bad86e283f7e96fdd0a11f1813b6cafe6ff76c73cb17c2c0979fa",
+      "size": 61276
     },
     {
       "executable": false,
@@ -747,8 +765,8 @@
     {
       "executable": false,
       "path": "backend/app/api/v1/tasks.py",
-      "sha256": "f0d68e615ba3244f4fa7fe9edf673b3215aab8f3e9011eee911d0afca0ca21f6",
-      "size": 24166
+      "sha256": "4672106b7aa662be8785b625ffc0c9ed04257486ccd1b239f36e2537dc4ca074",
+      "size": 24248
     },
     {
       "executable": false,
@@ -777,8 +795,8 @@
     {
       "executable": false,
       "path": "backend/app/core/cleaning_pricing.py",
-      "sha256": "fe0a605bb8e088d2d72ee5249e696f68314dad1294bfc63b0591854fab9305a2",
-      "size": 1214
+      "sha256": "e7d7f4617b4721cb7e7556e12f5fc1b9b7f4b24fca73257dd8a447f9917fb754",
+      "size": 1324
     },
     {
       "executable": false,
@@ -831,8 +849,8 @@
     {
       "executable": false,
       "path": "backend/app/core/monthly_close_upload_limit.py",
-      "sha256": "f58ef79fc629fd4e6063e6ab34d4d1291f6da38a1bfd6936b085a3c1d34cfe62",
-      "size": 2921
+      "sha256": "bf2b4e5b029433e2e9e78e598bdadb1c66a3f593ec4706ff35a847be48fdedfc",
+      "size": 3279
     },
     {
       "executable": false,
@@ -873,14 +891,14 @@
     {
       "executable": false,
       "path": "backend/app/main.py",
-      "sha256": "3a6434bc0f2c036b17b2b5bf9be7b0472fe51212e3442eda6e390f1eb7fc629f",
-      "size": 27405
+      "sha256": "9e6dda86bcabf1c3560cb1d7d7e53dbf0f277224468d22214bd926cf874ed587",
+      "size": 27571
     },
     {
       "executable": false,
       "path": "backend/app/models/__init__.py",
-      "sha256": "9a2fc1880f0a14d1d6e414a88a7e8eb46cb392345d4fdb1a28397c95b975f209",
-      "size": 5767
+      "sha256": "1e2897047362fd4bd9408870c59f1a683b1d9c57f914b1d6e49b8a441c72e678",
+      "size": 5944
     },
     {
       "executable": false,
@@ -995,6 +1013,12 @@
       "path": "backend/app/models/monthly_close_control.py",
       "sha256": "dddb54c42fd88ee367be7d19435f2dac05437a38d8ab7aa6379cc7d190a9c55b",
       "size": 39230
+    },
+    {
+      "executable": false,
+      "path": "backend/app/models/monthly_close_feedback.py",
+      "sha256": "e7f62bdbfeb09357c627dc0d44632f313a0e73f1c1cad45da83a1e72f8733214",
+      "size": 2073
     },
     {
       "executable": false,
@@ -1113,8 +1137,14 @@
     {
       "executable": false,
       "path": "backend/app/models/settlement.py",
-      "sha256": "52a09bd6971ce0b60c75bce6b9368a1df6d338bb38a6e56d1ba91cd6f75f6121",
-      "size": 6545
+      "sha256": "8ee0a519085a771e4a69137a6856fe88862400375589e9cb01697dc8f2fb396a",
+      "size": 6865
+    },
+    {
+      "executable": false,
+      "path": "backend/app/models/settlement_fee_adjustment.py",
+      "sha256": "af9a0cb1a99b00ca0c1f1c413c15bfe6c773f84f2d4f7d0daf1d929d27b9eaa4",
+      "size": 2166
     },
     {
       "executable": false,
@@ -1145,6 +1175,60 @@
       "path": "backend/app/release_announcements.py",
       "sha256": "e7d998820611d783c79a33f03a31a67e6118f273a0bab90b59168e27ce3e6d0c",
       "size": 4502
+    },
+    {
+      "executable": false,
+      "path": "backend/app/resources/monthly_close/README.md",
+      "sha256": "18904e4fcde6c6ee3b001401f486cda063114ccbcb1e64b3997f49beafd7afe8",
+      "size": 583
+    },
+    {
+      "executable": false,
+      "path": "backend/app/resources/monthly_close/guide-page-1.webp",
+      "sha256": "4db9699c76e68fc8bce428fbf12dd3c465f779eb338d6054eadf9df9a61d9725",
+      "size": 62152
+    },
+    {
+      "executable": false,
+      "path": "backend/app/resources/monthly_close/guide-page-2.webp",
+      "sha256": "81de9c2bb43aeaefb7094c78400c459e4858ad7ef9564932e2e50bb39d15f1c6",
+      "size": 75838
+    },
+    {
+      "executable": false,
+      "path": "backend/app/resources/monthly_close/guide-page-3.webp",
+      "sha256": "1e424275d3fc2391f6a9336619519cdf0cab55765217b286e585bee7c30ee71c",
+      "size": 70054
+    },
+    {
+      "executable": false,
+      "path": "backend/app/resources/monthly_close/guide-page-4.webp",
+      "sha256": "068a0cc87ed4ab912d413044915e02ffa211d62c5f422f8ff1e49766538051c3",
+      "size": 77608
+    },
+    {
+      "executable": false,
+      "path": "backend/app/resources/monthly_close/guide-page-5.webp",
+      "sha256": "5b083cad17914ba0481eef6de4de37828d99d9a5af9c72cc50249f1df2056305",
+      "size": 68934
+    },
+    {
+      "executable": false,
+      "path": "backend/app/resources/monthly_close/guide-page-6.webp",
+      "sha256": "3c563bceca89f20d32a21722b45a7af47b15eb4e686cc800821022f242d9222f",
+      "size": 65550
+    },
+    {
+      "executable": false,
+      "path": "backend/app/resources/monthly_close/guide-page-7.webp",
+      "sha256": "682ac23070d18f486e816dc3b6e655263743d101b7c3b50245cb19eddea4ba5d",
+      "size": 67508
+    },
+    {
+      "executable": false,
+      "path": "backend/app/resources/monthly_close/trial-guide-v1.pdf",
+      "sha256": "d46c7572d947633f1d841b425f84347ba703838e7bf662f8374a36133a297d83",
+      "size": 972322
     },
     {
       "executable": false,
@@ -1233,8 +1317,8 @@
     {
       "executable": false,
       "path": "backend/app/schemas/order.py",
-      "sha256": "f3492b025df0aabb2a95391bd0415d7bb050a574ae241f1135730fd3cb3c40f4",
-      "size": 36898
+      "sha256": "f547149931dd79ab0dae3629806bc8a26ead682d34ec700e7e90f9c1eedf9bb5",
+      "size": 37175
     },
     {
       "executable": false,
@@ -1341,8 +1425,8 @@
     {
       "executable": false,
       "path": "backend/app/services/billing_recon/analysis.py",
-      "sha256": "2c961d888b85a3b07abcf86635c697eaeaf30807ed8daf4b0be5725e0b663948",
-      "size": 19402
+      "sha256": "f8012f4d0451dc81b1288c68eae254a731cdd49cfddea8cd030b88af9487d954",
+      "size": 21068
     },
     {
       "executable": false,
@@ -1395,20 +1479,32 @@
     {
       "executable": false,
       "path": "backend/app/services/checkout_continuation.py",
-      "sha256": "33d9b9ebeb755099d11dd705b27038172b0e3579fb817874af9f05dfca884599",
-      "size": 7592
+      "sha256": "eba2e96e7dda5271c66b183ba4d2ac5dbf417b6a0613043eb7ad54d21d55eb0a",
+      "size": 8984
     },
     {
       "executable": false,
       "path": "backend/app/services/cleaning.py",
-      "sha256": "26e11811904a416d9ebd7216517519b0571462b67bd14905d760e7cd9d50bbcf",
-      "size": 25830
+      "sha256": "0fbe0287641156266e6852b7d9e6080a9fe9f88c276dfdff769b37bbc36495e2",
+      "size": 26970
     },
     {
       "executable": false,
       "path": "backend/app/services/cleaning_request.py",
       "sha256": "940db30a603e86db92643058c44d4facaae5d908ff0643228c86de56a3eb12d3",
       "size": 28609
+    },
+    {
+      "executable": false,
+      "path": "backend/app/services/continuation_fees.py",
+      "sha256": "e8536f5e79a4297211e46c5de5ad8f7cb5952ada92dca1e9dc76704396e001e7",
+      "size": 7449
+    },
+    {
+      "executable": false,
+      "path": "backend/app/services/create_continuation.py",
+      "sha256": "38936afbcb58d448ec88ac2d2e67af01072f105e111f5262c6625d79983bd07d",
+      "size": 10177
     },
     {
       "executable": false,
@@ -1425,8 +1521,8 @@
     {
       "executable": false,
       "path": "backend/app/services/feishu_card_actions.py",
-      "sha256": "623b6b7c535a1927facbfb689cf7fc6cabc28463721164cb08002f846754ce6c",
-      "size": 32984
+      "sha256": "326e293d4a153338bc123dcd716581f0bd38e4ce37c381b57a05270f49dc96b0",
+      "size": 33298
     },
     {
       "executable": false,
@@ -1455,8 +1551,14 @@
     {
       "executable": false,
       "path": "backend/app/services/financial_case/chat.py",
-      "sha256": "a1b83a57f0dbfa025481f2165094558222292bb2f68980485aafa05d6873530b",
-      "size": 12186
+      "sha256": "f89ceabf5c273c91bf4004fdf5142c8a10421f436f96f85cf8a1c6df394777ee",
+      "size": 15396
+    },
+    {
+      "executable": false,
+      "path": "backend/app/services/financial_case/confirmed_order_facts.py",
+      "sha256": "3c1682a6d804a031c55c69f9ccf7f68fec8cb61201cf4ca9d5ae39e6d936ffd4",
+      "size": 10162
     },
     {
       "executable": false,
@@ -1472,9 +1574,21 @@
     },
     {
       "executable": false,
+      "path": "backend/app/services/financial_case/expense_confirmation.py",
+      "sha256": "c623cd28edd9b0bd9b0f0562dd3f4f87e85c52d69101a4b0133780c99f4571e7",
+      "size": 6564
+    },
+    {
+      "executable": false,
+      "path": "backend/app/services/financial_case/expense_payment.py",
+      "sha256": "537fcb0576e80b65988d2157d7a0f78efe0d3a3fb98d62469b7ca9a9b4371e6c",
+      "size": 5218
+    },
+    {
+      "executable": false,
       "path": "backend/app/services/financial_case/explanations.py",
-      "sha256": "a9d052c9a604142ea38beb92bab48ab40b4a3575a3dfb4694b6152648e9df344",
-      "size": 2262
+      "sha256": "ba1f19949d778aa934e8d94e157ff4cfe104a07a95a60a38c74ba063112c3787",
+      "size": 2921
     },
     {
       "executable": false,
@@ -1497,20 +1611,26 @@
     {
       "executable": false,
       "path": "backend/app/services/financial_case/ledger_query.py",
-      "sha256": "0911c0261141fd9723db6fb4ec2599e11457e8872696fc070f4cc575d7ef8820",
-      "size": 7509
+      "sha256": "370303e759347d9b665b12071942f1f3e167670869ae7e03764e5077d122affa",
+      "size": 9764
     },
     {
       "executable": false,
       "path": "backend/app/services/financial_case/operations.py",
-      "sha256": "6182b160695ebe5fcf6e0b0449433991479036ff7dbab8f3b095ae97d71cf0b6",
-      "size": 26451
+      "sha256": "0c3aade0de4be16b5324fdd94f50a030b12672dd7d66db7b5b2a40ced2923e9e",
+      "size": 30698
     },
     {
       "executable": false,
       "path": "backend/app/services/financial_case/order_scope.py",
-      "sha256": "e3b7728dcd19c9e5abb97440397c1c5e4559bb71c2ea0f704b497d470b4bbcbd",
-      "size": 7747
+      "sha256": "27337a784fa2c8c454cd4fccb50ab758cada2aebf9cce7a372d2a39b94535439",
+      "size": 8688
+    },
+    {
+      "executable": false,
+      "path": "backend/app/services/financial_case/packet.py",
+      "sha256": "6ca961f5e23c6b41582b1ed46f49f04b7b4632734d0dff4d0abe8e033d6ad03f",
+      "size": 12902
     },
     {
       "executable": false,
@@ -1520,21 +1640,39 @@
     },
     {
       "executable": false,
+      "path": "backend/app/services/financial_case/reconciled_sources.py",
+      "sha256": "3dd71717fa6c627ddfde94e14effa4c9665f75b30d1ad99a5b7d80e54526980d",
+      "size": 10782
+    },
+    {
+      "executable": false,
       "path": "backend/app/services/financial_case/reporting.py",
-      "sha256": "38ae5b7c89753d46cacb9af6e87a1b672664e8ea07dc6bf0ee2af46fff59f197",
-      "size": 70605
+      "sha256": "27fef1f5c09f83816165b130d5d146be9d9bb05f1c5684a85ed30edec4e4eb1f",
+      "size": 71053
     },
     {
       "executable": false,
       "path": "backend/app/services/financial_case/semantic.py",
-      "sha256": "a36b7a0bba554b4d7ab7f206f1b3ee49e870eed8bd0cda8b281a35e8a0ac5b6e",
-      "size": 27274
+      "sha256": "9dcf5879161ce72044d51001174fcff87d128bcfcfc0a18c5d6264934f2dda96",
+      "size": 32174
     },
     {
       "executable": false,
       "path": "backend/app/services/financial_case/service.py",
-      "sha256": "6ab428b51292c4eb5aad02a30bfacdf3137f7610dab251a431ca135d2c8016ff",
-      "size": 61546
+      "sha256": "20a8dd1809d86a443994f63bf55c2de3ff39b8b12a113e31b43f8ad18813944a",
+      "size": 70243
+    },
+    {
+      "executable": false,
+      "path": "backend/app/services/financial_case/settlement_fee_correction.py",
+      "sha256": "f8a2244ad300cc83ea75e496c04cccd0790c71ad32aa4838b83a845d636821ce",
+      "size": 10535
+    },
+    {
+      "executable": false,
+      "path": "backend/app/services/financial_case/source_acknowledgement.py",
+      "sha256": "a38d67672ddf95306d0d59c612778083ad7b2ca96f2694b7f13d81b0cf9aa8b6",
+      "size": 10352
     },
     {
       "executable": false,
@@ -1731,8 +1869,8 @@
     {
       "executable": false,
       "path": "backend/app/services/monthly_close/adapters.py",
-      "sha256": "d2517b7b8158d25a9e1303c10c7e5be57936f717042932e90f02910b8efa4416",
-      "size": 230142
+      "sha256": "149c5dfcc1e7cf49fe31c1b43cfba61dad8064abb0f050be1369e68c75963968",
+      "size": 230360
     },
     {
       "executable": false,
@@ -1749,8 +1887,14 @@
     {
       "executable": false,
       "path": "backend/app/services/monthly_close/assistant.py",
-      "sha256": "8a3f9e0075e08b08f6b094517f37ce6a4f7a8ec7c98a3cf22594e5fc20ce1049",
-      "size": 107022
+      "sha256": "b123786b1b6289a5deccb007953e6a640b7f68c1a2016e230814cdfdbd8b0b8a",
+      "size": 108556
+    },
+    {
+      "executable": false,
+      "path": "backend/app/services/monthly_close/business_progress.py",
+      "sha256": "56f7a9c106442c4f0998899d3655e3f6ca435099ec768f888b636cb2380757b6",
+      "size": 5241
     },
     {
       "executable": false,
@@ -1767,26 +1911,26 @@
     {
       "executable": false,
       "path": "backend/app/services/monthly_close/cleaning_work_chat.py",
-      "sha256": "6e0edb766b20e01ff633e483fd32025c28539535799667f3bbbf69caaaf27ef6",
-      "size": 37481
+      "sha256": "9ff4e58333d75b3f8f9f2ba587e2b5ea3f0cedf6377e3dd1d43558e500741f72",
+      "size": 40715
     },
     {
       "executable": false,
       "path": "backend/app/services/monthly_close/cleaning_work_import.py",
-      "sha256": "24f57ac180d3934a422482748e60b30b8d2e73103edcdd88db8094e60f34785b",
-      "size": 7890
+      "sha256": "c4d1ec1f8e3b5cadb553a7b93c2acdcf052ad5f5cfb7c1c54d1c4bb1d251cfe9",
+      "size": 7834
     },
     {
       "executable": false,
       "path": "backend/app/services/monthly_close/cleaning_work_log.py",
-      "sha256": "e81fa381b6b7aa4276075bda8488e3b1bc82bd3e75e0ce988f9213f036aa5284",
-      "size": 17907
+      "sha256": "18666444b08156e2ec877fa573106b85300869ac9e1056f0f32f57f8915e2e38",
+      "size": 19480
     },
     {
       "executable": false,
       "path": "backend/app/services/monthly_close/cleaning_work_resolution.py",
-      "sha256": "c0fea8275a8e31e34b374cd16674fb4c757f5588c6891fe46b69b2e643112ede",
-      "size": 8731
+      "sha256": "76e3f7311dab8d9d80300cf2b31e32ef94447fadb2a6dc51cae9957f07d89daa",
+      "size": 9103
     },
     {
       "executable": false,
@@ -1797,8 +1941,8 @@
     {
       "executable": false,
       "path": "backend/app/services/monthly_close/conversation.py",
-      "sha256": "f9306909d2c454a89db275b90bc3163cdcefd3dbc0c26ef37ba9e1454c0d7dca",
-      "size": 30164
+      "sha256": "6059ed7aeec7b00519dee7614b88a42a24b6a68c59ef07a62c1154345bf9a3d2",
+      "size": 32693
     },
     {
       "executable": false,
@@ -1815,8 +1959,8 @@
     {
       "executable": false,
       "path": "backend/app/services/monthly_close/documents.py",
-      "sha256": "8513ed9fb117ba08eed8303181ce5398a8df09d02b1766b962a2c2e9d2e92570",
-      "size": 25268
+      "sha256": "0e03cbb307bd3615659dce789c1459781e344925abeae808bd5746f22a5179a0",
+      "size": 25347
     },
     {
       "executable": false,
@@ -1839,14 +1983,14 @@
     {
       "executable": false,
       "path": "backend/app/services/monthly_close/finalization.py",
-      "sha256": "21daf334756d9a7adaf0c68951ce65e31f22d41cb52a4c7e9ccf86391d12b94c",
-      "size": 61808
+      "sha256": "e5d1107da312c7ebcb099a0c166ff69d517ab918573a600067d90120e6f6c1d9",
+      "size": 62877
     },
     {
       "executable": false,
       "path": "backend/app/services/monthly_close/financial_case_bridge.py",
-      "sha256": "752ffd5c51270508290a988f01bb6f613ab37c5688ca4398329c82e9c629b487",
-      "size": 14833
+      "sha256": "e5f02ca022b113e2beb697afa96898925181bd23e3eead5e6c139652b121543a",
+      "size": 17776
     },
     {
       "executable": false,
@@ -1922,6 +2066,12 @@
     },
     {
       "executable": false,
+      "path": "backend/app/services/monthly_close/owner_completion.py",
+      "sha256": "4b2cac3e5d29f80069077e1ce52e4831835ae6b939f89f8e61246d6002acdabe",
+      "size": 9413
+    },
+    {
+      "executable": false,
       "path": "backend/app/services/monthly_close/permissions.py",
       "sha256": "d94dbca9eb5cc9281ddf291205e1127615ac6afae281e70b5e3a3fe650e4d164",
       "size": 10429
@@ -1941,8 +2091,8 @@
     {
       "executable": false,
       "path": "backend/app/services/monthly_close/projection.py",
-      "sha256": "6a9f1fb170c25c54d1aba3d4017f41ef9586fb23e3a6518fd047b93b3d773e47",
-      "size": 56062
+      "sha256": "08918e27f9ac5a990e8894fba95693fc7878a23d6f19a2cf16593c90654a517c",
+      "size": 59318
     },
     {
       "executable": false,
@@ -1958,9 +2108,15 @@
     },
     {
       "executable": false,
+      "path": "backend/app/services/monthly_close/review_queue.py",
+      "sha256": "06c1b9ded373cfa554bd40eb6b08d394e1810fb788ce9dcd9501bc00b9b91f7d",
+      "size": 9613
+    },
+    {
+      "executable": false,
       "path": "backend/app/services/monthly_close/semantic_agent.py",
-      "sha256": "91585fab80a409570caeab16abac291a0b99af928ec6d641b5837e02a1f489ed",
-      "size": 25113
+      "sha256": "7f3eb6693d2233bb3d293141e52191c4d09571ea828ca41d3bfc23ca24445b4a",
+      "size": 27399
     },
     {
       "executable": false,
@@ -1979,6 +2135,12 @@
       "path": "backend/app/services/monthly_close/service_statement.py",
       "sha256": "a72e307cf44384c26576cec5f6f60e9f6e01fb0104442f2fc05c7cf36498dea2",
       "size": 13387
+    },
+    {
+      "executable": false,
+      "path": "backend/app/services/monthly_close/settlement_recovery.py",
+      "sha256": "e3492ef600f6e76434be32c7b3cf526e36529657a3aac43261f2712c2fc9d760",
+      "size": 12124
     },
     {
       "executable": false,
@@ -2001,20 +2163,20 @@
     {
       "executable": false,
       "path": "backend/app/services/monthly_close/streaming.py",
-      "sha256": "f107833f5243092a20ab625d7f69f25dbb9aab5306938e7229f51c26048d863f",
-      "size": 1998
+      "sha256": "fb833ef8e63e9967e1fe38511c202a120492d93afdd33d4a8d73017f5ada7619",
+      "size": 2341
     },
     {
       "executable": false,
       "path": "backend/app/services/monthly_close/task_chat.py",
-      "sha256": "9dc89687ced7308fcca374799099fd0557c11b8eb8d4586aa966ed2c732fad59",
-      "size": 7468
+      "sha256": "d5607b93e1612a73412a75f5c0eba55e57454f66f66e099d94d82af1fe57fc1d",
+      "size": 7480
     },
     {
       "executable": false,
       "path": "backend/app/services/monthly_close/task_delivery.py",
-      "sha256": "9acb262ae2ff911cc52126c5e5865be8648b2a4247cba374eaa5136c11d52434",
-      "size": 24377
+      "sha256": "c0ecbd6e0ca18f032e9ff01614a067a8238710b5f05e3ff985492d1535d8c195",
+      "size": 27558
     },
     {
       "executable": false,
@@ -2025,8 +2187,8 @@
     {
       "executable": false,
       "path": "backend/app/services/monthly_close/task_planner.py",
-      "sha256": "c28a1c4cee50d02a5db69677581217202beb9c2f9582968a1c2957d9bc834e2b",
-      "size": 24322
+      "sha256": "75ca5b0830e64054f8c72632b7b245c6e24e677713fb0668073d068e8f584bdb",
+      "size": 24433
     },
     {
       "executable": false,
@@ -2043,20 +2205,26 @@
     {
       "executable": false,
       "path": "backend/app/services/monthly_close/verification.py",
-      "sha256": "4f0cd706d991ee0399fa82d3760736967e8ea88b8d3bf7b45ff5d97f597a700e",
-      "size": 28586
+      "sha256": "23c876d8ed8d541253121c74043d6a91e05007367c5a3f5bae341855ffd83968",
+      "size": 28624
+    },
+    {
+      "executable": false,
+      "path": "backend/app/services/monthly_close/work_progress.py",
+      "sha256": "ce8df4f76d9e193962c8455dd835b0bb6611a9bc355193ec02ef5d11006550c7",
+      "size": 2053
     },
     {
       "executable": false,
       "path": "backend/app/services/monthly_close/work_record_fees.py",
-      "sha256": "732e96d9c3a020a996d87e1f01f5c1af15ec96c110ece541b28142f93c1b6c0e",
-      "size": 11696
+      "sha256": "9876659be285e521c5e1e09c7eb1434c302074e04e2e237e52f7cc549c78a6ed",
+      "size": 13412
     },
     {
       "executable": false,
       "path": "backend/app/services/monthly_close/workflow.py",
-      "sha256": "c0511be0cc149111ae649ab0e0aa4daf578f741d1fb9922978120fa69c3cf06e",
-      "size": 34522
+      "sha256": "10281569a5efb0e07689ec03c8ee35f5388c833e6140eb309720f5d49f00e620",
+      "size": 35058
     },
     {
       "executable": false,
@@ -2085,8 +2253,8 @@
     {
       "executable": false,
       "path": "backend/app/services/order_pricing.py",
-      "sha256": "83388875a5504c0219eca16f1463e5e1defd75733c2411acbbf7f3952ab7a625",
-      "size": 9558
+      "sha256": "f16392c891a0637027e4b5b01445cbf043af9d89dcb4801014a6875e6c1a24fd",
+      "size": 9737
     },
     {
       "executable": false,
@@ -2127,8 +2295,8 @@
     {
       "executable": false,
       "path": "backend/app/services/owner_settlement.py",
-      "sha256": "3dc6b69bf4ee0a1b01f56332c879c0a02ef5d20d537b36a607d0a59228dead37",
-      "size": 26396
+      "sha256": "407652b062adab68d8d771599eca43bbff2e5fcc9a9829e980d308f7d156e06a",
+      "size": 26535
     },
     {
       "executable": false,
@@ -2151,8 +2319,8 @@
     {
       "executable": false,
       "path": "backend/app/services/reconciliation_policy.py",
-      "sha256": "c4a4d15e4a6a422f40072129db1014cb3a8b368de51fbc77403649d1345b3642",
-      "size": 2127
+      "sha256": "aa4ba18949f9c7f82ba54d975ff5ddde2454d0835dcdc57e1fe4ec9c3458af92",
+      "size": 4157
     },
     {
       "executable": false,
@@ -2163,8 +2331,8 @@
     {
       "executable": false,
       "path": "backend/app/services/room_availability.py",
-      "sha256": "fbd2574510a4137b9a66e6c6a58052283a769099a6e03037015700f760b9d74b",
-      "size": 14512
+      "sha256": "a114957042c93d45ecb8a81ef5ad0da8ee3113c6db34c8b00914606046a2351e",
+      "size": 14557
     },
     {
       "executable": false,
@@ -2175,14 +2343,14 @@
     {
       "executable": false,
       "path": "backend/app/services/service_fee_ledger.py",
-      "sha256": "f83240a4ed5f31784f82a80421a4c5cc7b97e5eb284268cadea02163af49de48",
-      "size": 4867
+      "sha256": "41540c61645069d859b0aa1f134774f3885c796d3d27ca41ed132874e80b6051",
+      "size": 5092
     },
     {
       "executable": false,
       "path": "backend/app/services/service_fee_reconciliation.py",
-      "sha256": "7bb0d56f79bda387c92278cb66ea24ce141dae204cc4560b2b478fa7876c6be8",
-      "size": 28104
+      "sha256": "5915a1fe4ec6b5ec18e60fa7fcb7af2887acaf3cf129b64bdbffde9b6b19c629",
+      "size": 28493
     },
     {
       "executable": false,
@@ -2192,9 +2360,15 @@
     },
     {
       "executable": false,
+      "path": "backend/app/services/settlement_fee_adjustments.py",
+      "sha256": "c6600a313cda3d1dd505b9acb2000ebf755a2961acd5cfcff628d7fd2a299bc6",
+      "size": 3595
+    },
+    {
+      "executable": false,
       "path": "backend/app/services/settlement_fee_export.py",
-      "sha256": "87b9e0ac84c2ad0dec12fc95c93434479465fc7602b8208de1a44ecbefc41ad6",
-      "size": 4744
+      "sha256": "b88833e5243ce3cf9f74b6f3b19a996780fd8b90677ac1d9110d8913fbad2862",
+      "size": 9207
     },
     {
       "executable": false,
@@ -2205,8 +2379,8 @@
     {
       "executable": false,
       "path": "backend/app/services/settlement_preflight.py",
-      "sha256": "b6c0d4425694b2a3ed7f902e0f369d25a8088075748fca8562f2033e55494909",
-      "size": 12383
+      "sha256": "b654c9a21cefc3efd338bd5819aa475968cf8698dc0fe5bd6427fa757c488b5a",
+      "size": 13183
     },
     {
       "executable": false,
@@ -2229,8 +2403,8 @@
     {
       "executable": false,
       "path": "backend/app/services/stay_group.py",
-      "sha256": "11c9ce7acbb29aa68c922eb9de058277cb2ec68f0f926f5d634dff458c9640b8",
-      "size": 29968
+      "sha256": "edf253cd4cf4345ba8db75c2d3b94c624e1c0d13d55de46d74b686ade7268f59",
+      "size": 30009
     },
     {
       "executable": false,
@@ -2499,8 +2673,8 @@
     {
       "executable": false,
       "path": "frontend/app/(dashboard)/finance/monthly-close/page.tsx",
-      "sha256": "0a21b4798b3511b3d346fdad492b7eeb3af5af3a5f5110a729011e41810d9ccf",
-      "size": 40522
+      "sha256": "2ad7714c349336c312f436b8db55cc946beb117b7a1e51f2dddbe769bafe4b41",
+      "size": 41967
     },
     {
       "executable": false,
@@ -2559,8 +2733,8 @@
     {
       "executable": false,
       "path": "frontend/app/(dashboard)/orders/new/page.tsx",
-      "sha256": "2cdf10db2045832dd06dd1da29f393dfbf8367fe37ac6d4c3562b15424cc037e",
-      "size": 16262
+      "sha256": "2efb718c0c762a79dc07cb9c0e2157ca7479f2acf7f83f2f085bd6de001b2bc3",
+      "size": 17122
     },
     {
       "executable": false,
@@ -2577,8 +2751,8 @@
     {
       "executable": false,
       "path": "frontend/app/(dashboard)/settlements/page.tsx",
-      "sha256": "6b8e81eb455cbda269b749579bd807b6a2991b2528739391da9f4b45a8ae057f",
-      "size": 25382
+      "sha256": "bf1305e389df9c6a1f2ee64ced499ffb20bb5f355997341ce57c257d1406599f",
+      "size": 27816
     },
     {
       "executable": false,
@@ -2763,14 +2937,14 @@
     {
       "executable": false,
       "path": "frontend/app/owner/settlements/SettlementDetailView.tsx",
-      "sha256": "afe455e017f20c18404cb95f28741b16373d550ea34d1215fb42e07bf1913623",
-      "size": 12222
+      "sha256": "4ae9d1f49c3ab2595c01eb710ffb486cc2f31e2c153dd484e89025ea801c87e1",
+      "size": 11506
     },
     {
       "executable": false,
       "path": "frontend/app/owner/settlements/page.tsx",
-      "sha256": "a5da099fa4af886ebb8f3a13a23379e33dac3c26e97fb8f54f144c28a53f2040",
-      "size": 6010
+      "sha256": "e81a86f41962fd048b3b3b63a0a9d25dac0c236a4c011ff5daaaa5e1d9fada4e",
+      "size": 6026
     },
     {
       "executable": false,
@@ -3015,8 +3189,8 @@
     {
       "executable": false,
       "path": "frontend/components/monthly-close/CleaningWorkChatReply.tsx",
-      "sha256": "ab035c216ebfe315926189165f8d0b815327ad2234212d527823067eb8aa2697",
-      "size": 7835
+      "sha256": "a2ff9de0317e1db1ef96e05d572d8da1d14459f93ca937c295e919c8f1e3a13e",
+      "size": 8819
     },
     {
       "executable": false,
@@ -3027,14 +3201,14 @@
     {
       "executable": false,
       "path": "frontend/components/monthly-close/CleaningWorkLogWorkspace.tsx",
-      "sha256": "b9125d0cc3a5d739eb5d8632271fee6f6cc32116bc7b7d43f0eeef17943b4490",
-      "size": 10776
+      "sha256": "fae02138561a35dd7b186ea7c1cbb35635a6d967c69185cf92d7ed65fafe1715",
+      "size": 11613
     },
     {
       "executable": false,
       "path": "frontend/components/monthly-close/CleaningWorkResolutionReview.tsx",
-      "sha256": "f676c61a32062349a728f58069d7d0155883965e5194ebe348e18ddc23abfcbe",
-      "size": 6025
+      "sha256": "d6719e04fc6c9870ab228086b6138faf28a4c8ceb5833371814c6efdcda44f06",
+      "size": 6158
     },
     {
       "executable": false,
@@ -3057,8 +3231,8 @@
     {
       "executable": false,
       "path": "frontend/components/monthly-close/CurrentStepPanel.tsx",
-      "sha256": "d868fd2860368e99bd376341dcabd375b9916340a6a67519ab9c0e6bc76665ca",
-      "size": 27523
+      "sha256": "23ac772a7778becf2c31c932ee8c80d9971e85fcd771f52321a55957e13e5249",
+      "size": 27869
     },
     {
       "executable": false,
@@ -3069,20 +3243,20 @@
     {
       "executable": false,
       "path": "frontend/components/monthly-close/ExecutionReceipt.tsx",
-      "sha256": "d21298cc07eee46080d5a87b65a7f28c6a5d9f2b3b051593f397186174c669c8",
-      "size": 2449
+      "sha256": "dfc48f9975e5c3df71f5aa53dedb6801678b863b85f765f2157f492e7d94ebd5",
+      "size": 2488
     },
     {
       "executable": false,
       "path": "frontend/components/monthly-close/FinancialCaseReply.tsx",
-      "sha256": "186dce9ffae13884eb516a582bad02e21339522c0be631197562ec22418063ee",
-      "size": 14907
+      "sha256": "0dc9f9db81823185c2acd9120cf3ad74efe60faf3f1265376c4e0f634715b6eb",
+      "size": 16587
     },
     {
       "executable": false,
       "path": "frontend/components/monthly-close/FinishMonthReview.tsx",
-      "sha256": "95831f156eb5926ccb6901b54a10f38bcbff5dba16ada2bc6f365ff415b913fd",
-      "size": 10986
+      "sha256": "0f41793f139483fc70dd3a39ecb15c9feb18ad5b7ffef87c85cac27fef239a5a",
+      "size": 6286
     },
     {
       "executable": false,
@@ -3105,14 +3279,32 @@
     {
       "executable": false,
       "path": "frontend/components/monthly-close/MonthOutcome.tsx",
-      "sha256": "face6f813c53736c07b8a4429fdf526a7ccda4950a3d340ce37227300ac0067b",
-      "size": 2302
+      "sha256": "aea73d6afa765503c1ea0718a776a98d41511ba459c65e51c498d0269c9ca547",
+      "size": 2480
     },
     {
       "executable": false,
       "path": "frontend/components/monthly-close/MonthlyCloseControlTower.tsx",
-      "sha256": "6ba7dbee24ad89dbd810e683ea101506a7b69593953fbff56231aa743ecbd429",
-      "size": 3684
+      "sha256": "b18112464a4f0d54f8e24ad8656a1073e078f4d7c050b108e8ecfa0b3d3e7e63",
+      "size": 3752
+    },
+    {
+      "executable": false,
+      "path": "frontend/components/monthly-close/MonthlyCloseHelp.module.css",
+      "sha256": "da62a9a090f34d1e84a1369fe2ed81e336127a28a9c6a8dcf15d1c2288ab404f",
+      "size": 1620
+    },
+    {
+      "executable": false,
+      "path": "frontend/components/monthly-close/MonthlyCloseHelp.tsx",
+      "sha256": "cd6885337ce2dfbe51445c1c4f47500b6384a26f4a4afc82cfd9542461cc6a93",
+      "size": 17286
+    },
+    {
+      "executable": false,
+      "path": "frontend/components/monthly-close/MonthlyCloseNextStep.tsx",
+      "sha256": "b8627c31bf69076a8ec6a3c638a1aa4722cefd0836837e41a1e83d04cb127071",
+      "size": 968
     },
     {
       "executable": false,
@@ -3135,14 +3327,14 @@
     {
       "executable": false,
       "path": "frontend/components/monthly-close/MonthlyCloseWorkspace.module.css",
-      "sha256": "50afe7af65d85ae70b878d2da36846c789ec39c29311cacd4ff51f4edbeb34c8",
-      "size": 7972
+      "sha256": "9134272d5dc8b992e6ab205e9184b12a1df18e1bd6149195c3b61e264afa520e",
+      "size": 10369
     },
     {
       "executable": false,
       "path": "frontend/components/monthly-close/MonthlyCloseWorkspace.tsx",
-      "sha256": "693d3496b65682e10b3f167a7466a428380ba8ac509a39370c8129f2684d1e53",
-      "size": 57615
+      "sha256": "ce4d450623c280c7a872f958112f4e516a08f3622521ad7b4fff49b7f5159bab",
+      "size": 67194
     },
     {
       "executable": false,
@@ -3159,8 +3351,8 @@
     {
       "executable": false,
       "path": "frontend/components/monthly-close/OtaStatementPanel.tsx",
-      "sha256": "f076c51fb0c0e9132aec0eaff888077d776717d5983c99854d3a4e40d795ffe8",
-      "size": 43452
+      "sha256": "6096c1ea944bc0abb1c413a56225601ae55326e1bb9786b55155996b15962493",
+      "size": 47372
     },
     {
       "executable": false,
@@ -3171,8 +3363,8 @@
     {
       "executable": false,
       "path": "frontend/components/monthly-close/ProposalCard.tsx",
-      "sha256": "dd2d1985c28ef63777ea08f4a4f6f8e8e3ea35f26767846f427a7303ecfc9c20",
-      "size": 24766
+      "sha256": "acc2c383a9b406ae4de598c6cf21eafeee13e9d10e291521a38b1af489b21d26",
+      "size": 26431
     },
     {
       "executable": false,
@@ -3188,6 +3380,18 @@
     },
     {
       "executable": false,
+      "path": "frontend/components/monthly-close/ReconciliationPacketReply.tsx",
+      "sha256": "d666642e43c193961260db72680ebb8b85797fa1b3482f55df8e0b89fb60f5bd",
+      "size": 7982
+    },
+    {
+      "executable": false,
+      "path": "frontend/components/monthly-close/ReconciliationProgress.tsx",
+      "sha256": "86dfd4adcd2d2ee62e8519421041d4163a1800cc542a30ac46fa6a059843e8bb",
+      "size": 2305
+    },
+    {
+      "executable": false,
       "path": "frontend/components/monthly-close/ReturnToMonthlyClose.tsx",
       "sha256": "e0018bf968f4797479e138f5ea6c11a217d2c3d0121a56276a48ffdefcbf21cb",
       "size": 753
@@ -3195,14 +3399,14 @@
     {
       "executable": false,
       "path": "frontend/components/monthly-close/ServiceMappingReview.tsx",
-      "sha256": "381b8c73889500dd8ac0f8b6839e8d7c3cc5e2638e36d8de25f253ab056b0a00",
-      "size": 10992
+      "sha256": "9f1f0e009ded1f7adfb664bd9a2fd5cbb3402694b352a171d7782f5b8620eb1c",
+      "size": 11452
     },
     {
       "executable": false,
       "path": "frontend/components/monthly-close/SettlementDelivery.tsx",
-      "sha256": "bde4a7fcdd90527f31f2423fbcc36b22022ea6f9ce6e58f4df500837c7a291f1",
-      "size": 4442
+      "sha256": "6de09b47ddb6694f16ff4e0531e2dadcddefc27b1cfb2287183a2dc6ba46bdae",
+      "size": 4215
     },
     {
       "executable": false,
@@ -3225,8 +3429,8 @@
     {
       "executable": false,
       "path": "frontend/components/monthly-close/SourceProposalCard.tsx",
-      "sha256": "704d79c0e879bba6f3b71e798c2c1ad860a62fb286fe7ac3f0404fc914d2d692",
-      "size": 5363
+      "sha256": "26c2414fc33c7182a5a2d20ba27469393bc7f472cb410e438dadc1f8a1e15d53",
+      "size": 6058
     },
     {
       "executable": false,
@@ -3242,15 +3446,27 @@
     },
     {
       "executable": false,
+      "path": "frontend/components/monthly-close/ThreeStepReview.module.css",
+      "sha256": "10bd91b06550320a2bb3f603748cd4143391f87db1162a2b4464a87acebde84d",
+      "size": 3239
+    },
+    {
+      "executable": false,
+      "path": "frontend/components/monthly-close/ThreeStepReview.tsx",
+      "sha256": "d6f76a9db54df675eca7ed1ce0e8a8b669313ed3c756e29e13d552320bc28c6a",
+      "size": 9234
+    },
+    {
+      "executable": false,
       "path": "frontend/components/monthly-close/UtilityMappingReview.tsx",
-      "sha256": "d6e5fc2db85a7db8cb2746c0d0d3f829da8e70a651e97aeef985e08ebe0935f2",
-      "size": 10054
+      "sha256": "983775f122b4daac1da587f36e7a9bf4904feb1cc3bf643e48d0b34f36c1338e",
+      "size": 10261
     },
     {
       "executable": false,
       "path": "frontend/components/monthly-close/WorkTimeline.tsx",
-      "sha256": "176daa8c12f7b5ceb76991a2adefdfae5c930f939e336487ee58c170e5b62c8e",
-      "size": 15300
+      "sha256": "956ee41e03c5cfce689d11fead9fabeff631f8022430c60f8ac4a8091cb1a665",
+      "size": 16167
     },
     {
       "executable": false,
@@ -3273,8 +3489,8 @@
     {
       "executable": false,
       "path": "frontend/components/orders/EditOrderModal.tsx",
-      "sha256": "568d7ce71d771bfd6a355c411a283e9039e1a62324b9d5103a27aa99a0868ab3",
-      "size": 19103
+      "sha256": "ba684cff510d9a5308bb45ccdb283a921508cf682215a8ab61e2bc57153eed4b",
+      "size": 20229
     },
     {
       "executable": false,
@@ -3341,6 +3557,12 @@
       "path": "frontend/components/orders/TransferRoomModal.tsx",
       "sha256": "4ef1c45c48dbb9a7d5a2e48caaf0fa0ed3d53bceddca39b2946c519e2750a5f2",
       "size": 10342
+    },
+    {
+      "executable": false,
+      "path": "frontend/components/orders/confirmOrderCreation.tsx",
+      "sha256": "1a5b8f3ff847f6ab1b1dfdb47096f7ed3c1569e013ac1ef0044cbfa828391b76",
+      "size": 3258
     },
     {
       "executable": false,
@@ -3459,20 +3681,26 @@
     {
       "executable": false,
       "path": "frontend/components/rooms/GanttView.tsx",
-      "sha256": "702ebfc2dbf4c7e79d8957fcc8016b708f5b322d9ebab9ba17cc218a5fbf2721",
-      "size": 82620
+      "sha256": "5df0ef71e5016dbab644128ca61044f5e4ebd211d459463903f6da3a5772712a",
+      "size": 83774
     },
     {
       "executable": false,
       "path": "frontend/components/rooms/MobileGantt.tsx",
-      "sha256": "7774218ef34487a07647e5f2a8a804c883d36543f85e5e0b074717615cc4a6f5",
-      "size": 36248
+      "sha256": "07498f490671fc895cd40c8570922e3fc3c9524076e97572f377afe72b4d8bfa",
+      "size": 37271
     },
     {
       "executable": false,
       "path": "frontend/components/rooms/OrderQuickSearch.tsx",
       "sha256": "59adfe3e26193dd52da4993258cf7c3e48829f2d6bf6aa1be31f25336700115d",
       "size": 3961
+    },
+    {
+      "executable": false,
+      "path": "frontend/components/rooms/OverdueRoomNotice.tsx",
+      "sha256": "2544a2711a8b5edc6a1fb4ad55db4c82470c8aab81ce508b67ea39884deaf061",
+      "size": 1122
     },
     {
       "executable": false,
@@ -3489,8 +3717,8 @@
     {
       "executable": false,
       "path": "frontend/components/rooms/QuickCreateOrderModal.tsx",
-      "sha256": "a2035e62889737c7dd790fca3d91d3ef9cf2d5e3eacd61ba52ec6316abd9053b",
-      "size": 14199
+      "sha256": "4719c193d85683d69d965e6806773d8aa16e1ad7a8a4511689d0b306d453c769",
+      "size": 14861
     },
     {
       "executable": false,
@@ -3801,8 +4029,8 @@
     {
       "executable": false,
       "path": "frontend/hooks/useMonthlyClose.ts",
-      "sha256": "bf6d732b01ed142b279164959d045cac2dd6cd9cde1576030c7aacefaae5e1b8",
-      "size": 24038
+      "sha256": "4baffff28d6ae5666a0c14c9489fac79c62c918473763c90caff1abf7226ef31",
+      "size": 24854
     },
     {
       "executable": false,
@@ -3867,14 +4095,14 @@
     {
       "executable": false,
       "path": "frontend/lib/api-errors.ts",
-      "sha256": "f58cb2cc7e7a8f3a0d03ceedb045013be398aa61d52a710040994e3d13d4ba18",
-      "size": 2772
+      "sha256": "644cde4466140f22c179c9ac539c2698ff05427e68b5f74403a5b035b83d3bfd",
+      "size": 3092
     },
     {
       "executable": false,
       "path": "frontend/lib/api.ts",
-      "sha256": "8ae3b20ab69ff1a757fad3a2f16445b7df2471d6ccac01bc4e0504e5cf1aff11",
-      "size": 64697
+      "sha256": "6fb5ca2b263066282d1fc88427310683885f19f41a4aa5d41277bff0d535fe99",
+      "size": 67789
     },
     {
       "executable": false,
@@ -3957,8 +4185,8 @@
     {
       "executable": false,
       "path": "frontend/lib/create-orders.ts",
-      "sha256": "b03cf97bee4ca5a2549bb7ef2df2967f0f627abcaed6ceb475acb3480cd2cdb7",
-      "size": 2088
+      "sha256": "9af265aa7e743453a688e1ea76f5bb2f60c560268729837337ebdd61b78029e1",
+      "size": 3659
     },
     {
       "executable": false,
@@ -4023,8 +4251,8 @@
     {
       "executable": false,
       "path": "frontend/lib/gantt-window.ts",
-      "sha256": "a13793372c49db7bed00193792c3da3ad33a42a19cbafd6cc925a26acca14b21",
-      "size": 4448
+      "sha256": "b483010def2933f9a77a7c1d98a4a73762ee2311d50ae29b3cc284eced49f1a7",
+      "size": 4567
     },
     {
       "executable": false,
@@ -4041,14 +4269,14 @@
     {
       "executable": false,
       "path": "frontend/lib/monthly-close-actions.ts",
-      "sha256": "e47af158d2833d22dd0849c6a9b5ba5b608708ff6c9914d625325e9924dc36d5",
-      "size": 4376
+      "sha256": "b36c7e5aac57fddd4781aa65d1ecc806ed07c9d4b1691f023f014947d3335ae3",
+      "size": 4441
     },
     {
       "executable": false,
       "path": "frontend/lib/monthly-close-chat-stream.ts",
-      "sha256": "f85c9b6f28cccfe948b33a2df7bd8a10485184dce37d3c85ca36f643d657a555",
-      "size": 1594
+      "sha256": "6f684dd21111d9361c6cbd6fe09af4ea6c6887429c19c81625c5d3f968ea0fcd",
+      "size": 1713
     },
     {
       "executable": false,
@@ -4058,15 +4286,21 @@
     },
     {
       "executable": false,
+      "path": "frontend/lib/monthly-close-current-result.ts",
+      "sha256": "5341b58cc3cb5e264a09d811bf9996f8a670e593a9b7ae271d1946c2e127ed0d",
+      "size": 1116
+    },
+    {
+      "executable": false,
       "path": "frontend/lib/monthly-close-experience.ts",
-      "sha256": "e8c205f1883b3910facc640264fda14a7cdc5cbfd9d5cffd6ae12780179e60d7",
-      "size": 2716
+      "sha256": "6d4e9f35b7693c146fc9dd670dc41c2c224fd7a574194727ff963c54860a9ac8",
+      "size": 3605
     },
     {
       "executable": false,
       "path": "frontend/lib/monthly-close-presentation.ts",
-      "sha256": "f6e081321b86f58d7ddbbcd646b24943a7b2003d3b0eeea58180bb2ad420d3ee",
-      "size": 5936
+      "sha256": "870ad579c224cccbf8f7cf169f550b79a07d2b24c5153ab2a05a7893421d1ea1",
+      "size": 6636
     },
     {
       "executable": false,
@@ -4076,9 +4310,21 @@
     },
     {
       "executable": false,
+      "path": "frontend/lib/monthly-close-review.ts",
+      "sha256": "1a1dc71e971c905bd4530bc50c13991677c59e519b8172dfc85e2431c0de3658",
+      "size": 698
+    },
+    {
+      "executable": false,
       "path": "frontend/lib/monthly-close-source-queue.ts",
       "sha256": "7acb89d5682985035bf5a9f2855fda73fd9c6b8d43b33c1d93277192ccb74f6a",
       "size": 3186
+    },
+    {
+      "executable": false,
+      "path": "frontend/lib/monthly-close-support.ts",
+      "sha256": "b6ed728f4d91e053cdc84d5cb358f63de5f8bc9c004013b0721109dc4bda2a47",
+      "size": 1244
     },
     {
       "executable": false,
@@ -4089,8 +4335,8 @@
     {
       "executable": false,
       "path": "frontend/lib/monthly-close.ts",
-      "sha256": "c351fb9dc0775b06100da60b391341a3ab9b93dbc3cbf994d9cd464b0fd0d5b1",
-      "size": 26088
+      "sha256": "befb0ff6aa06d028d55d6c6a85ad6c0a5ee074ea18a39a67185921bee7c6a6d5",
+      "size": 27860
     },
     {
       "executable": false,
@@ -4185,8 +4431,8 @@
     {
       "executable": false,
       "path": "frontend/lib/owner-settlement-terms.ts",
-      "sha256": "152d45c51871ac8f1e2585d717117c13b4eef81ada1c469d4abcf5bf6ea087d6",
-      "size": 1671
+      "sha256": "621b16288fdaf7f5f1e5dc8a7ac6e6d20b4e686da9caaede3e1d0096d43b4548",
+      "size": 1688
     },
     {
       "executable": false,
@@ -4299,8 +4545,8 @@
     {
       "executable": false,
       "path": "frontend/lib/types.ts",
-      "sha256": "3fb7d77258e211bf46312e420644dd20b137cd7f004bf313162eee4896943219",
-      "size": 42564
+      "sha256": "534918141b643ba94d12e55de1cfd7e6317f0ffab38c1295a5dbfc145634c3d4",
+      "size": 42865
     },
     {
       "executable": false,
@@ -4311,8 +4557,8 @@
     {
       "executable": false,
       "path": "frontend/lib/utils.ts",
-      "sha256": "6ae7f5d08a3fddd6557a2d2561f9a8639596151036ff5741a2742e5b3b734d78",
-      "size": 3271
+      "sha256": "e5ce1f6c6cd62d630a33dc39b343cd8faf6d3dff2958311c3165063505e74d61",
+      "size": 2979
     },
     {
       "executable": false,
@@ -4453,6 +4699,6 @@
       "size": 920
     }
   ],
-  "revision": "a44577aca36644124ca3d10fe2818a14ade0b614",
+  "revision": "98c947f898f5bc552017a352817a83d0b8b1a265",
   "version": 1
 }

@@ -14,7 +14,6 @@ from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.core.cleaning_pricing import OWNER_SELF_CHECKOUT_CLEANING_FEE
 from app.core.datetime_helpers import now_cn
 from app.core.trial_tags import trial_tag_for_notes
 from app.services import service_fee_ledger
@@ -33,6 +32,13 @@ _RESTORABLE = (
     RoomStatus.occupied, RoomStatus.reserved,
     RoomStatus.pending_clean, RoomStatus.cleaning,
 )
+
+
+def _cancelled_task_result(task):
+    return {"cancelled": True, "room_name": None, "room_id": task.room_id,
+            "order_id": task.order_id, "already_done": True, "guest_name": None,
+            "deposit": None, "task_found": True, "has_order": False,
+            "blocked": True, "busy_room_name": None, "already_started": False}
 
 
 def _add_service_expense(
@@ -156,12 +162,17 @@ async def add_checkout_cleaning_charge(
 
     fees: ServiceFees = await get_service_fees(db)
     order = await db.scalar(select(Order).where(Order.order_id == order_id))
-    owner_self = order is not None and is_owner_self_order(order)
-    from app.services.reconciliation_policy import service_cost_payer
-    payer = service_cost_payer(order)
-    checkout_cleaning_fee = (
-        OWNER_SELF_CHECKOUT_CLEANING_FEE if owner_self else fees.checkout_cleaning_fee
+    from app.services.continuation_fees import (
+        continuation_fee_context, consolidate_continuation_fees,
     )
+    continuation = await continuation_fee_context(db, order, room)
+    if continuation and continuation["final"].order_id != order_id:
+        # A late completion of an old task must not charge an intermediate leg.
+        return False
+    await consolidate_continuation_fees(db, room, continuation)
+    from app.services.reconciliation_policy import service_cost_payer, checkout_cleaning_amount
+    payer = service_cost_payer(order)
+    checkout_cleaning_fee = checkout_cleaning_amount(order, fees)
     beds = room.beds
     nights = await _room_nights(db, order_id, room.room_id)
     expense_date = await _final_checkout_date(db, order_id, room.room_id)
@@ -374,7 +385,11 @@ async def start_cleaning_for_task(
     now = datetime.now(timezone.utc)
     task: Task | None = None
     if task_id:
-        task = (await db.execute(select(Task).where(Task.task_id == task_id))).scalar_one_or_none()
+        task = (await db.execute(select(Task).where(Task.task_id == task_id)
+                                 .with_for_update())).scalar_one_or_none()
+
+    if task is not None and task.status == TaskStatus.cancelled:
+        return _cancelled_task_result(task)
 
     if task is None or task.task_type != TaskType.cleaning:
         return {"task_found": False, "room_name": None, "room_id": room_id,
@@ -483,9 +498,12 @@ async def complete_cleaning_for_task(
     already_done = False
     target_room_id = room_id
     if task is not None and task.task_type == TaskType.cleaning:
+        if task.status == TaskStatus.cancelled:
+            return _cancelled_task_result(task)
         res = await db.execute(
             update(Task)
-            .where(Task.task_id == task.task_id, Task.status != TaskStatus.done)
+            .where(Task.task_id == task.task_id,
+                   Task.status.notin_((TaskStatus.done, TaskStatus.cancelled)))
             .values(
                 status=TaskStatus.done,
                 review_status=ReviewStatus.approved.value,
@@ -494,6 +512,10 @@ async def complete_cleaning_for_task(
             )
         )
         already_done = (res.rowcount or 0) == 0
+        if already_done:
+            await db.refresh(task)
+            if task.status == TaskStatus.cancelled:
+                return _cancelled_task_result(task)
         target_room_id = task.room_id or room_id
 
     room_name: str | None = None
@@ -510,7 +532,8 @@ async def complete_cleaning_for_task(
             if not already_done and task is not None and task.task_type == TaskType.cleaning:
                 try:
                     await add_checkout_cleaning_charge(db, room=room, order_id=task.order_id)
-                except service_fee_ledger.CheckoutServiceFeeWrongMonthError:
+                except (service_fee_ledger.CheckoutServiceFeeWrongMonthError,
+                        service_fee_ledger.CheckoutExpenseRecognitionError):
                     await db.rollback()
                     raise
 

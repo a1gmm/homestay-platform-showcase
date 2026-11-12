@@ -34,6 +34,9 @@ def is_identity_diagnostic(text):
 
 
 def wants_order_query(text):
+    from .confirmed_order_facts import wants
+    if wants(text):
+        return False
     # Identity diagnostics carry their own follow-up target and controlled
     # correction route. Do not replace that history with a financial scope.
     if re.search(r'身份|身份证|入住人|平台订单号|平台单号', text):
@@ -90,11 +93,15 @@ async def query(db, cycle, actor, text, run_id):
     if not selected:
         # Only an explicitly broad question may select across the month. An
         # unmatched guest or room must never fall back to every problem order.
-        broad = re.fullmatch(r'[\s，。？?]*(?:(?:请|帮我|本月|这个月|当前|现在|还有|还剩|剩下|剩余|全部|所有|查看|看看|查询|列出|列一下|的|和|、|哪些|什么|有|问题|订单|客人|待处理|未处理|待核实|未核实|待确认|未确认|需要处理|需要核实|需要确认)|(?:20\d{2}[-年])?\d{1,2}月|20\d{2}-\d{2})+[\s，。？?]*', text)
+        offline_broad = re.fullmatch(r'(?:查询|查看|列出)(?:(?:20\d{2}年)?\d{1,2}月|本月|当前月份)?(?:全部|所有)线下(?:收款核对清单|订单)(?:[，,]包含(?:所有)?零房费订单)?[。.]?', text.strip())
+        broad = offline_broad or re.fullmatch(r'[\s，。？?]*(?:(?:请|帮我|本月|这个月|当前|现在|还有|还剩|剩下|剩余|全部|所有|查看|看看|查询|列出|列一下|的|和|、|哪些|什么|有|问题|订单|客人|待处理|未处理|待核实|未核实|待确认|未确认|需要处理|需要核实|需要确认)|(?:20\d{2}[-年])?\d{1,2}月|20\d{2}-\d{2})+[\s，。？?]*', text)
         if not broad:
             raise ValueError('请提供当前月份的客人姓名、房号或订单编号，才能列出对应的订单。')
         selected = ctx['orders']
-    if re.search(r'问题|待处理|未处理|待核实|未核实|待确认|未确认|需要处理|需要核实|需要确认|剩下|剩余', text):
+        if offline_broad:
+            from .confirmed_order_facts import OFFLINE
+            selected = [o for o in selected if o.channel in OFFLINE and not o.is_deleted]
+    if not explicit and re.search(r'问题|待处理|未处理|待核实|未核实|待确认|未确认|需要处理|需要核实|需要确认|剩下|剩余', text):
         selected = [order for order in selected if issues.get(order.order_id)]
     if len(selected) > 500:
         raise ValueError('这次查询超过 500 笔订单，请按客人或房号缩小范围后再处理。')
@@ -108,6 +115,10 @@ async def query(db, cycle, actor, text, run_id):
         rows = issues.get(order.order_id, [])
         descriptions = list(dict.fromkeys(item['message'] for item in rows))
         amount = f'当前订单房费 {order.actual_price:.2f} 元。' if order.actual_price is not None else '当前订单房费未登记。'
+        from app.services.reconciliation_policy import confirmed_receipt_amount
+        receipt = confirmed_receipt_amount(order, [r for r in ctx['rooms'] if r.order_id == order.order_id], ctx['payments'], ctx['refunds'], cycle.billing_month)
+        if receipt is not None:
+            amount += f'管理员已确认累计实收 {receipt:.2f} 元；收款日期、方式和凭证待补，尚未新增收款流水。'
         details.append(dict(label=label(ctx, order), value=(amount + ('；'.join(descriptions) or '当前检查未发现关联的待处理事项。'))[:1900]))
     return dict(order_scope=scope.model_dump(), details=details, export_ready=False,
                 message=f'本次列出 {len(ids)} 笔订单。下方是这次查询的具体范围；继续说“这些按当前系统为准”或明确费用承担规则时，会先生成对应订单的方案。' if ids else '本次查询没有找到符合条件的订单，请核对月份、姓名、房号和问题范围。')

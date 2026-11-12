@@ -262,6 +262,9 @@ async def completed_cycle_is_fresh(
     """
     if cycle.status != "completed":
         return False
+    from app.services.monthly_close.owner_completion import is_owner_completion, is_fresh
+    if is_owner_completion(cycle):
+        return await is_fresh(db, cycle)
     snapshot_hashes = _completed_snapshot_hashes(cycle)
     if snapshot_hashes is None:
         return False
@@ -320,8 +323,13 @@ async def build_cycle_view(
         (item["step_key"] for item in steps if item["status"] != "confirmed"), None
     )
     effective_status = cycle.status
-    if cycle.status == "completed" and first_incomplete is not None:
-        effective_status = "needs_recheck"
+    if cycle.status == "completed":
+        from app.services.monthly_close.owner_completion import is_owner_completion, is_fresh
+        if is_owner_completion(cycle):
+            effective_status = "completed" if await is_fresh(db, cycle) else "needs_recheck"
+            first_incomplete = None if effective_status == "completed" else "preflight"
+        elif first_incomplete is not None:
+            effective_status = "needs_recheck"
 
     requirement_rows = list(
         (
@@ -397,7 +405,7 @@ async def build_cycle_view(
         "status": effective_status,
         "stored_status": cycle.status,
         "current_step": first_incomplete,
-        "progress": sum(item["status"] == "confirmed" for item in steps),
+        "progress": 9 if effective_status == "completed" else sum(item["status"] == "confirmed" for item in steps),
         "steps": steps,
         "sources": sources,
         "completed_by": cycle.completed_by,

@@ -17,15 +17,16 @@ const baseColumns = [
 ];
 const evidenceColumn = { title: "原表位置", render: (_: unknown, row: { source_sheet: string; source_row: number }) => `${row.source_sheet} · 第 ${row.source_row} 行` };
 
-export function CleaningWorkLogWorkspace({ billingMonth, documentId, filename, initial, role, onFinished }: {
+export function CleaningWorkLogWorkspace({ billingMonth, documentId, filename, initial, role, onFinished, onReviewFees }: {
   billingMonth: string; documentId: string; filename: string; initial: CleaningWorkComparison;
   role: string; onFinished: () => Promise<unknown>;
+  onReviewFees?: () => Promise<unknown>;
 }) {
   const [report, setReport] = useState(initial);
   const [selected, setSelected] = useState<CleaningWorkComparison["differences"][number] | null>(null);
   const [preview, setPreview] = useState<CleaningWorkPreview | null>(null);
   const [tab, setTab] = useState(() => initial.differences.some((item) => ["table_only", "not_completed"].includes(item.status) && item.table_count === 1) ? "missing" : initial.differences.length ? "remaining" : "history");
-  const [pending, setPending] = useState<"preview" | "confirm" | null>(null);
+  const [pending, setPending] = useState<"preview" | "confirm" | "fees" | null>(null);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   const busy = useRef(false);
@@ -64,13 +65,20 @@ export function CleaningWorkLogWorkspace({ billingMonth, documentId, filename, i
     } finally { busy.current = false; setPending(null); }
   };
   const actionLabel = preview ? uncertain ? "重试确认这批记录" : `确认补齐 ${preview.add_count} 条历史记录` : `预览补齐 ${missing.length} 条记录`;
+  const reviewFees = async () => {
+    if (busy.current || !onReviewFees) return;
+    busy.current = true; setPending("fees"); setError("");
+    try { await onReviewFees(); }
+    catch (cause) { setError(extractErrorMessage(cause, "费用核对暂未完成，记录仍保留，请重试。")); }
+    finally { busy.current = false; setPending(null); }
+  };
   const differenceRows = tab === "missing" ? missing : remaining;
   return <section className={styles.workspace} aria-label="保洁工作记录核对结果" aria-busy={pending !== null}>
     <header className={styles.header}>
       <p className={styles.eyebrow}>{billingMonth} · 保洁记录核对</p>
       <h2>{preview ? "确认这次要补齐的记录" : "按保洁表补齐打扫记录"}</h2>
       <p className={styles.filename}>{filename}</p>
-      <p>按日期、房间和正常／续住打扫对应。以原表为准，忽略超出数量和金额。</p>
+      <p>先核实日期、房间和打扫类型。补齐打扫记录与记入费用分开确认。</p>
     </header>
     {error && <Alert type="error" showIcon message={error} role="alert" />}
     {success && <Alert type="success" showIcon message={success} role="status" />}
@@ -81,7 +89,7 @@ export function CleaningWorkLogWorkspace({ billingMonth, documentId, filename, i
     }} /> : <>
     <dl className={styles.summary}>
       <div><dt>表内记录</dt><dd>{report.record_count}<small>正常 {report.normal_count} · 续住 {report.instay_count}</small></dd></div>
-      <div><dt>已对应</dt><dd>{report.matched_count}<small>核实后有效 {report.effective_record_count ?? report.record_count} 次</small></dd></div>
+      <div><dt>已对应</dt><dd>{report.matched_count}<small>当前计入核对 {report.effective_record_count ?? report.record_count} 次</small></dd></div>
       <div><dt>可补齐</dt><dd>{missing.length}<small>缺少记录或完成依据</small></dd></div>
       <div><dt>需单独核实</dt><dd>{remaining.length}<small>重复、表外或房号问题</small></dd></div>
     </dl>
@@ -106,9 +114,10 @@ export function CleaningWorkLogWorkspace({ billingMonth, documentId, filename, i
       ]} scroll={{ x: 810 }} pagination={{ pageSize: 10, showSizeChanger: false, showTotal: (n) => `共 ${n} 项` }} locale={{ emptyText: tab === "missing" ? "没有可直接补齐的记录，请查看需核实项或已补齐记录。" : "没有需要单独核实的差异。" }} />}
     </>}
     <footer className={styles.footer}>
-      <p role="status">{pending === "preview" ? "正在核对最新记录并生成补齐预览…" : pending === "confirm" ? "正在保存这批记录，请稍候…" : preview ? "确认后保存到本月历史打扫记录，并保留原表依据。" : role !== "admin" ? "只有管理员可以补齐记录。" : missing.length ? "先预览具体记录，再确认补齐。" : remaining.length ? "点击每条差异右侧的“核实并处理”，确认后保存。" : "这份保洁表已核对完成，可查看已处理结果和历史记录。"}</p>
+      <p role="status">{pending === "fees" ? "正在核对这份表对应的续住费用，暂不补账…" : pending === "preview" ? "正在核对最新记录并生成补齐预览…" : pending === "confirm" ? "正在保存这批记录，请稍候…" : preview ? "确认后保存到本月历史打扫记录，并保留原表依据。" : role !== "admin" ? "只有管理员可以补齐记录。" : missing.length ? "先预览具体记录，再确认补齐。" : remaining.length ? "点击每条差异右侧的“核实并处理”，确认后保存。" : "打扫记录已核对完成。下一步核对费用，先查看差异，再确认是否需要补账。"}</p>
       <div className={styles.actions}>
         {preview && <Button disabled={pending !== null || uncertain} onClick={() => setPreview(null)}>返回核对</Button>}
+        {!preview && !missing.length && !remaining.length && onReviewFees && role === "admin" && <Button aria-label="继续核对续住保洁费用" type="primary" size="large" loading={pending === "fees"} disabled={pending !== null} onClick={() => void reviewFees()}>继续核对续住保洁费用</Button>}
         {(preview || missing.length > 0) && <Button aria-label={actionLabel} type="primary" size="large" loading={pending !== null} disabled={role !== "admin" || (!preview && missing.length === 0) || (preview?.add_count === 0)} onClick={() => void (preview ? confirm() : prepare())}>
           {actionLabel}
         </Button>}

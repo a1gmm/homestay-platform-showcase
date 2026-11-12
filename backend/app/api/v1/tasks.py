@@ -473,7 +473,8 @@ async def review_task(task_id: str, body: TaskReviewRequest, db: DBSession, curr
                         await add_checkout_cleaning_charge(
                             db, room=room, order_id=task.order_id
                         )
-                    except service_fee_ledger.CheckoutServiceFeeWrongMonthError as exc:
+                    except (service_fee_ledger.CheckoutServiceFeeWrongMonthError,
+                            service_fee_ledger.CheckoutExpenseRecognitionError) as exc:
                         await db.rollback()
                         raise HTTPException(status_code=409, detail=exc.to_detail()) from exc
             if task.order_id:

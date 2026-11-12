@@ -16,7 +16,7 @@ from app.services.monthly_close.amount_request import amount_request, asks_amoun
 from app.services.monthly_close.cleaning_work_log import (
     ServiceStatementError,
     compare_cleaning_work_log,
-    parse_cleaning_work_log,
+    parse_work_document,
 )
 from app.services.monthly_close.cost_responsibility import (
     asks_cleaning_responsibility,
@@ -147,14 +147,21 @@ def progress_request(text):
     This router can only request a read; it can never approve or generate a write.
     Unrecognized text continues through the existing assistant boundary.
     """
-    if amount := amount_request(text):
-        return amount["focus"]
     value = re.sub(r"\s+", "", text)
+    value = re.sub(r'(?:不要|不用|不必|别|不)(?:修改|执行|补录|补齐|生成|登记)(?:账目|金额|账单|费用|付款)?', '', value)
     if re.search(
-        r"删除|删掉|移除|补齐|补录|执行|批准|确认处理|恢复|撤销|取消方案|改成|修改|直接关账",
+        r"删除|删掉|移除|补齐|(?<!待)补录|执行|批准|确认处理|恢复|撤销|取消方案|改成|改为|修改|直接关账",
         value,
     ):
         return None
+    if re.search(r'查看账单检查|(?:检查|复核|核对).{0,15}(?:全部|所有|其他|各项)(?:费用|业主扣费)', value):
+        return 'preflight'
+    # A direct settlement-status question changes topic even when the user also
+    # mentions platform files, expenses or a separately handled cash workflow.
+    if re.search(r'(?:查看|检查|查询|复查).{0,40}(?:结算前|预检|业主结算|业主账单)', value):
+        return 'preflight' if re.search(r'结算前|预检', value) else 'settlement_review'
+    if amount := amount_request(text):
+        return amount["focus"]
     broad = bool(
         re.search(
             r"还.{0,12}(?:没|差|缺|要|什么|哪些)|其他|剩下|接下来|下一步|然后|整个月|整月|都.{0,6}(?:完|对好)|结束|做完|弄完|没.{0,4}(?:对|核|完)|未.{0,4}(?:对|核|完)|清单",
@@ -231,8 +238,11 @@ async def read_progress(db, cycle, projection, text, focus, *, mode=None, expens
             **base,
             message=f"当前打开的是 {cycle.billing_month}。请先切换到你问的月份，我再按那个月的实际资料核对。",
         )
-    amount = amount_request(text)
-    if (mode == "amount_summary" or asks_amount(text)) and unsupported_amount_scope(text):
+    # A bill audit may ask to verify amounts, bearers and room assignments.
+    # Those words describe what to check, not a filtered amount-total request.
+    settlement_check = focus in {"preflight", "settlement_review", "owner_confirmation"} and mode != "amount_summary"
+    amount = None if settlement_check else amount_request(text)
+    if not settlement_check and (mode == "amount_summary" or asks_amount(text)) and unsupported_amount_scope(text):
         base.update(query_mode="amount_summary")
         return ProgressFacts(**base, message="目前聊天金额查询只能提供当前整月的费用分类合计，暂不支持这次的额外筛选或收入类统计。我不能把整月支出当成你要的结果。请在财务管理中按对应条件核对。")
     if mode == "amount_summary" or amount:
@@ -273,13 +283,11 @@ async def read_progress(db, cycle, projection, text, focus, *, mode=None, expens
             ):
                 continue
             try:
-                entries = parse_cleaning_work_log(
-                    document.content, document.filename, cycle.billing_month
-                )
+                entries = parse_work_document(document, cycle.billing_month)
                 if entries is not None:
                     reports.append(
                         await compare_cleaning_work_log(
-                            db, entries, cycle.billing_month, document.document_id
+                            db, entries, cycle.billing_month, document.document_id, source_scope=True
                         )
                     )
                     report_documents.append(document)
@@ -535,6 +543,20 @@ async def read_progress(db, cycle, projection, text, focus, *, mode=None, expens
             message += "\n建议先：" + next_source.next_step
         elif cycle.status != "completed":
             message += "\n下一步：" + projection.recommended_action.label + "。"
+        progress = getattr(projection, "business_progress", None)
+        if progress and getattr(projection.recommended_action, "kind", None) == "review_owner_settlements":
+            review = projection.final_review
+            message = (f"{cycle.billing_month} 已有确认的业主结算，可查看和下载已确认账单，无需重复确认。"
+                       "本工作流尚未登记整月完成，不能据此判断历史对账没有完成。" if historical_settlements else
+                       f"{cycle.billing_month} 已生成 {review.settlement_count} 份业主账单，其中 {review.confirmed_settlement_count} 份已确认。"
+                       "下一步：复核业主账单的收入、扣费和应付金额。")
+            if progress["bill_drift_count"]:
+                message += f"\n有 {progress['bill_drift_count']} 份账单的订单或费用已变化，请核对后重新生成待确认账单。"
+            message += f"\n线下订单 {progress['offline_order_count']} 笔，其中 {progress['offline_pending_count']} 笔仍待核实。"
+            if progress["offline_confirmed_count"]:
+                message += (f"已有 {progress['offline_confirmed_count']} 笔由人工确认实收，共 {progress['offline_confirmed_amount']} 元；"
+                            "收款日期、方式与凭据仍按实际情况另核，不自动补成收款流水。")
+            message += "\n公司正式关账和实际付款分别处理；旧原件的关联提示不代表已生成的业主账单全部要重做。"
     if mode == "capabilities":
         message = (
             "你可以直接用日常说法告诉我需求，也可以上传 Excel（.xls / .xlsx）。\n"

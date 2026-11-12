@@ -60,12 +60,15 @@ async def process_card_action(
             operator_open_id=open_id,
             background_tasks=background_tasks,  # 撤码应答后执行，守住飞书 3s 红线
         )
-    except service_fee_ledger.CheckoutServiceFeeWrongMonthError as exc:
+    except (service_fee_ledger.CheckoutServiceFeeWrongMonthError,
+            service_fee_ledger.CheckoutExpenseRecognitionError) as exc:
         logger.warning("保洁完工被服务费账本冲突阻断: %s", exc)
         return build_toast_response(
-            "⚠️ 服务费账本月份冲突，未完成回写，请联系财务核对",
+            "⚠️ " + exc.to_detail()["message"],
             toast_type="error",
         )
+    if result.get("cancelled"):
+        return build_toast_response("该退房清扫任务已取消，无需打扫，请以当前任务为准")
     # 完工审计已随 complete_cleaning_for_task 同事务写入（见 services/cleaning）。
     # task 和房间都没解析到 → 什么都没写，不能回假成功（2026-07-08 事故的
     # 病根就是点击看着成功、状态从没写进去）。
@@ -102,6 +105,8 @@ async def _handle_clean_start(
         db, task_id=value.get("task_id"), room_id=value.get("room_id"),
         operator_open_id=open_id,
     )
+    if result.get("cancelled"):
+        return build_toast_response("该退房清扫任务已取消，无需打扫，请以当前任务为准")
     if not result.get("task_found"):
         return build_toast_response("⚠️ 未找到对应的保洁任务，请到系统里核对", toast_type="error")
     if result.get("blocked"):

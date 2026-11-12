@@ -52,6 +52,55 @@ class FinancialReportSnapshot(StrictDTO):
     issue_count: int = Field(ge=0)
 
 
+class PacketSource(StrictDTO):
+    source_id: str = Field(max_length=80)
+    document_id: str | None = Field(default=None, max_length=80)
+    filename: str = Field(max_length=255)
+    kind: str = Field(max_length=80)
+    label: str = Field(max_length=80)
+    summary: str = Field(max_length=500)
+    note: str = Field(max_length=1000)
+    other_version_count: int = Field(ge=0)
+
+
+class PacketQuestion(StrictDTO):
+    source_id: str | None = Field(default=None, max_length=80)
+    code: str = Field(max_length=160)
+    title: str = Field(max_length=160)
+    count: int = Field(ge=1)
+    examples: list[str] = Field(max_length=3)
+
+
+class OfflineOrder(StrictDTO):
+    order_id: str = Field(max_length=80)
+    room: str = Field(max_length=100)
+    checkout: str = Field(max_length=10)
+    amount: str | None
+    received: str
+    confirmed_received: str | None = None
+    refunded: str
+    difference: str | None
+    needs_review: bool
+
+
+class OfflineReview(StrictDTO):
+    count: int = Field(ge=0)
+    pending_count: int = Field(ge=0)
+    confirmed_count: int = Field(default=0, ge=0)
+    confirmed_amount: str = "0.00"
+    rows: list[OfflineOrder] = Field(max_length=200)
+    truncated: bool
+    note: str = Field(max_length=1000)
+
+
+class ReconciliationPacket(StrictDTO):
+    sources: list[PacketSource] = Field(max_length=100)
+    questions: list[PacketQuestion] = Field(max_length=500)
+    notes: list[str] = Field(max_length=10)
+    excluded_source_count: int = Field(ge=0)
+    offline: OfflineReview
+
+
 class FinancialCaseFacts(StrictDTO):
     projection_version: Literal['financial-case-v1']
     billing_month: str = Field(pattern=r'^\d{4}-(?:0[1-9]|1[0-2])$')
@@ -68,6 +117,8 @@ class FinancialCaseFacts(StrictDTO):
     ledger_scope: dict | None = None
     order_scope: OrderQueryScope | None = None
     report_snapshot: FinancialReportSnapshot | None = None
+    packet: ReconciliationPacket | None = None
+    source_scope_ids: list[str] | None = Field(default=None, max_length=100)
 
     @field_validator('report_months')
     @classmethod
@@ -192,9 +243,32 @@ async def can_handle(db, cycle, actor, text, attachment_ids, context_run_id=None
                 return False
         await _service().validate_attachments(db, cycle.cycle_id, attachment_ids)
         return True
+    from .expense_confirmation import wants as wants_expense_confirmation
+    if wants_expense_confirmation(text):
+        # A correction to the active work-log count belongs to that proposal.
+        # "确实打扫两次" is not an acknowledgement of one existing ledger fee.
+        if context_run_id and re.search(r'次数|重复项|打扫[一二两三四五六七八九十\d]+次|按原表', text):
+            selected_reply = await previous_reply(db, cycle, actor, context_run_id)
+            if selected_reply is not None and selected_reply.tool == 'cleaning_work_chat':
+                return False
+        return True
+    from .source_acknowledgement import wants as wants_acknowledgement
+    from .settlement_fee_correction import wants as wants_fee_correction
+    if wants_fee_correction(text):
+        return True
+    if wants_acknowledgement(text):
+        return True
+    from app.services.monthly_close.conversation import progress_request
+    if progress_request(text) in {'preflight', 'settlement_review', 'owner_confirmation'}:
+        return False  # Read current workflow state instead of replaying file issues.
     from app.services.monthly_close.semantic_agent import work_fee_review_request
     if work_fee_review_request(text):
         return False  # A fee completeness review is not an amount-total query.
+    if re.search(r'打扫明细|保洁明细', text) and re.search(r'补充|补齐|补录|录入|导入', text) and not re.search(r'多少钱|费用多少|合计', text):
+        return False  # A month number in a work-log request is not a supplemental expense.
+    from .packet import wants_packet, supplementary_note
+    if wants_packet(text) or supplementary_note(text):
+        return not context_run_id or await previous_reply(db, cycle, actor, context_run_id) is not None
     from .explanations import business_explanation
     if business_explanation(text):
         return not context_run_id or await previous_reply(db, cycle, actor, context_run_id) is not None
@@ -214,8 +288,6 @@ async def can_handle(db, cycle, actor, text, attachment_ids, context_run_id=None
         return True
     if re.search(r'待核实清单|核实清单|待确认清单',text):
         return True
-    if re.search(r'打扫明细|保洁明细',text) and re.search(r'补充|补齐|补录|录入|导入',text) and not re.search(r'多少钱|费用多少|合计',text):
-        return False
     if re.search(r'保洁|打扫|洗涤|水电|物业|费用|支出',text) and re.search(r'多少|合计|明细|总共|一共',text):
         return True
     if re.search(r'核对保洁记录|查保洁差异|核对打扫记录',text) and not re.search(r'金额|多少钱|费用',text):
@@ -229,6 +301,9 @@ async def can_handle(db, cycle, actor, text, attachment_ids, context_run_id=None
     if context_run_id and (previous is None or (previous.tool != 'financial_case' and not financial_topic)):
         return False
     is_case_context = previous is not None and previous.tool == 'financial_case'
+    from .ledger_query import is_scope_followup
+    if is_case_context and previous.facts.get('ledger_scope') and is_scope_followup(text):
+        return True
     followup = re.search(r'这些|这个|那些|刚才|一共|合计|总共|多少|保洁|洗涤|工资|水电|水费|电费|物业|承担|支付|收款|收入|支出|费用|确认|执行|取消|分类|归类|更正|改成|月份|月底|月初|导出|报告|凭证|证据|明细|原始|准确|为什么|怎么算|怎么算的|继续|再看|核对|层|排除|只看', text)
     if not financial_topic and not (is_case_context and followup):
         return False

@@ -3,7 +3,7 @@ import type { AssistantReply, MonthlyCloseProjection } from "@/lib/monthly-close
 /** Display only facts returned by the executed operation; missing effects stay unknown. */
 export function ExecutionReceipt({ reply, projection }: { reply: AssistantReply; projection: MonthlyCloseProjection }) {
   const facts = reply.facts;
-  if (facts.state !== "completed" || facts.billing_month !== projection.billing_month || projection.actor_role !== "admin") return null;
+  if (reply.tool !== "cleaning_work_chat" || facts.state !== "completed" || facts.billing_month !== projection.billing_month || projection.actor_role !== "admin") return null;
   const actions = Array.isArray(facts.actions) ? facts.actions as Array<Record<string, unknown>> : [];
   const fees = actions.filter(action => action.kind === "fee");
   const records = actions.filter(action => ["add", "delete", "resolve", "restore"].includes(String(action.kind)));

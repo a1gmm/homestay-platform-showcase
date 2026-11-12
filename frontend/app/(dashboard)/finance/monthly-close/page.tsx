@@ -12,6 +12,7 @@ import { CloseProgress } from "@/components/monthly-close/CloseProgress";
 import { CurrentStepPanel } from "@/components/monthly-close/CurrentStepPanel";
 import { IntakeLinkManager } from "@/components/monthly-close/IntakeLinkManager";
 import { LayoutMemoryManager } from "@/components/monthly-close/LayoutMemoryManager";
+import { MonthlyCloseHelp } from "@/components/monthly-close/MonthlyCloseHelp";
 import { MonthlyCloseControlTower } from "@/components/monthly-close/MonthlyCloseControlTower";
 import { SmartUploadInbox } from "@/components/monthly-close/SmartUploadInbox";
 import { OtaStatementPanel } from "@/components/monthly-close/OtaStatementPanel";
@@ -37,7 +38,7 @@ import { applySourceProposalQueue } from "@/lib/monthly-close-source-queue";
 
 const EditOrderModal = dynamic(() => import("@/components/orders/EditOrderModal"), { ssr: false });
 
-const WORKSPACE_ROLES = new Set(["admin", "finance", "operator", "cleaner", "keeper"]);
+const WORKSPACE_ROLES = new Set(["admin"]);
 const EMPTY_LAYOUT_METRICS = { memory_count: 0, file_count: 0, deterministic_recognition_count: 0, ai_suggestion_count: 0, remembered_layout_count: 0, administrator_correction_count: 0, needs_confirmation_count: 0, active_memory_count: 0, disabled_memory_count: 0, reuse_count: 0, automation_rate: 0 };
 
 function statusOf(error: unknown) {
@@ -356,6 +357,7 @@ export default function MonthlyClosePage() {
           : manualMonthStatus(month, close.cycle.data, workflowStep)}
         extra={(
           <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 10 }}>
+            {isAdmin && user && session_id && <MonthlyCloseHelp key={`${user.user_id}:${session_id}:${month}`} month={month} privacyMode={privacyMode} />}
             {isAdmin && <Button disabled={privacyMode} onClick={() => setManagementOpen(true)}>管理员工具</Button>}
             <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
               <span style={{ color: tokens.color.text.secondary }}>月份</span>
@@ -414,6 +416,10 @@ export default function MonthlyClosePage() {
         )
       ) : (
         <MonthlyCloseWorkspace
+          reviewQueue={close.reviewQueue?.data}
+          reviewQueueLoading={close.reviewQueue?.isFetching ?? true}
+          reviewQueueError={close.reviewQueue?.isError ?? false}
+          onRefreshReviewQueue={isAdmin ? () => { void close.reviewQueue?.refetch(); void close.refresh(); } : undefined}
           taskEnabled={isAdmin && !privacyMode}
           onOpenTaskStep={isAdmin && !privacyMode ? (stepKey) => {
             const target = chatWorkflowTarget(projection, stepKey);
@@ -430,12 +436,20 @@ export default function MonthlyClosePage() {
           onOpenWorkflow={!privacyMode && isAdmin ? openWorkflow : undefined}
           onOpenOrder={isAdmin ? (orderId) => { if (privacyMode) router.push(`/orders?order_id=${encodeURIComponent(orderId)}`); else void openOrder(orderId); } : undefined}
           inlineReview={!privacyMode && (actionDetail != null || renderedReview != null || renderedWorkflow != null) ? <section tabIndex={-1} aria-label="聊天中的资料核对" style={{ marginTop: 24, minWidth: 0, borderTop: "1px solid var(--linen)", paddingTop: 16 }}>
-            <Button onClick={() => { reviewRequestGeneration.current += 1; setActionDetail(null); setSelectedReview(null); setActiveWorkflow(null); }}>收起处理区</Button>
+            <Button onClick={() => { reviewRequestGeneration.current += 1; setActionDetail(null); setSelectedReview(null); setActiveWorkflow(null); }}>返回对账工作台</Button>
+            {renderedReview && renderedReview.sourceType !== "cleaning_statement" && <p style={{ marginTop: 16, color: "var(--stone)", overflowWrap: "anywhere" }}>正在核对：{renderedReview.detail.filename ?? "当前资料"}</p>}
         {renderedWorkflow?.focus === "final_review" && projection ? <FinishMonthReview
           key={currentScopeKey} projection={projection} steps={close.cycle.data?.steps ?? []}
           onFinished={close.refresh} onOpenStep={openWorkflow} onClose={() => setActiveWorkflow(null)}
         /> : renderedWorkflow ? renderStepPanel(close.cycle.data?.steps.find((item) => item.step_key === chatWorkflowTarget(projection, renderedWorkflow.focus).stepKey)) : null}
-        {renderedReview ? <DocumentReview key={`${month}-${renderedReview.detail.document_id}-${renderedReview.openSequence}`} billingMonth={month} review={renderedReview} role={role} onFinished={async () => { await Promise.all([close.projection.refetch(), close.sourceProposals.refetch()]); }} /> : null}
+        {renderedReview ? <DocumentReview key={`${month}-${renderedReview.detail.document_id}-${renderedReview.openSequence}`} billingMonth={month} review={renderedReview} role={role} onFinished={async () => { await Promise.all([close.projection.refetch(), close.sourceProposals.refetch()]); }}
+          onReviewFees={isAdmin && assistantEnabled && renderedReview.sourceType === "cleaning_statement" ? async () => {
+            if (close.sendMessage.isPending) return;
+            const sequence = reviewRequestGeneration.current;
+            const scope = currentScopeKey;
+            await close.sendMessage.mutateAsync({ text: "检查续住保洁费用有没有漏记，先不要补账", attachmentIds: [renderedReview.detail.document_id] });
+            if (activeScope.current === scope && reviewRequestGeneration.current === sequence) setSelectedReview(null);
+          } : undefined} /> : null}
         {actionDetail?.kind === "source_workflow" && actionDetail.sourceType === "system_service_fees" ? (
           <SystemServiceFeeReview
             key={`${currentScopeKey}:${actionDetail.sourceId}`}
@@ -463,7 +477,7 @@ export default function MonthlyClosePage() {
           receipts={close.durableReceipts}
           inboxItems={close.inbox.data ?? []}
           onPrimaryAction={primaryAction}
-          onSendMessage={async (text, attachmentIds, contextRunId) => (await close.sendMessage.mutateAsync({ text, attachmentIds, contextRunId })).data}
+          onSendMessage={async (text, attachmentIds, contextRunId, reviewContext) => (await close.sendMessage.mutateAsync({ text, attachmentIds, contextRunId, reviewContext })).data}
           onReceiveCaseFile={isAdmin ? async (file, onProgress) => (await monthlyCloseApi.receiveFinancialCaseFile(month, file, onProgress)).data : undefined}
           onReceiveInbox={async (file) => (await close.receiveInbox.mutateAsync(file)).data}
           onClassifyInbox={async (itemId) => { await close.classifyInbox.mutateAsync(itemId); }}
@@ -556,11 +570,12 @@ export default function MonthlyClosePage() {
   );
 }
 
-function DocumentReview({ billingMonth, review, role, onFinished }: {
+function DocumentReview({ billingMonth, review, role, onFinished, onReviewFees }: {
   billingMonth: string;
   review: { sourceType: string; mode: "review" | "read_only"; detail: MonthlyCloseProjectedDocument };
   role: string;
   onFinished: () => Promise<unknown>;
+  onReviewFees?: () => Promise<unknown>;
 }) {
   const document: MonthlyCloseDocument = {
     document_id: review.detail.document_id,
@@ -576,7 +591,7 @@ function DocumentReview({ billingMonth, review, role, onFinished }: {
     return <div><EvidencePanel selected={review.detail} loading={false} error={false} /><Button disabled>当前资料仅可查看</Button><p>请先重新打开月份或解除当前阻塞，再继续处理资料。</p></div>;
   }
   if (review.sourceType === "ota_statement") return <OtaStatementPanel billingMonth={billingMonth} documents={[document]} role={role} onFinished={onFinished} />;
-  if (["cleaning_statement", "linen_statement"].includes(review.sourceType)) return <ServiceMappingReview embedded billingMonth={billingMonth} document={document} sourceType={review.sourceType} role={role} onFinished={onFinished} />;
+  if (["cleaning_statement", "linen_statement"].includes(review.sourceType)) return <ServiceMappingReview embedded billingMonth={billingMonth} document={document} sourceType={review.sourceType} role={role} onFinished={onFinished} onReviewFees={onReviewFees} />;
   if (["utility_receipt", "utility_expense"].includes(review.sourceType)) return <UtilityMappingReview billingMonth={billingMonth} document={document} sourceType={review.sourceType} role={role} onFinished={onFinished} />;
   if (review.sourceType === "operating_expenses") return <OperatingExpenseMappingReview billingMonth={billingMonth} document={document} role={role} onFinished={onFinished} />;
   return <Alert type="info" showIcon message={`只读查看：${document.filename}`} description="该资料暂时没有可用的写入入口，请联系管理员继续处理。" />;

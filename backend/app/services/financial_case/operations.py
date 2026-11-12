@@ -24,7 +24,9 @@ from app.models.financial_case import FinancialCaseProposal
 from app.services.audit import log_action_tx
 from app.services.reconciliation_policy import order_acceptance_fingerprint
 
-KINDS = {'company_reception', 'accept_current', 'correct_order', 'reassign_payment', 'transfer_allocation'}
+from . import confirmed_order_facts
+
+KINDS = confirmed_order_facts.KINDS | {'company_reception', 'accept_current', 'correct_order', 'reassign_payment', 'transfer_allocation'}
 
 
 def normalize_instruction(text):
@@ -34,6 +36,8 @@ def normalize_instruction(text):
 
 def wants_operation(text):
     text = normalize_instruction(text)
+    if confirmed_order_facts.wants(text):
+        return True
     if re.search(r'排除|不算|只看|合计|多少钱|费用多少|为什么',text) and not re.search(r'改为|改成|修正|重新关联|公司承担|公司全担|不用补房费',text):
         return False
     return bool(re.search(r'公司接待|接待.*公司承担|按(?:照)?(?:现在|当前|现有)?系统(?:.*(?:走|为准)|[\s，。！!]*$)|保留系统.*(?:金额|记录)|换房.*(?:分摊|分配|前|后)|前\s*\d+\s*晚.*后\s*\d+\s*晚|(?:收款|付款).*(?:转关联|重新关联)|(?:渠道|净额|净收入).*(?:改为|改成|修正为)|(?:改为|改成).*(?:携程|美团|线下|自来客)', text))
@@ -122,6 +126,12 @@ def plan(ctx, cycle, text, *, previous_ids=()):
     question=month_scope_question(cycle.billing_month,re.sub(r'20\d{2}-\d{2}-\d{2}', '', text),strict=True)
     if question:
         raise ValueError(question)
+    if confirmed_order_facts.wants(text):
+        result = confirmed_order_facts.plan(ctx, text)
+        selected_ids = {op['order_id'] for op in result}
+        if any(o.order_id in selected_ids and (o.stay_group_id in ctx['managed'] or o.stay_settlement_kind == StaySettlementKind.company_sponsored) for o in ctx['orders']):
+            raise ValueError('受控住宿段请使用原更正流程。')
+        return result
     if re.search(r'先别|暂不|不要执行|假如|举例|假设|不是公司接待|不由公司承担|不要.*(?:修改|修正|关联|分配|按.*系统)|不能.*(?:修改|修正|关联|分配)',text):
         raise ValueError('请说明需要实际处理的订单；本次未生成修改方案。')
     if re.search(r'除了|除外|除去|排除|不包括|不含|除.+以?外',text):
@@ -192,7 +202,13 @@ def plan(ctx, cycle, text, *, previous_ids=()):
         net_value=net[1] if net else None
         if channel and Channel(channel)!=selected[0].channel and net_value is None:
             raise ValueError('渠道改变可能影响佣金和净收入，请同时说明这笔订单正确的净收入，例如“改为线下，净收入改为 450 元”。')
-        add('correct_order',selected[0],channel=channel,net=net_value,platform_id=platform[1] if platform else None)
+        fields = dict(channel=channel,net=net_value,platform_id=platform[1] if platform else None)
+        if channel in ('offline', 'self_acquired'):
+            legs = [r for r in ctx['rooms'] if r.order_id == selected[0].order_id]
+            if net_value is None or Decimal(net_value) != selected[0].actual_price or Decimal(net_value) != legs[0].actual_price:
+                raise ValueError(f'改为线下后需要确认实际房费。当前房费 {selected[0].actual_price} 元，不能把扣佣后的平台净额直接当作线下房费。请核实房费后，同时说明正确的净收入；本次没有修改金额或登记收款。')
+            fields['clear_platform_pricing'] = True
+        add('correct_order',selected[0],**fields)
     return operations
 
 
@@ -201,7 +217,9 @@ def details(ctx,operations):
     by_id={o.order_id:o for o in ctx['orders']};result=[]
     for op in operations:
         order=by_id[op['order_id']]
-        if op['kind']=='company_reception':
+        if op['kind'] in confirmed_order_facts.KINDS:
+            value=confirmed_order_facts.detail(ctx,order,op)
+        elif op['kind']=='company_reception':
             total=sum((e.amount for e in ctx['expenses'] if e.order_id==order.order_id and not e.is_deleted),Decimal(0))
             value=f'公司接待，房费保持 0 元；现有关联费用 {total:.2f} 元由公司承担，费用总额不增加，后续生成的服务费沿用此规则。'
         elif op['kind']=='accept_current':value='采用当前系统账面作为本月结算依据；不新增房费、不伪造到账或凭证。'
@@ -212,6 +230,8 @@ def details(ctx,operations):
             old_channel=CHANNEL_LABELS.get(order.channel.value, '其他渠道')
             new_channel=CHANNEL_LABELS.get(op.get('channel') or order.channel.value, '其他渠道')
             value=f"渠道 {old_channel} → {new_channel}；净收入修改为 {op['net']} 元。" if op.get('net') is not None else f"渠道 {old_channel} → {new_channel}，金额不变。"
+            if op.get('clear_platform_pricing'):
+                value += f" 房费保持 {order.actual_price} 元，清除旧平台净额、佣金与补贴；保留原平台单号及清理记录，不新增收款。"
         result.append(dict(label=label(ctx,order),value=value))
     return result
 
@@ -273,16 +293,23 @@ async def execute(db,cycle,actor,proposal):
     by_id={o.order_id:o for o in ctx['orders']}
     if any(by_id[key].stay_group_id in ctx['managed'] or by_id[key].stay_settlement_kind==StaySettlementKind.company_sponsored for key in proposal.payload['order_ids']):
         raise ValueError('选中订单已进入受控住宿段或公司补偿流程，请重新核实。')
+    if any(op['kind'] in confirmed_order_facts.KINDS for op in proposal.payload['operations']):
+        if confirmed_order_facts.plan(ctx, proposal.payload['reason']) != proposal.payload['operations']:
+            raise ValueError('确认信息或处理范围已变化，请重新生成方案。')
     now=datetime.now(timezone.utc).isoformat();who=actor_id(actor)
     if proposal.payload.get('source_changes'):
         from .service import apply_decisions
         await apply_decisions(db,cycle,actor,proposal.payload['source_changes'])
     for op in proposal.payload['operations']:
         if op['kind'] not in KINDS:raise ValueError('不支持的业务操作')
-        order=by_id[op['order_id']];before={'metadata':order.metadata_,'channel':order.channel.value,'platform_order_id':order.platform_order_id}
+        order=by_id[op['order_id']];before={'booking_type':order.booking_type.value,'metadata':order.metadata_,'channel':order.channel.value,'platform_order_id':order.platform_order_id,
+            'actual_price':str(order.actual_price) if order.actual_price is not None else None,
+            'platform_commission_rate':str(order.platform_commission_rate or 0)}
         meta=dict(order.metadata_ or {})
         confirmation=dict(version=1,confirmed_by=who,confirmed_at=now,proposal_id=proposal.proposal_id,reason=proposal.payload['reason'])
-        if op['kind']=='company_reception':
+        if op['kind'] in confirmed_order_facts.KINDS:
+            await confirmed_order_facts.apply(db,cycle,order,op,ctx,confirmation)
+        elif op['kind']=='company_reception':
             meta['reconciliation_policy']={**confirmation,'service_cost_bearer':'company','room_compensation':'none'}
             order.metadata_=meta
             for expense in ctx['expenses']:
@@ -305,6 +332,15 @@ async def execute(db,cycle,actor,proposal):
             await log_action_tx(db,who,'monthly_close.payment_reassociated','payment',payment.payment_id,before_data=old,
                 after_data={**old,'order_id':payment.order_id},notes=proposal.proposal_id)
         elif op['kind'] in ('correct_order','transfer_allocation'):
+            clear_pricing = op.get('channel') in ('offline', 'self_acquired')
+            legs = [r for r in ctx['rooms'] if r.order_id == order.order_id]
+            if clear_pricing and (
+                op.get('clear_platform_pricing') is not True
+                or op.get('net') is None or len(legs) != 1
+                or Decimal(op['net']) != order.actual_price
+                or Decimal(op['net']) != legs[0].actual_price
+            ):
+                raise ValueError('旧方案没有确认线下房费及清除平台定价的影响，请重新生成方案后确认。')
             if op.get('platform_id'):
                 await check_platform_identity_available(db,op['platform_id'],order.order_id,lock=True)
                 order.platform_order_id=op['platform_id']
@@ -312,7 +348,23 @@ async def execute(db,cycle,actor,proposal):
             if op.get('channel'):
                 order.channel=Channel(op['channel'])
                 meta=lock_fields(meta,['channel'])
-            if op.get('net') is not None:
+            if clear_pricing:
+                from app.services.order_pricing import clear_per_room_owner_revenue
+                order.metadata_ = meta
+                clear_per_room_owner_revenue(order, reason='channel_adopted_offline',
+                    extra=confirmation, rooms=legs)
+                meta = dict(order.metadata_ or {})
+                old_values = {key: meta.pop(key) for key in ('ota_owner_revenue', 'ota_subsidy') if key in meta}
+                entry = {**confirmation, 'old': {**old_values, 'platform_commission_rate': str(order.platform_commission_rate or 0)},
+                    'reason': 'channel_adopted_offline' if before['channel'] not in ('offline', 'self_acquired') else 'offline_order_saved_with_platform_pricing',
+                    'from_channel': before['channel'], 'to_channel': order.channel.value,
+                    'price_locked_before': bool(meta.get('price_locked')), 'at': now, 'by': who}
+                meta['ota_pricing_cleared_log'] = [*(meta.get('ota_pricing_cleared_log') or []), entry]
+                meta['ota_pricing_cleared'] = entry
+                meta['price_locked'] = True
+                meta = lock_fields(meta, ['ota_owner_revenue'])
+                order.platform_commission_rate = Decimal('0')
+            elif op.get('net') is not None:
                 leg=next(r for r in ctx['rooms'] if r.order_id==order.order_id)
                 leg.metadata_={**(leg.metadata_ or {}),'ota_owner_revenue':op['net']}
                 meta['ota_owner_revenue']=op['net']
@@ -327,7 +379,9 @@ async def execute(db,cycle,actor,proposal):
             if op.get('net') is not None:
                 sync_ota_commission_rate(order)
         await log_action_tx(db,who,'monthly_close.business_correction','order',order.order_id,before_data=before,
-            after_data={'operation':op,'metadata':order.metadata_,'channel':order.channel.value,'platform_order_id':order.platform_order_id},notes=proposal.proposal_id)
+            after_data={'booking_type':order.booking_type.value,'operation':op,'metadata':order.metadata_,'channel':order.channel.value,'platform_order_id':order.platform_order_id,
+                'actual_price':str(order.actual_price) if order.actual_price is not None else None,
+                'platform_commission_rate':str(order.platform_commission_rate or 0)},notes=proposal.proposal_id)
         await invalidate_monthly_close_subject(db,cycle_id=cycle.cycle_id,subject_type='order',subject_id=order.order_id,
             event_id=f'{proposal.proposal_id}:{order.order_id}',cause='管理员确认业务修正',actor_id=who,evidence_hash=digest(op))
     for item in proposal.payload.get('feedback_evidence',[]):

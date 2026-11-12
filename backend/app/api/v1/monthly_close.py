@@ -424,6 +424,12 @@ class UtilityAnalysis(BaseModel):
     sheets: list[dict] = Field(default_factory=list)
 
 
+class MonthlyCloseReviewContext(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    question_id: str = Field(pattern=r"^RQ-[a-f0-9]{24}$")
+    evidence_hash: str = Field(pattern=r"^[a-f0-9]{64}$")
+
+
 class MonthlyCloseMessageBody(BaseModel):
     # Extra client authority/tool fields are intentionally ignored. The actor,
     # role, tool manifest, cycle and attachment scope all come from the server.
@@ -432,6 +438,7 @@ class MonthlyCloseMessageBody(BaseModel):
     text: str = Field(min_length=1, max_length=4000)
     attachment_ids: list[str] = Field(default_factory=list, max_length=20)
     context_run_id: str | None = Field(default=None, pattern=r"^MCR-[A-Z0-9]{20}$")
+    review_context: MonthlyCloseReviewContext | None = None
 
     @field_validator("text")
     @classmethod
@@ -1195,7 +1202,7 @@ async def create_monthly_close_ota_proposal(
 async def get_monthly_close_ota_batch(
     billing_month: str,
     batch_id: str,
-    _current=Depends(require_monthly_close_action(MonthlyCloseAction.prepare_proposal)),
+    current=Depends(require_monthly_close_action(MonthlyCloseAction.prepare_proposal)),
     db: AsyncSession = Depends(get_db),
 ):
     """Return only proposal-selection fields for one cycle-bound OTA batch."""
@@ -1208,7 +1215,7 @@ async def get_monthly_close_ota_batch(
     if cycle.write_control_owner != "assistant":
         raise HTTPException(
             409,
-            detail={"code": "ota_control_legacy", "message": "当前月份仍由原对账入口控制写入"},
+            detail={"code": "ota_control_legacy", "message": "当前月份仍由原对账入口控制写入", "expected_version": cycle.control_version},
         )
     linked = await db.scalar(
         select(MonthlyCloseDocument.document_id).where(
@@ -1248,8 +1255,8 @@ async def get_monthly_close_ota_batch(
             {
                 "diff_id": diff.diff_id,
                 "batch_id": diff.batch_id,
-                "order_id": None,
-                "platform_order_id": None,
+                "order_id": diff.order_id if current['role'] == 'admin' else None,
+                "platform_order_id": diff.platform_order_id if current['role'] == 'admin' else None,
                 "guest_name": None,
                 "diff_class": diff.diff_class.value,
                 "status": diff.status.value,
@@ -1342,6 +1349,34 @@ async def get_monthly_close_ota_order_candidates(
             for order in orders
         ]
     }
+
+
+class OwnerCompletionBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    evidence_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+@router.get("/{billing_month}/owner-completion")
+async def preview_owner_completion(billing_month: str, response: Response,
+    current=Depends(require_monthly_close_action(MonthlyCloseAction.finalize_cycle)),
+    db: AsyncSession = Depends(get_db)):
+    from app.services.monthly_close.owner_completion import preview
+    response.headers["Cache-Control"] = "private, no-store"
+    cycle = await get_cycle_by_month(db, billing_month)
+    if cycle is None:
+        raise HTTPException(404, detail="该月尚未开始对账")
+    return await preview(db, cycle, current)
+
+
+@router.post("/{billing_month}/owner-completion")
+async def finish_owner_completion(billing_month: str, body: OwnerCompletionBody,
+    current=Depends(require_monthly_close_action(MonthlyCloseAction.finalize_cycle)),
+    db: AsyncSession = Depends(get_db)):
+    from app.services.monthly_close.owner_completion import complete
+    cycle = await get_cycle_by_month(db, billing_month)
+    if cycle is None:
+        raise HTTPException(404, detail="该月尚未开始对账")
+    return await complete(db, cycle, current, body.evidence_hash)
 
 
 @router.post("/{billing_month}/finalization-proposals", status_code=201)
@@ -1495,6 +1530,25 @@ async def verify_monthly_close_attempt(
             db, attempt, current, request_id=body.request_id
         )
         return _verification_view(verification)
+    except MonthlyCloseControlError as exc:
+        raise _control_http_error(exc) from exc
+
+
+@router.post("/{billing_month}/actions/review-settlement-replacements")
+async def review_monthly_close_settlement_replacements(
+    billing_month: str,
+    body: VerificationBody,
+    current=Depends(require_monthly_close_action(MonthlyCloseAction.execute_proposal)),
+    db: AsyncSession = Depends(get_db),
+):
+    from app.services.monthly_close.settlement_recovery import review_settlement_replacements
+
+    _proposal_execution_enabled()
+    cycle = await get_cycle_by_month(db, billing_month)
+    if cycle is None:
+        raise HTTPException(404, detail={"code": "monthly_close_not_found", "message": "该月尚未开始月结"})
+    try:
+        return await review_settlement_replacements(db, cycle, current, request_id=body.request_id)
     except MonthlyCloseControlError as exc:
         raise _control_http_error(exc) from exc
 
@@ -1709,6 +1763,24 @@ async def get_monthly_close(
     if cycle is None:
         raise HTTPException(404, detail={"code": "monthly_close_not_found", "message": "该月尚未开始月结"})
     return await build_cycle_view(db, cycle)
+
+
+@router.get("/{billing_month}/review-queue")
+async def get_monthly_close_review_queue(
+    billing_month: str,
+    response: Response,
+    current=Depends(require_monthly_close_action(MonthlyCloseAction.view_cycle)),
+    db: AsyncSession = Depends(get_db),
+):
+    from app.services.monthly_close.review_queue import build_review_queue
+    response.headers["Cache-Control"] = "no-store"
+    cycle = await get_cycle_by_month(db, billing_month)
+    if cycle is None:
+        raise HTTPException(404, detail="该月尚未开始月结")
+    locked = await lock_cycle_for_snapshot(db, cycle.cycle_id)
+    if locked is None:
+        raise HTTPException(404, detail="该月尚未开始月结")
+    return await build_review_queue(db, locked, current)
 
 
 @router.get("/{billing_month}/projection")
@@ -1944,6 +2016,18 @@ async def update_monthly_close_task(
 
 
 async def _answer_monthly_close_with_task(db, cycle, current, body, *, on_progress=None):
+    if body.review_context:
+        from app.services.monthly_close.review_queue import validate_review_answer
+        card = await validate_review_answer(db, cycle, current, body.review_context)
+        # Bind the answer to server-owned evidence, not client-supplied titles/IDs.
+        question = " · ".join(str(v) for v in (card["subject"], card.get("order_id"), card.get("fact_key"), card["message"]) if v)
+        if card.get("source_id") and card.get("fact_key"):
+            question += f"【待核明细：{card['source_id']}|{card['fact_key']}】"
+        body = body.model_copy(update={
+            "text": f"关于以下问题：{question}\n我的补充：{body.text}",
+            "attachment_ids": [card["source_id"]] if card.get("source_id") else [],
+            "context_run_id": None,
+        })
     from app.services.monthly_close.task_chat import answer_task_command
     reply = await answer_task_command(db, cycle, current, body.text, body.attachment_ids, body.context_run_id)
     if reply is not None:
@@ -3270,6 +3354,22 @@ async def analyze_monthly_close_utility_document(
                 total_amount="0.00",
                 suggested_by="administrator",
                 sheets=preview,
+            )
+        if (body.mapping is None and not legacy_utility_contract
+                and expected_role == "expense" and inspected.role == "receipt"
+                and len(inspected.sheets) == 1
+                and "expense_amount" not in inspected.sheets[0].columns):
+            # Supplier "received" water/power bills are expense evidence in the
+            # current workflow. Re-read the same cells under that document role;
+            # this confirms neither the payer nor an actual company payment.
+            table = inspected.sheets[0]
+            columns = dict(table.columns)
+            columns["expense_amount"] = columns.pop("receipt_amount")
+            inspected = await inspect_workbook_with_ai(
+                WorkbookInput(document.filename, document.content),
+                UtilityColumnMapping(role="expense", sheet=table.sheet,
+                    header_row=table.header_row - 1, columns=columns),
+                target_month=billing_month, allow_ai=False,
             )
         if inspected.role != expected_role:
             raise WorkbookInspectionError("资料类型与确认的流水角色不一致")

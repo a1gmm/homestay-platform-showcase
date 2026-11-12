@@ -48,6 +48,7 @@ export function ServiceMappingReview({
   disabled,
   role = "admin",
   onFinished,
+  onReviewFees,
 }: {
   billingMonth: string;
   embedded?: boolean;
@@ -56,6 +57,7 @@ export function ServiceMappingReview({
   disabled?: boolean;
   role?: string;
   onFinished: () => Promise<unknown>;
+  onReviewFees?: () => Promise<unknown>;
 }) {
   const sourceName = sourceType === "cleaning_statement"
     ? "保洁打扫记录"
@@ -71,6 +73,7 @@ export function ServiceMappingReview({
   const [analysisUnavailable, setAnalysisUnavailable] = useState(false);
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const onFinishedRef = useRef(onFinished);
+  const autoAnalyzedFor = useRef<string | null>(null);
   useEffect(() => { onFinishedRef.current = onFinished; }, [onFinished]);
   const mountedRef = useRef(true);
   useEffect(() => {
@@ -112,7 +115,12 @@ export function ServiceMappingReview({
     }
   }, [billingMonth, document.document_id, message]);
 
-  useEffect(() => { if (embedded) void analyze(); }, [embedded, analyze]);
+  useEffect(() => {
+    const key = `${billingMonth}:${document.document_id}`;
+    if (!embedded || autoAnalyzedFor.current === key) return;
+    autoAnalyzedFor.current = key;
+    void analyze();
+  }, [embedded, analyze, billingMonth, document.document_id]);
 
   const confirm = async () => {
     if (!mapping || !mappingModalReady || analysis?.work_log) return;
@@ -182,7 +190,8 @@ export function ServiceMappingReview({
         }}
         afterOpenChange={setMappingModalReady}
       >
-        {analysis?.work_log && <CleaningWorkLogWorkspace key={`${billingMonth}-${document.document_id}`} billingMonth={billingMonth} documentId={document.document_id} filename={document.filename} initial={analysis.work_log} role={role} onFinished={onFinished} />}
+        {embedded && analysisUnavailable && <Button disabled={analyzing} onClick={() => void analyze()}>重试读取这份表</Button>}
+        {analysis?.work_log && <CleaningWorkLogWorkspace key={`${billingMonth}-${document.document_id}`} billingMonth={billingMonth} documentId={document.document_id} filename={document.filename} initial={analysis.work_log} role={role} onFinished={onFinished} onReviewFees={onReviewFees} />}
         {mapping && !analysis?.work_log && (
           <RecognitionSummary
             documentName={document.filename}

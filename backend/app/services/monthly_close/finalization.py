@@ -36,6 +36,7 @@ from app.models.order_room import OrderRoom
 from app.models.user import User
 from app.models.settlement import OwnerSettlement, OwnerSettlementItem
 from app.services.audit import log_action_tx
+from app.services.monthly_close.settlement_recovery import compensated_attempt_exists
 from app.services.monthly_close.evidence import StepEvidence, build_step_evidences, compatible_confirmation_hashes
 from app.services.monthly_close.migration import MonthlyCloseRolloutError
 from app.services.monthly_close.workflow import MonthlyCloseConflict
@@ -238,6 +239,7 @@ async def _finalization_live_snapshot(
                 MonthlyCloseExecutionAttempt.status.not_in(
                     ("failed_safe", "failed_confirmed", "verified")
                 ),
+                ~compensated_attempt_exists(),
                 MonthlyCloseExecutionAttempt.attempt_id != exempt_attempt_id
                 if exempt_attempt_id is not None
                 else True,
@@ -623,16 +625,24 @@ async def build_settlement_proposal(
     cycle: MonthlyCloseCycle,
     actor: Any,
     *,
-    request_id: str,
+    request_id: str | None,
     overwrite: bool,
 ) -> MonthlyCloseProposal:
     from app.api.v1.settlements import build_settlement_plan_snapshot
     from app.services.monthly_close.control import create_proposal
 
+    actor_id = (await _current_admin(db, actor)).user_id
     year, month = (int(part) for part in cycle.billing_month.split("-"))
     plan = await build_settlement_plan_snapshot(
         db, year, month, overwrite=overwrite
     )
+    if request_id is None:
+        # A UI regeneration is a new request when its facts change. Repeated
+        # clicks on the same facts remain idempotent and bound to their actor.
+        request_id = "settlement-plan:" + _digest({
+            "cycle_id": cycle.cycle_id, "actor_id": actor_id,
+            "control_version": cycle.control_version, "plan_hash": plan["plan_hash"],
+        })
     evidence_refs = [
         {
             "kind": "settlement_plan",
@@ -750,6 +760,13 @@ async def execute_settlement_command(
         )
     except MonthlyCloseRolloutError as exc:
         raise MonthlyCloseConflict(exc.code, exc.message, detail=exc.detail) from exc
+    # Validate the exact room/item/expense bindings before the transaction may
+    # commit. Post-commit verification remains independent and mandatory.
+    await db.flush()
+    if not await _settlement_plan_is_applied(db, plan):
+        raise MonthlyCloseConflict(
+            "settlement_result_mismatch", "生成明细与已批准方案不一致，本次写入已回滚"
+        )
     await log_action_tx(
         db,
         actor.user_id,
@@ -1360,6 +1377,7 @@ async def finalize_monthly_close(
                 MonthlyCloseExecutionAttempt.status.not_in(
                     ("failed_safe", "failed_confirmed", "verified")
                 ),
+                ~compensated_attempt_exists(),
                 MonthlyCloseExecutionAttempt.attempt_id != exempt_attempt_id
                 if exempt_attempt_id is not None
                 else True,
@@ -1579,6 +1597,7 @@ async def verify_finalize_command(
                 MonthlyCloseExecutionAttempt.status.not_in(
                     ("failed_safe", "failed_confirmed", "verified")
                 ),
+                ~compensated_attempt_exists(),
             )
         )
         or 0

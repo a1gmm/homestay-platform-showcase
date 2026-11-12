@@ -32,6 +32,7 @@ class CheckoutExpenseRecognitionError(RuntimeError):
             "missing_room": "房间资料不存在，无法记录退房支出",
             "missing_owner": "房间未绑定业主，无法记录退房支出",
             "missing_checkout_date": "无法确定最终退房日期，无法记录退房支出",
+            "continuation_fee_review": "续住涉及已结算、人工确认或计费依据不一致的历史费用，请先由财务核对；本次操作未保存，不会重复记费",
         }
     )
 
@@ -126,7 +127,7 @@ def checkout_service_fee_identity_clause() -> ColumnElement[bool]:
     )
 
 
-async def lock_owner_service_fee_ledger(db: AsyncSession, owner_id: str) -> None:
+async def lock_owner_service_fee_ledger(db: AsyncSession, owner_id: str, *, nowait: bool = False) -> None:
     """Serialize automatic service-fee writers for one owner until transaction end.
 
     Locking the stable owner row protects the empty-ledger case where there is no
@@ -135,5 +136,5 @@ async def lock_owner_service_fee_ledger(db: AsyncSession, owner_id: str) -> None
     await db.execute(
         select(Owner.owner_id)
         .where(Owner.owner_id == owner_id)
-        .with_for_update()
+        .with_for_update(nowait=nowait)
     )

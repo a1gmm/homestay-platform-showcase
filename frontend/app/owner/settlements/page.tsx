@@ -7,8 +7,9 @@ import { Empty, Skeleton, Drawer } from "antd";
 import { ownerDataApi } from "@/lib/owner-api";
 import { useOwnerStore } from "@/lib/owner-store";
 import { useIsDesktop } from "@/lib/responsive";
-import { groupByOwnerName, sumField } from "@/lib/owner-grouping";
-import { SettlementDetailView, SettlementCard, fmtMille } from "./SettlementDetailView";
+import { fmtSettlementAmount, sumSettlementAmounts } from "@/lib/utils";
+import { groupByOwnerName } from "@/lib/owner-grouping";
+import { SettlementDetailView, SettlementCard } from "./SettlementDetailView";
 
 export default function OwnerSettlementsPage() {
   const router = useRouter();
@@ -53,8 +54,8 @@ export default function OwnerSettlementsPage() {
     ) : isMaster ? (
       <>
         {groupByOwnerName(list, (s) => s.owner_name).map((g) => {
-          // 到厘：分组小计按各单到厘值累加（旧单无 precise 回退到分值）
-          const subtotal = sumField(g.items, (s) => s.actual_owner_amount_precise ?? s.actual_owner_amount);
+          // 按各单正式金额累加，隐藏金额时不展示小计。
+          const subtotal = sumSettlementAmounts(g.items.map((s) => s.actual_owner_amount));
           return (
             <div key={g.ownerName} style={{ marginBottom: 20 }}>
               <div
@@ -75,7 +76,7 @@ export default function OwnerSettlementsPage() {
                   </span>
                 </div>
                 <div className="serif" style={{ fontSize: 14, fontWeight: 400, color: "#FBF8F1", letterSpacing: 0, textAlign: "right" }}>
-                  ¥{fmtMille(subtotal, subtotal)}
+                  ¥{fmtSettlementAmount(subtotal)}
                 </div>
               </div>
               {g.items.map((s) => (

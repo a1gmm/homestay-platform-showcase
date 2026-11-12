@@ -74,7 +74,10 @@ export function SourceProposalCard({
   const verification = proposal.verifications
     ?.filter((item) => !attempt || item.attempt_id === attempt.attempt_id)
     .at(-1);
-  const projectedState = proposal.source_state;
+  const isSettlementGeneration = proposal.proposal_type === "generate_owner_settlements";
+  // Bills remain pending even when their generation has been verified. That
+  // workflow state must not turn a successful generation back into a prompt.
+  const projectedState = isSettlementGeneration ? undefined : proposal.source_state;
   const state: SourceProgressState = projectedState === "completed"
     ? "已对完"
     : projectedState === "needs_confirmation" || projectedState === "ready"
@@ -96,8 +99,10 @@ export function SourceProposalCard({
 
   return (
     <div style={{ display: "grid", gap: 12, width: "100%" }}>
-      <SourceProgressAlert state={state} />
-      {nextAction && <Alert type="info" showIcon message={nextAction} />}
+      {isSettlementGeneration
+        ? <Alert type={state === "已对完" ? "success" : state === "发现差异" ? "warning" : "info"} showIcon message={state === "已对完" ? "待核对业主账单已生成；尚未确认或登记打款" : state === "发现差异" ? "账单生成复核未通过，请检查下方结果" : "请核对业主与金额，再确认生成账单"} />
+        : <SourceProgressAlert state={state} />}
+      {nextAction && !isSettlementGeneration && <Alert type="info" showIcon message={nextAction} />}
       <ProposalCard
         proposal={proposal}
         role={role}

@@ -22,13 +22,16 @@ async def stream_reply(answer):
         except asyncio.CancelledError:
             cancelled = True
             raise
-        except Exception:  # noqa: BLE001 - transport boundary must redact all failures
+        except Exception as exc:  # noqa: BLE001 - transport boundary must redact all failures
             # Never send exception text, provider payloads or database details.
             await queue.put(
                 (
                     "error",
                     {
-                        "message": "本次请求没有正常返回。请刷新查看已保存的结果，再决定是否重试；不要重复确认同一方案。"
+                        "message": "这项问题已处理或依据已变化。请刷新待核清单后再回答；本次没有修改账目。"
+                        if getattr(exc, "status_code", None) == 409 and isinstance(getattr(exc, "detail", None), dict)
+                        and exc.detail.get("code") == "review_question_changed"
+                        else "本次请求没有正常返回。请刷新查看已保存的结果，再决定是否重试；不要重复确认同一方案。"
                     },
                 )
             )

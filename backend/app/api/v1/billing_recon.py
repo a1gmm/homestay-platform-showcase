@@ -32,6 +32,7 @@ from app.services.billing_recon.analysis import (
     build_layout_signature,
     materialize_mapping,
     recognize_mapping_coordinates,
+    recognize_platform_and_summary,
 )
 from app.services.billing_recon.engine import (
     BillRejected, ReconWriteControlled, apply_diff_action, claim_match,
@@ -199,9 +200,8 @@ async def analyze_bill(
     elif mapping_json is None:
         deterministic_coordinates = recognize_mapping_coordinates(sheets)
         if deterministic_coordinates is not None:
-            coordinates = deterministic_coordinates
-            platform_scope = PlatformScope.all_ota
-            platform_suggestion = "other"
+            platform_scope, coordinates = recognize_platform_and_summary(sheets, deterministic_coordinates)
+            platform_suggestion = _suggestion_for_scope(platform_scope)
             confidence = {}
         elif not allow_ai:
             raise _api_error(

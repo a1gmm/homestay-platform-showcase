@@ -1,4 +1,11 @@
 .workspace { width: 100%; max-width: 1280px; margin: 0 auto; display: grid; grid-template-columns: minmax(0, 1fr) 280px; align-items: start; gap: 32px; }
+.workspace.guidedWorkspace { grid-template-columns: minmax(0, 1fr); max-width: 1000px; gap: 20px; }
+.guidedMain { min-width: 0; }
+.workspace.guidedWorkspace .chat { max-width: none; height: auto; min-height: 0; }
+.workspace.guidedWorkspace .chat :global(.mcw-conversation) { max-height: 60dvh; min-height: 160px; }
+.workspace.guidedWorkspace .reviewChat :global(.mcw-conversation) { max-height: none; }
+.conversationToggle { border: 0; border-top: 1px solid var(--linen); border-bottom: 1px solid var(--linen); background: transparent; width: 100%; text-align: left; min-height: 52px; font: inherit; color: var(--stone); padding: 12px 0; cursor: pointer; }
+.conversationToggle:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; }
 .workspace .chat { width: 100%; max-width: 920px; min-width: 0; margin: 0; height: calc(100dvh - 180px); min-height: 540px; border: 0; border-radius: 0; background: var(--shell); }
 .workspace .chat :global(.mcw-chat-header) { padding: 0 0 16px; min-height: 64px; gap: 12px; }
 .workspace .chat :global(.mcw-assistant-identity strong) { font-size: 16px; }
@@ -19,10 +26,6 @@
 .workspace .chat :global(#monthly-close-message-shortcuts) { display: none; }
 .composerLabel { display: block; color: var(--stone); font-size: 12px; line-height: 1.6; }
 .composerNote { color: var(--stone); margin: 10px 0 0; text-align: center; font-size: 12px; line-height: 1.6; }
-.welcome { width: 100%; padding: 0 4px 12px; }
-.eyebrow { font-size: 13px; color: var(--stone); }
-.welcome h2 { margin: 12px 0; font-size: clamp(24px, 2.2vw, 32px); font-weight: 500; line-height: 1.4; color: var(--ink); }
-.welcome p { font-size: 15px; line-height: 1.8; color: var(--stone); margin: 0; }
 .workspace .chat.emptyChat { height: auto; }
 .workspace .emptyChat :global(.mcw-conversation) { justify-content: flex-end; flex: 0 0 auto; height: auto; min-height: 0; margin-top: clamp(48px, 12dvh, 120px); padding-bottom: 12px; }
 .workspace .emptyChat :global(.mcw-timeline:empty) { display: none; }
@@ -44,14 +47,32 @@
 .outcome dd { color: var(--stone); padding-top: 4px; }
 .outcome details { margin-top: 12px; color: var(--stone); }
 .context :global(.mcw-progress-button) { font-size: 13px; text-align: left; max-width: 100%; line-height: 1.6; padding: 8px 14px; cursor: pointer; }
-.context > section[aria-label="本月对账任务"] { border-top: 1px solid var(--linen); border-bottom: 0; padding: 24px 0; max-height: none; overflow: visible; }
-.context > section[aria-label="本月对账任务"] p { margin-top: 8px; }
-.context > section[aria-label="本月对账任务"] button { background: var(--shell); color: var(--ink); border-color: var(--linen); }
-.context > section[aria-label="本月对账任务"] button:hover:not(:disabled) { background: var(--sand); }
+.context section[aria-label="本月对账任务"] { border: 0; padding: 12px 0; max-height: none; overflow: visible; }
+.context section[aria-label="本月对账任务"] p { margin-top: 8px; }
+.context section[aria-label="本月对账任务"] button { background: var(--shell); color: var(--ink); border-color: var(--linen); }
+.context section[aria-label="本月对账任务"] button:hover:not(:disabled) { background: var(--sand); }
 .guide { border-top: 1px solid var(--linen); color: var(--stone); font-size: 13px; line-height: 1.8; padding-top: 12px; }
 .guide summary { min-height: 44px; cursor: pointer; padding-top: 10px; }
 .guide p { margin: 8px 0; }
 .privacyNote { padding: 12px 0 0; color: var(--stone); font-size: 13px; margin: 0; }
+.nextStep { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 16px 0; border-bottom: 1px solid var(--linen); flex-shrink: 0; }
+.nextStepCopy { min-width: 0; }
+.nextStep h2 { margin: 4px 0; font-size: 21px; font-weight: 500; line-height: 1.5; }
+.nextStep p { margin: 0; font-size: 13px; color: var(--stone); line-height: 1.7; overflow-wrap: anywhere; }
+.nextStep .nextStepStatus { font-size: 12px; }
+.nextStep button { flex-shrink: 0; min-height: 44px; max-width: 240px; border-radius: 999px; border: 1px solid var(--ink); background: var(--ink); color: var(--shell); padding: 10px 18px; font: inherit; cursor: pointer; }
+.nextStep button:disabled { opacity: .5; cursor: not-allowed; }
+.nextStep button:hover:not(:disabled) { background: var(--ink-hover); }
+.nextStep button:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; }
+.workspace :global(.mcw-document-exchange) { padding: 0 0 16px; border-bottom: 1px solid var(--linen); }
+.workspace :global(.mcw-document-summary) { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }
+.workspace :global(.mcw-document-copy) { min-width: 0; flex: 1 1 240px; overflow-wrap: anywhere; }
+.workspace :global(.mcw-document-copy .mcw-file-type) { color: var(--stone); font-size: 12px; }
+.workspace :global(.mcw-document-copy .mcw-file-name) { font-size: 14px; margin: 4px 0; }
+.workspace :global(.mcw-document-copy .mcw-stage) { font-size: 12px; color: var(--stone); }
+.workspace :global(.mcw-document-summary .mcw-inline-actions) { margin: 0; gap: 8px; }
+.workspace :global(.mcw-document-summary button) { font-size: 12px; }
+.workspace .emptyChat :global(.mcw-conversation) { margin-top: 0; min-height: 48px; }
 .context button:focus-visible, .context summary:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
 @media (max-width: 1199px) {
   .workspace { gap: 20px; grid-template-columns: minmax(0, 1fr) 248px; }
@@ -69,6 +90,9 @@
   .outcome dd { padding-top: 0; }
 }
 @media (max-width: 640px) {
+  .nextStep { align-items: flex-start; flex-direction: column; gap: 12px; }
+  .nextStep h2 { font-size: 20px; }
+  .nextStep button { align-self: flex-start; }
   .workspace { gap: 24px; }
   .workspace .chat { height: auto; min-height: 520px; }
   .workspace .chat :global(.mcw-chat-header) { flex-direction: column; align-items: flex-start; padding-bottom: 12px; }
@@ -76,15 +100,16 @@
   .workspace .chat :global(.mcw-header-actions) { margin-left: -12px; }
   .workspace .chat :global(.mcw-conversation) { height: 48dvh; min-height: 260px; padding: 20px 0 12px; }
   .workspace .emptyChat :global(.mcw-conversation) { height: auto; min-height: 150px; flex: 0 0 auto; margin-top: 0; }
-  .welcome { padding-bottom: 8px; }
-  .welcome h2 { font-size: 24px; }
-  .welcome p { font-size: 14px; }
   .workspace .chat :global(.mcw-composer) { padding: 12px; scroll-margin-bottom: calc(120px + env(safe-area-inset-bottom, 0px)); }
   .workspace .chat :global(.mcw-composer-actions .mcw-composer-status) { display: block; font-size: 11px; }
   .suggestions { gap: 0 12px; }
   .suggestions button { font-size: 12px; gap: 6px; }
   .workspace .emptyChat .composerNote { padding-bottom: 0; }
 }
+
+.workspace .chat.reviewChat { height: auto; }
+.workspace .reviewChat :global(.mcw-conversation) { height: auto; min-height: 0; overflow: visible; flex: 0 0 auto; }
+.workspace .reviewChat :global(.mcw-timeline) { display: none; }
 
 .replyContext { display: flex; gap: 8px; align-items: flex-start; padding: 12px 0; color: var(--stone); font-size: 13px; line-height: 1.7; }
 .replyContext span { min-width: 0; overflow-wrap: anywhere; white-space: pre-wrap; }

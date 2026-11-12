@@ -2,9 +2,9 @@
 
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { settlementsApi, exportApi } from "@/lib/api";
+import { settlementsApi, exportApi, monthlyCloseApi } from "@/lib/api";
 import { extractErrorMessage } from "@/lib/api-errors";
-import { downloadBlob, fmtMille, MILLE_NOTE } from "@/lib/utils";
+import { downloadBlob, fmtSettlementAmount, SETTLEMENT_ROUNDING_NOTE } from "@/lib/utils";
 import type { OwnerSettlementOut } from "@/lib/types";
 import {
   Table, Typography, Card, Tag, Button, Space, DatePicker, Checkbox, Popconfirm,
@@ -18,6 +18,7 @@ import { useIsMobile } from "@/lib/responsive";
 import SettlementPreflightAlert from "@/components/settlements/SettlementPreflightAlert";
 import { useRouter } from "next/navigation";
 import { safeMonthlyCloseReturnTarget } from "@/lib/monthly-close";
+import { MonthlyCloseTaskProposal } from "@/components/monthly-close/MonthlyCloseTaskProposal";
 
 const { Title, Text } = Typography;
 
@@ -38,6 +39,8 @@ export default function SettlementsPage() {
   const qc = useQueryClient();
   const { user } = useAuthStore();
   const isAdmin = user?.role === "admin";
+  const authScope = useAuthStore((state) => `${state.session_id}:${state.user?.user_id}:${state.user?.role}`);
+  const [proposalPreview, setProposalPreview] = useState<{ month: string; id: string; authScope: string } | null>(null);
   const [requestedMonth] = useState(() => {
     if (typeof window === "undefined") return undefined;
     const value = new URLSearchParams(window.location.search).get("month");
@@ -52,6 +55,15 @@ export default function SettlementsPage() {
   const [exportLoading, setExportLoading] = useState(false);
   const [statementExportingId, setStatementExportingId] = useState<string | null>(null);
   const [overwrite, setOverwrite] = useState(false);
+  const [recoveryResult, setRecoveryResult] = useState<{ month: string; authScope: string; text: string } | null>(null);
+  const recoveryMutation = useMutation({
+    mutationFn: (month: string) => monthlyCloseApi.reviewSettlementReplacements(month, `recovery:${crypto.randomUUID()}`),
+    onSuccess: ({ data }, month) => {
+      setRecoveryResult({ month, authScope, text: `已复核处理 ${data.resolved_count} 项生成异常，仍需处理 ${data.remaining_count} 项。账单金额、确认和打款状态保持原样。` });
+      void qc.invalidateQueries({ queryKey: ["monthly-close"] });
+    },
+    onError: (error, month) => setRecoveryResult({ month, authScope, text: extractErrorMessage(error, "复查未完成，请稍后重试") }),
+  });
   const [returnTo] = useState(() => {
     if (typeof window === "undefined") return null;
     return safeMonthlyCloseReturnTarget(window.location.search, window.location.origin);
@@ -139,6 +151,12 @@ export default function SettlementsPage() {
     mutationFn: ({ year, month, overwrite }: { year: number; month: number; overwrite?: boolean }) =>
       settlementsApi.generate(year, month, overwrite),
     onSuccess: (res, vars) => {
+      if (res.status === 202) {
+        if (res.data.proposal_id && res.data.proposal_type === "generate_owner_settlements") {
+          setProposalPreview({ month: `${vars.year}-${String(vars.month).padStart(2, "0")}`, id: res.data.proposal_id, authScope });
+        } else message.error("账单方案返回不完整，请刷新后重试；尚未确认生成账单");
+        return;
+      }
       const { generated, regenerated, skipped_locked } = res.data;
       const parts: string[] = [];
       if (generated) parts.push(`新建 ${generated} 条`);
@@ -148,7 +166,7 @@ export default function SettlementsPage() {
         message.info(
           vars.overwrite
             ? "该月没有可重算的待确认结算单"
-            : "该月已生成过结算，如需重算请勾选「覆盖重算」",
+            : "本次没有新增账单。请核对该月订单、费用和业主关联；如果已有待确认账单需要调整，再选择覆盖重算。",
         );
       } else {
         message.success(`已完成：${parts.join("，")}`);
@@ -185,6 +203,23 @@ export default function SettlementsPage() {
     },
   });
 
+  const renderExportMenu = (r: OwnerSettlementOut) => (
+    <Dropdown
+      trigger={["click"]}
+      disabled={statementExportingId === r.settlement_id}
+      menu={{ items: [
+        { key: "package", label: "业主结算包（姓名脱敏）", onClick: () => handleExportPackage(r) },
+        ...(isAdmin ? [{ key: "internal", label: "公司核账包（完整姓名）", onClick: () => handleExportPackage(r, true) }] : []),
+        { key: "income", label: "分房订单明细", onClick: () => handleExportIncome(r) },
+        { key: "statement", label: "业主分成表", onClick: () => handleExportStatement(r) },
+      ] }}
+    >
+      <Button type="link" size="small" style={{ padding: 0 }} aria-label="导出账单" disabled={statementExportingId === r.settlement_id}>
+        {statementExportingId === r.settlement_id ? "导出中…" : <>导出 <DownOutlined /></>}
+      </Button>
+    </Dropdown>
+  );
+
   const columns: ColumnsType<OwnerSettlementOut> = [
     { title: "结算月", dataIndex: "billing_month", key: "month", width: 100 },
     { title: "业主", dataIndex: "owner_id", key: "owner", width: 120 },
@@ -196,7 +231,7 @@ export default function SettlementsPage() {
       title: "业主应得", key: "owner_amount", width: 120,
       render: (_, r) => (
         <Text strong style={{ color: "#10B981" }}>
-          ¥{fmtMille(r.actual_owner_amount_precise, r.actual_owner_amount ?? r.owner_amount ?? 0)}
+          ¥{fmtSettlementAmount(r.actual_owner_amount ?? r.owner_amount ?? 0)}
         </Text>
       ),
     },
@@ -216,19 +251,7 @@ export default function SettlementsPage() {
       render: (_, r) => (
         <Space>
           <a onClick={() => { setSelectedSettlement(r); setDetailOpen(true); }}>详情</a>
-          <Dropdown
-            disabled={statementExportingId === r.settlement_id}
-            menu={{ items: [
-              { key: "package", label: "业主结算包（姓名脱敏）", onClick: () => handleExportPackage(r) },
-              ...(isAdmin ? [{ key: "internal", label: "公司核账包（完整姓名）", onClick: () => handleExportPackage(r, true) }] : []),
-              { key: "income", label: "分房订单明细", onClick: () => handleExportIncome(r) },
-              { key: "statement", label: "业主分成表", onClick: () => handleExportStatement(r) },
-            ] }}
-          >
-            <a onClick={(e) => e.preventDefault()}>
-              {statementExportingId === r.settlement_id ? "导出中…" : <>导出 <DownOutlined /></>}
-            </a>
-          </Dropdown>
+          {renderExportMenu(r)}
           {r.status === "pending" && (
             <>
               <a onClick={() => confirmMutation.mutate(r.settlement_id)}>确认</a>
@@ -246,11 +269,27 @@ export default function SettlementsPage() {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+      {isAdmin && proposalPreview?.authScope === authScope && <Modal
+        open title={`${proposalPreview.month} · 生成待核对业主账单`} footer={null}
+        width={760} onCancel={() => setProposalPreview(null)} destroyOnHidden
+      >
+        <p>先核对下方金额与费用。生成后账单仍为待确认，不代表已核实线下收款、业主已确认或已经打款。</p>
+        <MonthlyCloseTaskProposal key={`${authScope}:${proposalPreview.month}:${proposalPreview.id}`}
+          month={proposalPreview.month} proposalId={proposalPreview.id}
+          onClose={() => setProposalPreview(null)}
+          onFinished={async () => {
+            await Promise.all([
+              qc.invalidateQueries({ queryKey: ["settlements"] }),
+              qc.invalidateQueries({ queryKey: ["settlement-preflight"] }),
+              qc.invalidateQueries({ queryKey: ["monthly-close"] }),
+            ]);
+          }} />
+      </Modal>}
       <div style={{ display: "flex", flexDirection: isMobile ? "column" : "row", alignItems: isMobile ? "flex-start" : "center", justifyContent: "space-between", gap: isMobile ? 12 : 0 }}>
         <div>
           <Title level={4} style={{ margin: 0 }}>业主结算</Title>
           <Text type="secondary">结算月按订单退房日归属，与财务收入口径一致</Text>
-          <div><Text type="secondary" style={{ fontSize: 12 }}>{MILLE_NOTE}</Text></div>
+          <div><Text type="secondary" style={{ fontSize: 12 }}>{SETTLEMENT_ROUNDING_NOTE}</Text></div>
         </div>
         <Space wrap>
           {returnTo && <Button onClick={() => router.push(returnTo)}>返回月结中心</Button>}
@@ -285,6 +324,9 @@ export default function SettlementsPage() {
                   onChange={(d) => d && setGenMonth(d)}
                   style={{ width: isMobile ? 130 : undefined }}
                 />
+                <Button loading={recoveryMutation.isPending} onClick={() => recoveryMutation.mutate(monthLabel)}>
+                  复查 {monthLabel} 生成异常
+                </Button>
                 <Checkbox checked={overwrite} onChange={(e) => setOverwrite(e.target.checked)}>
                   覆盖重算
                 </Checkbox>
@@ -308,6 +350,10 @@ export default function SettlementsPage() {
       {isAdmin ? (
         <SettlementPreflightAlert report={preflight} loading={preflightLoading} />
       ) : null}
+
+      {isAdmin && recoveryResult?.authScope === authScope && recoveryResult.month === genMonth.format("YYYY-MM") && (
+        <div role="status" style={{ marginBottom: 12 }}>{recoveryResult.text}</div>
+      )}
 
       <Card variant="borderless" style={{ borderRadius: 12 }} styles={{ body: { padding: isMobile ? 12 : 0 } }}>
         <div style={{ padding: isMobile ? "0 0 12px" : "16px 20px 0" }}>
@@ -343,15 +389,10 @@ export default function SettlementsPage() {
                     <Tag color={cfg.color} style={{ margin: 0 }}>{cfg.label}</Tag>
                   </div>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 8 }}>
-                    <Text strong style={{ color: "#10B981", fontSize: 15 }}>¥{fmtMille(item.actual_owner_amount_precise, item.actual_owner_amount ?? item.owner_amount ?? 0)}</Text>
+                    <Text strong style={{ color: "#10B981", fontSize: 15 }}>¥{fmtSettlementAmount(item.actual_owner_amount ?? item.owner_amount ?? 0)}</Text>
                     <Space size={12}>
                       <a onClick={() => { setSelectedSettlement(item); setDetailOpen(true); }}>详情</a>
-                      <a
-                        style={statementExportingId === item.settlement_id ? { color: "#999", pointerEvents: "none" } : undefined}
-                        onClick={() => handleExportStatement(item)}
-                      >
-                        {statementExportingId === item.settlement_id ? "导出中…" : "导出明细"}
-                      </a>
+                      {renderExportMenu(item)}
                       {item.status === "pending" && (
                         <>
                           <a onClick={() => confirmMutation.mutate(item.settlement_id)}>确认</a>
@@ -430,16 +471,12 @@ export default function SettlementsPage() {
                   <Statistic
                     title="业主应得"
                     value={Number(
-                      detail?.actual_owner_amount_precise ??
                       detail?.actual_owner_amount ??
-                      selectedSettlement.actual_owner_amount_precise ??
                       selectedSettlement.actual_owner_amount ??
                       selectedSettlement.owner_amount ?? 0
                     )}
                     prefix="¥"
-                    precision={
-                      (detail?.actual_owner_amount_precise ?? selectedSettlement.actual_owner_amount_precise) != null ? 3 : 2
-                    }
+                    precision={2}
                     valueStyle={{ color: "#10B981", fontSize: 20, whiteSpace: "nowrap" }}
                   />
                 </Card>
@@ -457,7 +494,7 @@ export default function SettlementsPage() {
               </Col>
             </Row>
 
-            <Text type="secondary" style={{ fontSize: 12 }}>{MILLE_NOTE}</Text>
+            <Text type="secondary" style={{ fontSize: 12 }}>{SETTLEMENT_ROUNDING_NOTE}</Text>
 
             <Card
               size="small"
@@ -529,9 +566,9 @@ export default function SettlementsPage() {
                     width: 120,
                     align: "right",
                     className: "col-amount",
-                    render: (v, r: any) => (
+                    render: (v) => (
                       <Text strong style={{ color: "#2B2721", whiteSpace: "nowrap" }} className="tabular">
-                        ¥{fmtMille(r.owner_net_amount_precise, v)}
+                        ¥{fmtSettlementAmount(v)}
                       </Text>
                     ),
                   },

@@ -1,6 +1,22 @@
 import { ordersApi } from "@/lib/api";
 import type { SeenItem } from "@/lib/new-order-alert";
 import type { OrderCreate } from "@/lib/types";
+import { extractErrorMessage, extractConflictOrderId } from "@/lib/api-errors";
+
+export class PartialOrderCreationError extends Error {
+  readonly response: { status: number; data: { detail: string }; headers: Record<string, string> };
+  constructor(readonly createdIds: string[], cause: unknown, readonly remainingPayloads: OrderCreate[]) {
+    const detail = cause instanceof Error && !("isAxiosError" in cause) && !("response" in cause)
+      ? cause.message : extractErrorMessage(cause);
+    const message = `已创建 ${createdIds.length} 张订单，表单中仅保留未创建的房间。${detail}`;
+    super(message, { cause });
+    const conflictId = extractConflictOrderId(cause);
+    this.response = { status: 409, data: { detail: message },
+      headers: conflictId ? { "x-conflict-order-id": conflictId } : {} };
+  }
+}
+
+export type ResolveCreationDecision = (error: unknown, payload: OrderCreate) => Promise<OrderCreate | null>;
 
 /**
  * 逐张建单，并在**循环内**把每张刚建好的单标记为「已知」，返回新建的 order_id 列表。
@@ -26,12 +42,30 @@ import type { OrderCreate } from "@/lib/types";
 export async function createOrdersAndMarkSeen(
   payloads: OrderCreate[],
   markSeen: (items: SeenItem[]) => void,
+  resolveDecision?: ResolveCreationDecision,
 ): Promise<string[]> {
   const ids: string[] = [];
   for (const p of payloads) {
-    const r = await ordersApi.create(p);
-    markSeen([{ order_id: r.data.order_id, created_at: r.data.created_at }]);
-    ids.push(r.data.order_id);
+    let current = p;
+    try {
+      // A confirmation retries only this uncreated order, never earlier rooms.
+      for (let attempt = 0; ; attempt++) {
+        try {
+          const r = await ordersApi.create(current);
+          markSeen([{ order_id: r.data.order_id, created_at: r.data.created_at }]);
+          ids.push(r.data.order_id);
+          break;
+        } catch (error) {
+          if (!resolveDecision || attempt >= 4) throw error;
+          const next = await resolveDecision(error, current);
+          if (!next) throw error;
+          current = next;
+        }
+      }
+    } catch (error) {
+      if (ids.length) throw new PartialOrderCreationError(ids, error, payloads.slice(ids.length));
+      throw error;
+    }
   }
   return ids;
 }

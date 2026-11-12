@@ -21,6 +21,7 @@ from app.models.expense import Expense, ExpenseCategory
 from app.models.monthly_close import MonthlyCloseDocument
 from app.models.monthly_close_control import MonthlyCloseRun
 from app.models.task import Task
+from app.models.room import Room
 from app.services.audit import log_action_tx
 from app.services.monthly_close.cleaning_work_import import (
     _admin,
@@ -29,7 +30,7 @@ from app.services.monthly_close.cleaning_work_import import (
 from app.services.monthly_close.cleaning_work_log import (
     WorkLogComparison,
     compare_cleaning_work_log,
-    parse_cleaning_work_log,
+    parse_work_document,
 )
 from app.services.monthly_close.cleaning_work_resolution import (
     confirm_work_resolution,
@@ -54,6 +55,7 @@ class ChatSpec(BaseModel):
     service_date: str | None = None
     service_type: Literal["cleaning", "instay_cleaning"] | None = None
     restore_ids: list[str] = Field(default_factory=list, max_length=100)
+    room_correction: dict | None = None
 
 
 class WorkChatFacts(BaseModel):
@@ -72,6 +74,14 @@ class WorkChatFacts(BaseModel):
     reason: str = ""
     request_text: str = ""
     fee_summary: dict | None = None
+
+
+def room_correction_request(text):
+    match = re.fullmatch(r"(?:保洁表\s*)?(20\d{2}-\d{2}-\d{2})\s*(续住|正常|退房)打扫\s*原房号\s*(\d+)\s*更正为\s*(\d+)[。\s]*", text.strip())
+    if not match:
+        return None
+    return {"service_date": match[1], "service_type": "instay_cleaning" if match[2] == "续住" else "cleaning",
+            "original_room": match[3], "room_ref": match[4]}
 
 
 def digest(value):
@@ -117,19 +127,35 @@ def selected(row, spec):
     )
 
 
-async def read_report(db, cycle, document, actor_id):
+async def read_report(db, cycle, document, actor_id, *, targeted_removal=False):
     preview = await preview_work_import(db, cycle, document, actor_id)
-    entries = parse_cleaning_work_log(
-        document.content, document.filename, cycle.billing_month
-    )
+    entries = parse_work_document(document, cycle.billing_month)
     raw = await compare_cleaning_work_log(
-        db, entries, cycle.billing_month, document.document_id, apply_resolutions=False
+        db, entries, cycle.billing_month, document.document_id, apply_resolutions=False,
+        source_scope=not targeted_removal,
     )
     return preview, raw
 
 
 async def build_plan(db, cycle, document, actor_id, spec, reason):
-    preview, raw = await read_report(db, cycle, document, actor_id)
+    if spec.delete_extra and not (spec.rooms and spec.service_date):
+        raise MonthlyCloseConflict(
+            "removal_scope_required",
+            "单份保洁表不能证明全月其他记录多余。请先补齐本表；如需删除，请明确具体日期、房间并核实实际未打扫。",
+        )
+    preview, raw = await read_report(db, cycle, document, actor_id, targeted_removal=spec.delete_extra)
+    if spec.room_correction:
+        correction = spec.room_correction
+        entries = parse_work_document(document, cycle.billing_month)
+        selected_entries = [entry for entry in entries if entry.service_date == correction.get("service_date") and entry.room_ref == correction.get("original_room") and entry.service_type == correction.get("service_type")]
+        rooms = list(await db.scalars(select(Room).where((Room.room_id == correction.get("room_ref")) | (Room.room_name == correction.get("room_ref")))))
+        if len(selected_entries) != 1 or len(rooms) != 1:
+            raise MonthlyCloseConflict("room_correction_ambiguous", "必须唯一对应原表的一条记录和一个系统房间，请核实日期、原房号和完整房号。")
+        entry = selected_entries[0]
+        if not any(item.status == "unknown_room" and item.service_date == entry.service_date and item.room_ref == entry.room_ref and item.service_type == entry.service_type for item in raw.differences):
+            raise MonthlyCloseConflict("room_correction_changed", "该房号已可识别或已更正，请重新核对，不覆盖已有记录。")
+        action = {**entry.model_dump(), "kind": "map_room", "original_room": entry.room_ref, "room_ref": rooms[0].room_id, "document_sha256": document.sha256}
+        return {"actions": [action], "comparison": preview["comparison"], "preview_hash": digest({"actor": actor_id, "document": document.document_id, "metadata": document.metadata_, "action": action, "reason": reason})}
     if spec.repair_fees:
         from app.services.monthly_close.work_record_fees import plan_work_fees
         if spec.add_missing or spec.delete_extra or spec.restore_ids or spec.duplicate != "ask" or spec.service_type == "cleaning":
@@ -345,6 +371,7 @@ async def execute_plan(db, cycle, document, actor_id, proposal, request_id):
             "is_active",
             "source_type",
             "cycle_id",
+            "metadata_",
         ],
     )
     receipt = await db.scalar(
@@ -407,7 +434,11 @@ async def execute_plan(db, cycle, document, actor_id, proposal, request_id):
     removal_ids = []
     for index, action in enumerate(fresh["actions"]):
         kind = action["kind"]
-        if kind == "fee":
+        if kind == "map_room":
+            metadata = dict(document.metadata_ or {})
+            metadata["work_log_room_corrections"] = [*metadata.get("work_log_room_corrections", []), {**action, "confirmed_by": actor_id, "reason": proposal.reason, "import_id": batch.import_id}]
+            document.metadata_ = metadata
+        elif kind == "fee":
             from app.services.monthly_close.work_record_fees import add_work_fee
             await add_work_fee(db, action, actor_id)
         elif kind == "delete":
@@ -526,6 +557,7 @@ def parse_spec(text, previous, report, billing_month):
     spec = ChatSpec.model_validate(
         previous.spec.model_dump() if previous and previous.spec else {}
     )
+    spec.room_correction = None
     compact = re.sub(r"\s+", "", text)
     # Questions and negation do not become deletion instructions.
     wants_delete = bool(re.search(r"删|移除|作废|撤销系统", compact)) and not re.search(
@@ -549,9 +581,10 @@ def parse_spec(text, previous, report, billing_month):
         spec.delete_extra = True
     if align:
         spec.add_missing = True
-        spec.delete_extra = True
+        spec.delete_extra = wants_delete
     if add:
         spec.add_missing = True
+        spec.delete_extra = wants_delete
     if re.search(r"(?:不|别|不要|先别).{0,4}(?:删|移除|作废)", compact):
         spec.delete_extra = False
     if re.search(r"只(?:删|移除)|仅(?:删|移除)", compact):
@@ -674,7 +707,7 @@ async def answer_work_chat(
             return WorkChatFacts(
                 **base,
                 state="clarification",
-                message="我还没有一份可确认的具体方案。请先告诉我要怎么处理，例如“按表补齐，并删除系统多余记录”。",
+                message="我还没有一份可确认的具体方案。请先告诉我要怎么处理，例如“只补齐本表缺少的打扫记录”。",
             )
         if previous.state == "completed":
             return previous.model_copy(
@@ -719,6 +752,8 @@ async def answer_work_chat(
             message = f"已补记续住保洁费用 {fees['amount']} 元，共 {len(fees['actions'])} 笔；仍有 {len(fees['unresolved'])} 项费用需要核实。已有费用没有重复记账。退房保洁、洗涤、日耗及其他支出需分别核对。"
             if fees.get("pending_settlement_ids"):
                 message += "本月已有待确认业主结算单，费用变化后须重新生成并复核，不能确认旧金额。"
+        if previous.spec and previous.spec.room_correction:
+            message = f"已保存房号更正，原文件保持不变。重新核对后剩余 {remaining} 项；还需核对是否缺少打扫记录或费用。"
         return WorkChatFacts(
             **base,
             state="completed",
@@ -740,7 +775,10 @@ async def answer_work_chat(
             return WorkChatFacts(**base, state="report", spec=spec,
                 message=f"已核对确认过的续住打扫与收费记录：{len(fees['actions'])} 笔具备补记条件，{len(fees.get('recognized', []))} 笔沿用已有费用结果，另有 {len(fees['unresolved'])} 项需要核实。下面列出原因；本次只查询，没有生成补账方案或修改费用。",
                 comparison=plan["comparison"], fee_summary=fees)
-        if selection is not None:
+        room_fix = room_correction_request(text)
+        if room_fix:
+            spec, inspect = ChatSpec(room_correction=room_fix), False
+        elif selection is not None:
             spec = ChatSpec.model_validate(selection)
             known = {row.room_ref for row in raw.differences} | {row["room_ref"] for row in raw.records}
             if spec.restore_ids or any(room not in known for room in spec.rooms):
@@ -773,12 +811,13 @@ async def answer_work_chat(
             or spec.delete_extra
             or spec.duplicate != "ask"
             or spec.restore_ids
+            or spec.room_correction
         ):
             comparison = preview["comparison"]
             report = WorkLogComparison.model_validate(comparison)
             explanation = ""
             if explain_only:
-                explanation = "方案按日期、房间和打扫类型逐项对照原表：缺少的记录可补齐，表外记录可删除，重复次数按你核实的结果处理。只有确认方案后才修改；关联费用不会随打扫记录自动删除。\n"
+                explanation = "方案只核对本表列出的日期、房间和打扫类型：缺少的记录可补齐，重复次数按你核实的结果处理。表外记录须明确日期和房间单独核实。只有确认方案后才修改；关联费用不会随打扫记录自动删除。\n"
                 if previous and previous.state == "proposal":
                     return previous.model_copy(update={"request_text":text[:4000], "message":explanation + "下面保留原方案供你核实；如果记录已经变化，确认时会要求重新生成。"})
             return WorkChatFacts(

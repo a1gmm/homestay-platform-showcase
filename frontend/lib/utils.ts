@@ -54,26 +54,25 @@ export function formatCurrency(amount: number | string): string {
   return `¥${num.toFixed(2)}`;
 }
 
-// 结算「到厘」展示：分成/应得优先显示后端到厘的 precise 值（三位小数），
-// 旧结算无 precise（null/undefined/NaN）时回退到分（两位）。打款金额仍按分，
-// 由后端另算——本函数只管展示。业主端与管理端共用，避免两处口径漂移。
-export function fmtMille(
-  precise: number | string | null | undefined,
-  fallback: number | string | null | undefined,
-): string {
-  // 两值皆空 = 隐藏金额账号后端置 None（真实 0 走 Decimal 0，不会同时为 null）→「——」。
-  if (precise == null && fallback == null) return "——";
-  const p = typeof precise === "string" ? parseFloat(precise) : precise;
-  if (p != null && !Number.isNaN(p)) {
-    return p.toLocaleString("zh-CN", { minimumFractionDigits: 3, maximumFractionDigits: 3 });
-  }
-  const f = typeof fallback === "string" ? parseFloat(fallback) : fallback;
-  const fv = f == null || Number.isNaN(f) ? 0 : f;
-  return fv.toLocaleString("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+// 只展示后端逐房取分后汇总的正式金额，不用 *_precise 参考值重算。
+export function fmtSettlementAmount(amount: number | string | null | undefined): string {
+  if (amount == null || amount === "") return "——";
+  const value = Number(amount);
+  if (!Number.isFinite(value)) return "——";
+  return value.toLocaleString("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
-// 结算页统一小字：说明分成到厘、打款按分
-export const MILLE_NOTE = "分成精确至厘（小数第三位），实际打款按分四舍五入结算。";
+export function sumSettlementAmounts(amounts: (number | string | null | undefined)[]): number | null {
+  let cents = 0;
+  for (const amount of amounts) {
+    // 隐藏金额或数据缺失时不展示一个不完整的小计。
+    if (amount == null || amount === "" || !Number.isFinite(Number(amount))) return null;
+    cents += Math.round(Number(amount) * 100);
+  }
+  return cents / 100;
+}
+
+export const SETTLEMENT_ROUNDING_NOTE = "结算金额按每个房间先取到分，再汇总；业主级费用另行扣除。";
 
 export function downloadBlob(blob: Blob, filename: string) {
   const url = URL.createObjectURL(blob);

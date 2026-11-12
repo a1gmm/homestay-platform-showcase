@@ -455,7 +455,8 @@ async def link_continuation(db, base: Order, nxt: Order) -> str:
     # 候选放宽到「已退房/已完成」老单也算——支持关联历史续住老单（为后期退房费用不重复收）。
     # require_same_name=False：手动关联是人肉确认的动作，允许不同名（如夫妻各定一单）。
     conts = await find_group_continuations(
-        db, base, statuses=_LINKABLE_STATUSES, require_same_name=False)
+        db, base, statuses=_LINKABLE_STATUSES, require_same_name=False,
+        candidate_order_id=nxt.order_id)
     if not any(c["next_order_id"] == nxt.order_id for c in conts):
         raise ValueError("不是合法的续住续单：需同房间、退房日紧接入住日、且续住单未取消")
     # eng-review #2：首段押金已退/已扣，就不能再作为续住组的押金持有段。

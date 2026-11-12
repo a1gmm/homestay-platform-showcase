@@ -10,7 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.core.config import settings
 from app.models.expense import ExpenseCategory
-from app.services.monthly_close.cleaning_work_chat import ChatSpec
+from app.services.monthly_close.cleaning_work_chat import ChatSpec, room_correction_request
 from app.services.monthly_close.cost_responsibility import asks_cleaning_responsibility
 from app.services.monthly_close.amount_request import amount_request
 
@@ -141,7 +141,7 @@ review_month：查整月剩余事项、下一步，或具体资料/订单/异常
 inspect_cleaning：查看保洁打扫表、差异，以及解释已经展示的保洁处理方案。解释方案的来源/为什么这样修改属于此工具，mode=explain，context_ref 选择那个方案；这与 review_month 的资料进度/费用是否齐备是不同任务。只问为什么、看看差异、尚未明确处理方式时不能生成修改。可用 context_ref 指向解释的那份已展示方案。
 inspect_work_fees：只读核对整份已确认续住打扫对应的费用，检查漏记、零元及无法明确对应的收费；用户问是否漏收、先检查不要补账时用此工具，不能换成已记费用合计或打扫次数。此工具暂不支持筛选日期或房号，要求具体范围时先澄清，不得冒充该范围结果。补记仍须另行生成并确认方案。
 investigate_fees：调查保洁费用账单的具体差异、收费依据、关联订单与任务（不修改费用）。与按日房间打扫表的 inspect_cleaning 分开。可用 case_ordinal 指当前清单第几项、room 指房间，context_ref 指上轮费用调查。问费用有没有资料用 review_month；问某笔差异为什么、订单/任务能否支撑收费用本工具。
-preview_cleaning：用户提出或修订保洁打扫处理要求；selection 必须是完整新方案，不是增量。仔细保留/撤销前文选择条件：先别删=delete_extra false，只补缺的=add_missing true，限定房间/日期要写全；没有指明重复次数时 duplicate=ask，明确一次=once，明确按原表次数=table。仅“以表为准”允许补缺并删表外，但不可猜重复项实际次数。改变主题后不可继承旧的删除意图。用户只是说“好的”或询问方案是否可行，不是提出新修改时应澄清或解释。
+preview_cleaning：用户提出或修订保洁打扫处理要求；selection 必须是完整新方案，不是增量。仔细保留/撤销前文选择条件：先别删=delete_extra false，只补缺的=add_missing true，限定房间/日期要写全；没有指明重复次数时 duplicate=ask，明确一次=once，明确按原表次数=table。仅“以表为准”只允许补缺，不可据单份表删除全月表外记录；删除必须明确具体日期和房间，且不可猜重复项实际次数。改变主题后不可继承旧的删除意图。用户只是说“好的”或询问方案是否可行，不是提出新修改时应澄清或解释。
 cancel_plan：取消/暂停尚未执行的处理提议，context_ref 指向 state=proposal 的那份。即使用户同时想查看差异，也先取消，服务器会返回最新差异。取消未执行提议不是恢复已删除记录。
 preview_restore：恢复已展示删除结果，context_ref 必须指向那个结果，只能预览，不执行。
 clarify：指代歧义、多份文件无法确定、缺少关键范围、超出现有工具能力，简洁问一个具体问题。不能假称做不到聊天里已有的查询或预览能力。费用入账/业主结算确认等未列写工具不能假装能执行，解释需到对应复核步骤。
@@ -229,12 +229,43 @@ def month_scope_question(billing_month, question, *, strict=False):
     return None
 
 
+def cleaning_count_button(context):
+    """Resolve only the exact UI choice, tied to its authenticated reply.
+
+    This creates a preview, never an execution; room/date/type are checked again
+    against the original before approval. Free-form messages keep normal routing.
+    """
+    match = re.fullmatch(r"(20\d{2}-\d{2}-\d{2}) 房间 ([\w-]{1,64}) (正常打扫|续住打扫) (重复填写，只算一次|重复项按原表次数保留)", context["question"].strip())
+    ref = context.get("explicit_context")
+    prior = next((row for row in context.get("history", []) if row["ref"] == ref), None)
+    if not match or not prior or prior.get("tool") != "cleaning_work_chat":
+        return None
+    return SemanticDecision(tool="preview_cleaning", context_ref=ref, selection=PlanSelection(
+        service_date=match[1], rooms=[match[2]],
+        service_type="cleaning" if match[3] == "正常打扫" else "instay_cleaning",
+        duplicate="once" if match[4] == "重复填写，只算一次" else "table"))
+
+
 def fee_repair_request(text):
     value = re.sub(r"[\s，。！!]+", "", text)
     # A bounded UI shortcut only; arbitrary selectors/negation use semantic routing.
     if value in {"核对并补齐续住保洁费用", "补齐续住保洁费用", "补齐历史续住保洁费用"}:
         return SemanticDecision(tool="preview_cleaning", selection=PlanSelection(repair_fees=True, service_type="instay_cleaning"))
     return None
+
+
+def room_correction_decision(context):
+    if not room_correction_request(context["question"]):
+        return None
+    history = context.get("history", [])
+    explicit = context.get("explicit_context")
+    prior = next((row for row in history if row["ref"] == explicit), None) if explicit else (history[-1] if history else None)
+    valid_docs = {row["ref"] for row in context.get("documents", []) if row["source_type"] == "cleaning_statement"}
+    if prior and prior.get("document_ref") in valid_docs:
+        return SemanticDecision(tool="inspect_cleaning", document_ref=prior["document_ref"], context_ref=prior["ref"])
+    if len(valid_docs) == 1 and not explicit:
+        return SemanticDecision(tool="inspect_cleaning", document_ref=next(iter(valid_docs)))
+    return SemanticDecision(tool="clarify", question="请先选择要更正的那份保洁表，再发送这条房号更正说明。")
 
 
 async def choose_tool(context):
@@ -246,6 +277,8 @@ async def choose_tool(context):
         if decision.document_ref and decision.document_ref not in {row["ref"] for row in context.get("documents", [])}:
             return SemanticDecision(tool="clarify", question="原先那份文件已经不在当前资料中，请重新选择要核对的文件。")
         return decision
+    if correction := room_correction_decision(context):
+        return correction
     if review := work_fee_review_request(context["question"]):
         return review
     if amount := amount_request(context["question"], context.get("history", []), context.get("explicit_context")):
@@ -362,6 +395,8 @@ async def choose_tool(context):
 
 def work_fee_review_request(text):
     """Keep an explicit stayover fee audit separate from totals and writes."""
+    if re.search(r'(?:全部|所有|其他|各项)费用|洗涤|日耗|水电|电费|水费', text):
+        return None  # A whole-bill review must not silently become stayover-only.
     if not ("续住" in text and re.search(r"保洁|打扫", text) and re.search(r"费用|保洁费|收费|漏收|漏记", text)):
         return None
     if not re.search(r"检查|核对|有没有漏|是否漏|漏收|漏记", text):

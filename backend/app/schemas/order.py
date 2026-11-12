@@ -248,6 +248,12 @@ class DailyPriceUpdate(BaseModel):
         return v
 
 
+class CreationContinuationDecision(BaseModel):
+    action: Literal["link", "separate"]
+    fingerprint: str = Field(min_length=64, max_length=64)
+    order_id: Optional[str] = Field(default=None, max_length=20)
+
+
 class OrderCreate(BaseModel):
     channel: Channel
     platform_order_id: Optional[str] = None
@@ -280,6 +286,7 @@ class OrderCreate(BaseModel):
     # 同客同日期重复单拦截的显式覆盖开关：默认拦（409 duplicate_order），
     # 前端确认「确为同名不同客」后带 true 重发。
     allow_duplicate: bool = False
+    continuation: Optional[CreationContinuationDecision] = None
 
     @field_validator("guest_name")
     @classmethod

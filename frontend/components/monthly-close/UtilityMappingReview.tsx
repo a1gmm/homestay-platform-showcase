@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Button, Form, Input, InputNumber, Modal, Select, message } from "antd";
+import { Alert, Button, Form, Input, InputNumber, Modal, Select, message } from "antd";
 
 import { monthlyCloseApi } from "@/lib/api";
 import { extractErrorCode, extractErrorMessage } from "@/lib/api-errors";
@@ -160,7 +160,9 @@ export function UtilityMappingReview({
           }}
         />
       )}
-      {!proposal && sourceState && <SourceProgressAlert state={sourceState} />}
+      {!proposal && sourceState && (role === "expense"
+        ? <Alert type="info" showIcon message="资料格式已确认，尚未记账。返回对账清单，继续核实对应费用、承担方和实际付款人。" />
+        : <SourceProgressAlert state={sourceState} />)}
       <Button size="small" disabled={disabled || queueSourceState?.state === "completed"} loading={analyzing} onClick={() => void analyze()}>
         {queueSourceState?.state === "completed" ? "当前来源已对完" : proposal ? "继续处理方案" : analyzing ? "正在识别" : "查看识别结果"}
       </Button>

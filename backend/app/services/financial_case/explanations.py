@@ -5,6 +5,9 @@ import re
 def business_explanation(text):
     if re.search(r"确认执行|改成|改为|记为|归类为|补齐|补录|立即执行", text):
         return None
+    if re.search(r'自住|员工入住|房东安排', text) and re.search(r'保洁|打扫', text) and re.search(r'规则|怎么算|怎么收|多少|区别', text):
+        return dict(message='房东本人或房东安排的人入住，退房保洁按正常退房价（默认65元）由房东承担，从分成中扣除；公司员工入住，退房保洁30元由公司承担。仅写“自住”时，先确认人员归属。',
+            details=[dict(label='需确认的事实', value='提供订单或房号、入住日期，并明确是房东安排入住还是公司员工入住。先查看方案再确认，不会因为询问规则就修改账目。')])
     if not re.search(r"一回事|等同|区别|差别|一样|当成|等于|区分", text):
         return None
     if not re.search(r"吗|是否|是不是|有什么|什么区别|怎么|如何|[?？]", text):

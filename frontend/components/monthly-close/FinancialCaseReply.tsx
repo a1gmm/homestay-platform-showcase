@@ -5,11 +5,13 @@ import { extractErrorMessage } from "@/lib/api-errors";
 import type { AssistantReply, FinancialCaseFacts, FinancialCaseIssue, MonthlyCloseProjection } from "@/lib/monthly-close";
 import { downloadBlob } from "@/lib/utils";
 import styles from "./CleaningWorkChatReply.module.css";
+import { recognitionChanged } from "@/lib/monthly-close-current-result";
+import { ReconciliationPacketReply } from "./ReconciliationPacketReply";
 
 export function FinancialCaseReply({ reply, projection, onFollowUp, onPrepareReply, onReviewDocument, busy = false, historical = false }: {
   reply: AssistantReply; projection: MonthlyCloseProjection;
   onFollowUp?: (text: string, contextRunId: string, attachmentIds?: string[]) => void;
-  onPrepareReply?: (question: string, contextRunId: string) => void;
+  onPrepareReply?: (question: string, contextRunId: string, suggestedAnswer?: string) => void;
   onReviewDocument?: (documentId: string) => void;
   busy?: boolean; historical?: boolean;
 }) {
@@ -19,10 +21,7 @@ export function FinancialCaseReply({ reply, projection, onFollowUp, onPrepareRep
   if (reply.tool !== "financial_case" || reply.facts.projection_version !== "financial-case-v1"
     || projection.actor_role !== "admin" || reply.facts.billing_month !== projection.billing_month) return null;
   const facts = reply.facts as unknown as FinancialCaseFacts;
-  const recognitionUpdated = !historical && !facts.ledger_scope && !facts.order_scope && facts.sources.some((source) => {
-    const current = projection.financial_case?.sources.find((item) => item.source_id === source.source_id);
-    return current && current.fact_count !== source.fact_count;
-  });
+  const recognitionUpdated = !historical && recognitionChanged(reply, projection);
   historical = historical || recognitionUpdated;
   const valueText = (value: unknown) => value == null || typeof value === "string" && !value.trim() ? "待确认" : String(value);
   const visibleIssues = facts.issues.filter((issue) => issue.code !== "no_source_facts" || !facts.issues.some(
@@ -47,8 +46,11 @@ export function FinancialCaseReply({ reply, projection, onFollowUp, onPrepareRep
         {issue.code === "cleaning_parse_error" && documentId && onReviewDocument
           ? <button type="button" disabled={busy} onClick={() => onReviewDocument(documentId)}>查看原表并确认列</button>
           : issue.code === "cleaning_evidence_only" && source
-          ? <button type="button" disabled={busy || !onFollowUp} onClick={() => follow("核对保洁记录", [source.source_id])}>核对打扫记录</button>
-          : onPrepareReply && <button type="button" disabled={busy} onClick={() => onPrepareReply(question, reply.run_id)}>补充这项信息</button>}
+          ? <button type="button" disabled={busy || !(documentId && onReviewDocument || onFollowUp)} onClick={() => documentId && onReviewDocument ? onReviewDocument(documentId) : follow("核对保洁记录", [source.source_id])}>核对打扫记录</button>
+          : onPrepareReply && <>
+            <button type="button" disabled={busy} onClick={() => onPrepareReply(question, reply.run_id)}>补充这项信息</button>
+            <button type="button" disabled={busy} onClick={() => onPrepareReply(question, reply.run_id, "这项暂时无法确认，请保留为待核实，暂时不要入账。")}>暂时不知道</button>
+          </>}
       </div>}
     </li>;
   };
@@ -75,6 +77,12 @@ export function FinancialCaseReply({ reply, projection, onFollowUp, onPrepareRep
     } catch (error) { setExportError(extractErrorMessage(error, "核实清单下载失败，请重试")); }
     finally { setExporting(false); }
   };
+  if (recognitionUpdated) return <div className={styles.reply} aria-label="资料对账结果">
+    <p role="status">资料已重新识别，更新前的回复已收起。</p>
+    <p>请继续核对上方文件，或重新查看最新结果。</p>
+    <div className={styles.actions}><button type="button" disabled={busy || !onFollowUp} onClick={() => follow("核对这些资料")}>查看最新核对结果</button></div>
+    <details><summary>查看更新前的回复</summary><FinancialCaseReply reply={reply} projection={projection} historical busy={busy} /></details>
+  </div>;
   if (facts.order_scope && facts.state !== "proposal" && facts.state !== "completed") return <div className={styles.reply} aria-label="订单核实结果">
     <p className={styles.caption}>{facts.message}</p>
     <ol className={styles.list}>{facts.details.map((detail, index) => <li key={index}>
@@ -86,6 +94,15 @@ export function FinancialCaseReply({ reply, projection, onFollowUp, onPrepareRep
     </>}
     {exportError && <div role="alert">{exportError}</div>}
     {exportNotice && <div role="status">{exportNotice}</div>}
+  </div>;
+  if (facts.ledger_scope?.confirmation_recorded) return <div className={styles.reply} aria-label="费用核实确认">
+    <p className={styles.caption}>{facts.message}</p>
+    <details><summary>查看本次核实依据</summary>
+      <ul className={styles.list}>{facts.details.map((detail, index) => <li key={index}>
+        <div>{detail.label}</div><p>{detail.value}</p>
+      </li>)}</ul>
+    </details>
+    {historical && <p>这是当时保存的确认依据，当前账目请重新查询。</p>}
   </div>;
   if (facts.ledger_scope) return <div className={styles.reply} aria-label="费用查询结果">
     <p className={styles.caption}>{facts.message}</p>
@@ -102,11 +119,10 @@ export function FinancialCaseReply({ reply, projection, onFollowUp, onPrepareRep
     {exportError && <div role="alert">{exportError}</div>}
     {exportNotice && <div role="status">{exportNotice}</div>}
   </div>;
+  if (facts.packet) return <ReconciliationPacketReply facts={facts} historical={historical} busy={busy}
+    onRefresh={onFollowUp ? () => follow("整理这批对账资料", facts.packet!.sources.length <= 20 ? facts.packet!.sources.map((source) => source.source_id) : undefined) : undefined}
+    onReview={onReviewDocument} onPrepare={onPrepareReply ? (question, answer) => onPrepareReply(question, reply.run_id, answer) : undefined} />;
   return <div className={styles.reply} aria-label="资料对账结果">
-    {recognitionUpdated && <div role="status">
-      <p>资料已重新识别。下面是上次回复，请重新核对查看最新问题。</p>
-      <div className={styles.actions}><button type="button" disabled={busy || !onFollowUp} onClick={() => follow("核对这些资料")}>查看最新核对结果</button></div>
-    </div>}
     <p className={styles.caption} style={{ whiteSpace: "pre-wrap" }}>{facts.message || reply.message}</p>
     {visibleIssues.length > 0 && <section aria-label="需要你处理的问题">
       <p className={styles.caption}>{historical ? "当时尚待核对" : "下一步，先处理这里的问题"}（{visibleIssues.length} 项）</p>
@@ -137,6 +153,7 @@ export function FinancialCaseReply({ reply, projection, onFollowUp, onPrepareRep
     </details>}
     {historical ? <p>这是历史结果，请以最新核对结果为准。</p> : <>
       {facts.state === "proposal" && facts.proposal_id ? <>
+        <strong>{isInterpretation ? "本次只保存解释，不新增支出" : facts.proposal_kind === "posting" ? "本次将新增系统支出" : "本次将按方案修改记录"}</strong>
         <p>{isInterpretation ? "这一步只保存你对原件的解释。保存后，费用可继续生成记账方案；收入或资金往来可重算报告。" : facts.proposal_kind === "posting" ? "这一步会按上方方案新增系统支出。请逐笔核对所属月份、金额、房间、承担方和实际付款方。" : "请先查看方案说明和具体变更，确认按钮只执行当前展示的这份方案。"}</p>
         <div className={styles.actions}>
         <button type="button" className={styles.primary} disabled={busy || !onFollowUp} onClick={() => follow("确认执行")}>{isInterpretation ? "确认保存解释" : facts.proposal_kind === "posting" ? "确认记入系统支出" : "确认执行这份方案"}</button>

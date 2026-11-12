@@ -65,10 +65,11 @@ export function CleaningWorkResolutionReview({ item, billingMonth, documentId, o
       <Input.TextArea id="cleaning-resolution-reason" value={reason} onChange={(event) => setReason(event.target.value)} disabled={pending || !!preview} maxLength={1000} autoSize={{ minRows: 3, maxRows: 6 }} placeholder="例如：与保洁员核实，原表第 7、8 行重复填写，实际只打扫一次。" />
     </fieldset>
     {error && <Alert role="alert" type="error" showIcon message={error} />}
-    {preview && <div className={styles.notice} role="status"><strong>本次确认：{preview.confirmed_count === 0 ? "不计入这份表的核对" : `保留 ${preview.confirmed_count} 次打扫`}</strong><p>保存核实说明、原表依据和管理员信息。确认后重新核对，处理结果可在“已处理”中查看。</p></div>}
+    {preview && <div className={styles.notice} role="status"><strong>本次确认：{preview.confirmed_count === 0 ? "不计入这份表的核对" : `保留 ${preview.confirmed_count} 次打扫`}</strong><p>保存核实说明、原表依据和管理员信息。原系统任务保留，这一步不新增支出。处理结果可在“已处理”中查看。</p></div>}
     <footer className={styles.footer}>
       <p role="status">{pending ? preview ? "正在保存核实结果，请稍候…" : "正在检查最新依据并生成预览…" : "仅处理当前差异，保留原始表格和系统任务。"}</p>
       <div className={styles.actions}>
+        {!preview && <Button disabled={pending} onClick={onBack}>暂时不知道，先不处理</Button>}
         {preview && <Button disabled={pending || uncertain} onClick={() => setPreview(null)}>修改处理方式</Button>}
         <Button aria-label={preview ? uncertain ? "重试确认处理" : "确认处理并重新核对" : "预览处理结果"} type="primary" size="large" loading={pending} disabled={!decision || reason.trim().length < 2} onClick={() => void submit()}>{preview ? uncertain ? "重试确认处理" : "确认处理并重新核对" : "预览处理结果"}</Button>
       </div>

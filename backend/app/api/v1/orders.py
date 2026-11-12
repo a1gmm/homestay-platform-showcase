@@ -823,26 +823,24 @@ async def create_order(body: OrderCreate, db: DBSession, current_user: CurrentUs
     # body.rooms 由 OrderCreate.model_validator 保证非空（旧 payload 也合成单行）
     assert body.rooms, "OrderCreate.rooms should be populated by schema validator"
 
-    # 每行房间分别冲突检测
-    for i, r in enumerate(body.rooms):
-        if r.room_id:
-            has_conflict = await check_room_conflict(
-                db, r.room_id, r.check_in_date, r.check_out_date
-            )
-            if has_conflict:
-                raise HTTPException(
-                    status_code=409,
-                    detail=(await describe_room_conflict(
-                        db, r.room_id, r.check_in_date, r.check_out_date
-                    ) or {"message": "房态已变化，请刷新房态后重新检查房间和日期。"})["message"],
-                )
+    from app.services.create_continuation import (
+        prepare_creation_continuation, apply_creation_continuation,
+    )
+    continuation = await prepare_creation_continuation(db, body)
 
-    # 同客重复单拦截：上面的房间冲突检测只拦「同房间日期重叠」，未排房单
+    # 同客重复单拦截：房间冲突检测只拦「同房间日期重叠」，未排房单
     # （room_id 为空）不设防——生产已出现同客同日期两笔单，未排房那笔常驻
     # 待排房池、已排房那笔画在甘特图上，运营误判为显示 bug。同名（去空格）
     # + 日期重叠（退房日排他，续住的连续单不算）+ 现存单非终态即拦；
     # 真有同名不同客时，前端确认后带 allow_duplicate=true 重发放行。
     if not body.allow_duplicate:
+        continuation_exclusions = []
+        if continuation and continuation["action"] == "link":
+            source = continuation["order"]
+            continuation_exclusions.append(Order.order_id != source.order_id)
+            if source.stay_group_id:
+                continuation_exclusions.append(or_(Order.stay_group_id.is_(None),
+                                                    Order.stay_group_id != source.stay_group_id))
         guest_name = body.guest_name.strip()
         new_ci = min(r.check_in_date for r in body.rooms)
         new_co = max(r.check_out_date for r in body.rooms)
@@ -854,6 +852,7 @@ async def create_order(body: OrderCreate, db: DBSession, current_user: CurrentUs
                 func.trim(Order.guest_name) == guest_name,
                 Order.check_in_date < new_co,
                 Order.check_out_date > new_ci,
+                *continuation_exclusions,
             )
             .order_by(Order.created_at.asc())
             .limit(1)
@@ -873,7 +872,7 @@ async def create_order(body: OrderCreate, db: DBSession, current_user: CurrentUs
     # 创建订单 + 子房行
     order_id = await unique_order_id(db)
     # ota_owner_revenue 不是 orders 列，是 metadata 字段，单独处理（见下方）。
-    order_fields = body.model_dump(exclude={"rooms", "ota_owner_revenue", "auto_confirm", "allow_duplicate"})
+    order_fields = body.model_dump(exclude={"rooms", "ota_owner_revenue", "auto_confirm", "allow_duplicate", "continuation"})
     if body.platform_order_id:
         from app.services.order_identity_lock import check_platform_identity_available
 
@@ -911,6 +910,25 @@ async def create_order(body: OrderCreate, db: DBSession, current_user: CurrentUs
             ),
         ))
     db.add(order)
+    await db.flush()
+    await apply_creation_continuation(db, order, continuation, current_user["user_id"])
+
+    # 每行房间分别冲突检测
+    for i, r in enumerate(body.rooms):
+        if r.room_id:
+            has_conflict = await check_room_conflict(
+                db, r.room_id, r.check_in_date, r.check_out_date, exclude_order_id=order_id
+            )
+            if has_conflict:
+                conflict = await describe_room_conflict(
+                    db, r.room_id, r.check_in_date, r.check_out_date, exclude_order_id=order_id
+                ) or {"message": "房态已变化，请刷新房态后重新检查房间和日期。"}
+                raise HTTPException(
+                    status_code=409,
+                    detail=conflict["message"],
+                    headers={"X-Conflict-Order-Id": conflict["order_id"]}
+                    if conflict.get("order_id") else None,
+                )
 
     # 房态联动：每行已分配房间触发 available → reserved
     for r in body.rooms:
@@ -951,6 +969,10 @@ async def create_order(body: OrderCreate, db: DBSession, current_user: CurrentUs
         .where(Order.order_id == order_id)
         .options(selectinload(Order.rooms))
     )).scalar_one()
+
+    if continuation and continuation["action"] == "link":
+        from app.services.create_continuation import extend_created_continuation_codes
+        await extend_created_continuation_codes(db, refreshed)
 
     return refreshed
 
@@ -1501,18 +1523,9 @@ async def update_order(order_id: str, body: OrderUpdate, db: DBSession, current_
         for or_row in order.rooms:
             old_stamps_by_pos[or_row.position or 0] = (or_row.checked_in_at, or_row.checked_out_at)
 
-        # 1) 释放：旧列表里有但新列表里没的房间 → reserved 回 available
-        for _, rid in old_rooms_snapshot:
-            if rid and rid not in new_room_ids:
-                await _release_reserved_room(db, rid)
-
-        # 2) 删除旧 OrderRoom 行（必须用 ORM delete，否则 session 持有的 order.rooms
-        #    collection 与 DB 不同步，cascade=all,delete-orphan 会把新 INSERT 撤回）
-        for old_or in list(order.rooms):
-            await db.delete(old_or)
-        await db.flush()
-
-        # 3) 冲突检测（每个新行，排除本订单）
+        # Validate before deleting old rows: the physical-stay resolver needs
+        # the continuation row to recognize this order's own arrival evidence.
+        # Removing it first resurrects its old anchor as an unrelated overdue stay.
         for r in target_rooms:
             if r.room_id:
                 has_conflict = await check_room_conflict(
@@ -1521,13 +1534,28 @@ async def update_order(order_id: str, body: OrderUpdate, db: DBSession, current_
                     allow_unchanged_static_status=(r.room_id, r.check_in_date, r.check_out_date) in old_allocations,
                 )
                 if has_conflict:
-                    # 注意：此时旧行已删，事务回滚后会复原
+                    conflict = await describe_room_conflict(
+                        db, r.room_id, r.check_in_date, r.check_out_date,
+                        exclude_order_id=order_id,
+                    ) or {"message": "房态已变化，请刷新房态后重新检查房间和日期。"}
                     raise HTTPException(
                         status_code=409,
-                        detail=f"房间 {r.room_id} 在 {r.check_in_date}–{r.check_out_date} 已有订单冲突",
+                        detail=conflict["message"],
+                        headers={"X-Conflict-Order-Id": conflict["order_id"]}
+                        if conflict.get("order_id") else None,
                     )
 
-        # 4) 创建新 OrderRoom 行 + 房态联动（新出现的房间）
+        # 释放旧房，再整体替换房间行。所有校验均已持房间锁通过。
+        for _, rid in old_rooms_snapshot:
+            if rid and rid not in new_room_ids:
+                await _release_reserved_room(db, rid)
+
+        # 必须用 ORM delete，否则 session 的 order.rooms collection 与 DB 不同步。
+        for old_or in list(order.rooms):
+            await db.delete(old_or)
+        await db.flush()
+
+        # 创建新 OrderRoom 行 + 房态联动（新出现的房间）
         from datetime import timedelta as _td
         for i, r in enumerate(target_rooms):
             pos = r.position if r.position is not None else i
@@ -2527,7 +2555,7 @@ async def link_candidates(order_id: str, db: DBSession, current_user: CurrentUse
     )).scalar_one_or_none()
     if not order:
         raise HTTPException(status_code=404, detail="订单不存在")
-    # 已成组时按**房间**逐间从组内该房最晚退房日出发（find_group_continuations）：
+    # 已成组时按房间从各连续段退房日出发，兼顾中间缺口补单与末段续接：
     # 既支持第 N 段续接（#339 沈桑场景），也不会在一单多房时丢掉另一间房那条腿（程鹏 7/26）。
     return {"candidates": await find_group_continuations(
         db, order, statuses=_LINKABLE_STATUSES, require_same_name=False)}
@@ -2655,7 +2683,7 @@ async def _build_stay_group_out(
     by_id = {s.order_id: s for s in segs}
     ordered = [by_id[oid] for oid in view["segment_order_ids"] if oid in by_id]
 
-    # 候选按**房间**逐间从组内该房最晚退房日出发算（find_group_continuations，未成组则=本单）。
+    # 候选按房间从各连续段退房日出发算（find_group_continuations，未成组则=本单）。
     # 已成组的组也要继续提示：客人再续一段时前台才能看到「看着像续住」并把第 N 段并进原组
     # （沈桑场景，王总 2026-07-24）。早先 `not order.stay_group_id` 把成组的组掐掉、导致合并
     # 一次后就再也提示不出来；按房间走还顺带修了「一单多房合并掉一条腿后够不着另一条腿」

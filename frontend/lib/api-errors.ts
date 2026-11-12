@@ -25,8 +25,15 @@ export function extractErrorCode(error: unknown): string | undefined {
   return typeof code === "string" ? code : undefined;
 }
 
+export function extractConflictOrderId(error: unknown): string | undefined {
+  const ax = error as AxiosError;
+  const orderId = ax?.response?.headers?.["x-conflict-order-id"];
+  return ax?.response?.status === 409 && typeof orderId === "string" && orderId
+    ? orderId : undefined;
+}
+
 export function extractErrorMessage(error: unknown, fallback?: string): string {
-  if (error instanceof Error && error.name === "PrivacyModeReadOnlyError") {
+  if (error instanceof Error && ["PrivacyModeReadOnlyError", "MonthlyCloseChatError"].includes(error.name)) {
     return error.message;
   }
   const ax = error as AxiosError<{

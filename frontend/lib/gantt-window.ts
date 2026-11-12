@@ -87,12 +87,12 @@ export interface DayOccupancy {
  */
 export function computeDayOccupancy(
   date: string,
-  rooms: Array<{ days?: Record<string, unknown> }>
+  rooms: Array<{ days?: Record<string, unknown>; overdue_stay?: { as_of_date: string } }>
 ): DayOccupancy {
   const total = rooms.length;
   let used = 0;
   for (const r of rooms) {
-    if (r.days && r.days[date] != null) used += 1;
+    if ((r.days && r.days[date] != null) || r.overdue_stay?.as_of_date === date) used += 1;
   }
   const free = total - used;
   const rate = total > 0 ? Math.round((used / total) * 100) : 0;
@@ -102,7 +102,7 @@ export function computeDayOccupancy(
 /** 批量算整个窗口每日占用，返回 { date: DayOccupancy }。 */
 export function computeWindowOccupancy(
   days: string[],
-  rooms: Array<{ days?: Record<string, unknown> }>
+  rooms: Array<{ days?: Record<string, unknown>; overdue_stay?: { as_of_date: string } }>
 ): Record<string, DayOccupancy> {
   const m: Record<string, DayOccupancy> = {};
   for (const d of days) m[d] = computeDayOccupancy(d, rooms);

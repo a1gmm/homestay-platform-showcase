@@ -83,7 +83,7 @@ async def _package_fingerprint(response, expected_checks: list[dict], expected_t
 
 
 async def verify_delivery(db: AsyncSession, cycle: MonthlyCloseCycle,
-                          actor: User | dict[str, Any]) -> dict[str, Any]:
+                          actor: User | dict[str, Any], *, owner_scope: bool = True) -> dict[str, Any]:
     """Return fresh, fingerprinted delivery facts for exactly ``cycle.billing_month``.
 
     ``ready`` describes accountant deliverables, not owner consent, payment, or
@@ -103,7 +103,7 @@ async def verify_delivery(db: AsyncSession, cycle: MonthlyCloseCycle,
         if current_cycle is None:
             raise ValueError("月结周期不存在")
         try:
-            return await _verify(db, current_cycle, current_actor)
+            return await _verify(db, current_cycle, current_actor, owner_scope=owner_scope)
         except Exception:
             # A late storage/export failure must fail closed without exposing
             # database messages, original guest details, or credentials.
@@ -120,7 +120,7 @@ async def verify_delivery(db: AsyncSession, cycle: MonthlyCloseCycle,
             }
 
 
-async def _verify(db, cycle, actor) -> dict[str, Any]:
+async def _verify(db, cycle, actor, *, owner_scope=True) -> dict[str, Any]:
     checks: list[dict[str, Any]] = []
     questions: list[dict[str, Any]] = []
     artifacts: list[dict[str, Any]] = []
@@ -142,7 +142,7 @@ async def _verify(db, cycle, actor) -> dict[str, Any]:
         blocked = any(c["status"] == "blocked" for c in checks)
         summary = (f"{cycle.billing_month} 会计交付仍有待处理事项，请按下列问题补齐后重新核验。"
                    if blocked else f"{cycle.billing_month} 会计交付资料与业主结算包已核验，可交付复核。")
-        summary += " 业主确认、打款登记和正式关账分别以业务记录为准。"
+        summary += " 确认全部业主账单后，可完成本月业主对账；实际打款另行登记。"
         return {"status": "blocked" if blocked else "ready",
                 "evidence_hash": _hash({**fingerprints, "checks": checks, "questions": questions,
                                         "artifacts": artifacts}),
@@ -158,9 +158,10 @@ async def _verify(db, cycle, actor) -> dict[str, Any]:
         snapshot = await _finalization_live_snapshot(db, cycle, evidence_loader=evidence_loader)
         projection = await build_monthly_close_projection(db, cycle, actor)
         documents = (await db.execute(select(
-            MonthlyCloseDocument.document_id, MonthlyCloseDocument.source_type,
+            MonthlyCloseDocument.document_id, MonthlyCloseDocument.cycle_id, MonthlyCloseDocument.source_type,
             MonthlyCloseDocument.filename, MonthlyCloseDocument.sha256,
             MonthlyCloseDocument.byte_size, MonthlyCloseDocument.content,
+            MonthlyCloseDocument.metadata_,
         ).where(MonthlyCloseDocument.cycle_id == cycle.cycle_id,
                 MonthlyCloseDocument.is_active.is_(True))
           .order_by(MonthlyCloseDocument.document_id))).all()
@@ -178,7 +179,7 @@ async def _verify(db, cycle, actor) -> dict[str, Any]:
     fingerprints["financial_originals"] = []
     for source in financial_sources:
         content = financial_content.get(source.source_id) or b""
-        actual_hash = hashlib.sha256(content).hexdigest()
+        actual_hash = hashlib.sha256((b"supplement-v1:" if source.kind == "note" else b"") + content).hexdigest()
         fingerprints["financial_originals"].append({"source_id": source.source_id,
             "actual_hash": actual_hash, "version": source.version,
             "parsed_hash": _hash(source.parsed), "decisions_hash": _hash(source.decisions)})
@@ -195,101 +196,132 @@ async def _verify(db, cycle, actor) -> dict[str, Any]:
     fingerprints["originals"] = [{"document_id": row.document_id,
                                   "actual_hash": hashlib.sha256(row.content or b"").hexdigest()}
                                  for row in documents]
-    work_log_checks = {}
-    for source in projection.sources:
-        if (source.source_type == "cleaning_statement" and source.state == "needs_action"
-                and source.documents
-                and all(d.analysis_state in {"ready", "work_log_ready"} for d in source.documents)
-                and any(d.analysis_state == "work_log_ready" for d in source.documents)):
-            # Projection keeps recognized work logs actionable for navigation.
-            # Delivery uses the live activity and fee reconciliation instead.
-            from app.services.monthly_close.cleaning_work_log import parse_cleaning_work_log, compare_cleaning_work_log
-            from app.services.monthly_close.work_record_fees import plan_work_fees
-            pending = await db.scalar(select(MonthlyCloseInboxItem.item_id).where(
-                MonthlyCloseInboxItem.cycle_id == cycle.cycle_id,
-                MonthlyCloseInboxItem.source_type == "cleaning_statement",
-                MonthlyCloseInboxItem.status.not_in(("confirmed", "dismissed"))).limit(1))
-            for projected in source.documents:
-                if projected.analysis_state != "work_log_ready":
-                    continue
-                original = next((d for d in documents if d.document_id == projected.document_id), None)
-                if original is None:
-                    continue
-                entries = parse_cleaning_work_log(original.content, original.filename, cycle.billing_month)
-                if entries is None:
-                    continue
-                comparison = await compare_cleaning_work_log(db, entries, cycle.billing_month, original.document_id)
-                fees = await plan_work_fees(db, original, cycle.billing_month)
-                work_log_checks[original.document_id] = {
-                    "complete": not pending and bool(entries) and not comparison.differences
-                                and not fees["actions"] and not fees["unresolved"],
-                    "comparison": comparison.model_dump(mode="json"), "fees": fees,
-                }
-    fingerprints["work_log_reconciliation"] = work_log_checks
-    bad_sources: set[str] = set()
-    for source in projection.sources:
-        key = f"source:{source.source_type}"
-        label = _SOURCE_LABELS.get(source.source_type, "月结资料")
-        originals = [d for d in documents if d.source_type == source.source_type]
-        damaged = [d for d in originals if not d.content or len(d.content) != d.byte_size
-                   or hashlib.sha256(d.content).hexdigest() != d.sha256]
-        reconciled_work_logs = (source.source_type == "cleaning_statement" and source.state == "needs_action"
-            and any(d.analysis_state == "work_log_ready" for d in source.documents)
-            and all(d.analysis_state == "ready" or work_log_checks.get(d.document_id, {}).get("complete")
-                    for d in source.documents))
-        ok = (source.state in {"completed", "not_applicable"} or reconciled_work_logs) and not damaged
-        if source.state == "not_applicable" and not source.not_applicable_reason:
-            ok = False
-        message = ("原件内容与保存记录不一致，请重新上传并核对。" if damaged else
-                   "请上传本月原始文件并完成识别、映射和核对；本月无此项时请说明原因。")
-        check(key, label, ok, "本月资料已处理或已有不适用说明。" if ok else message)
-        if not ok:
-            bad_sources.add(source.source_type)
-            ask(key, label, message, source_id=source.source_id, step_key="source_collection")
-    if not projection.sources:
-        check("sources_missing", "月结资料要求", False, "本月资料要求尚未建立。")
-        ask("sources_missing", "月结资料", "先建立本月资料清单，再上传原件或说明不适用原因。", step_key="source_collection")
+    if owner_scope:
+        # The owner workflow uses the same current questions as the three-step UI.
+        # Missing company payroll/laundry/bank records and legacy step approvals
+        # are not requirements for delivering owner statements.
+        from app.services.monthly_close.review_queue import build_review_queue
+        queue = await build_review_queue(db, cycle, actor, projection=projection.to_dict())
+        fingerprints["owner_questions"] = queue["snapshot_hash"]
+        # Bill regeneration handles bill drift below; keep unrelated source,
+        # receipt and fee questions as upstream blockers for that action.
+        upstream_questions = [q for q in queue["questions"] if q.get("code") not in {"bill_drift", "disputed_bill", "settlements_missing"}]
+        check("step:owner_reconciliation", "收入与费用核对", not upstream_questions,
+              "收入与费用核对通过。" if not upstream_questions else "收入或费用仍有待核事项。")
+        check("owner_questions", "当前业主账单待核清单", not queue["questions"],
+              "当前业主待核清单为空。" if not queue["questions"] else "请先处理统一待核清单。")
+        for question in queue["questions"]:
+            ask(question["question_id"], question["subject"], question["message"], step_key=question["focus"])
+        for row in documents:
+            intact = bool(row.content) and len(row.content) == row.byte_size and hashlib.sha256(row.content).hexdigest() == row.sha256
+            check(f"document:{row.document_id}", row.filename, intact,
+                  "原件内容与保存记录一致。" if intact else "原件内容与保存记录不一致，请重新上传核对。")
+            if not intact:
+                ask(f"document:{row.document_id}", row.filename, "原件损坏，请重新上传并核对。", step_key="source_collection")
+        check("sources_present", "本月原始资料", bool(documents or financial_sources),
+              "已保存本月原始资料。" if documents or financial_sources else "请先交本月原始资料。")
+        unsettled = bool(snapshot["open_remediation_ids"] or snapshot["unsafe_attempt_ids"])
+        check("execution_clearance", "执行结果核验", not unsettled,
+              "无待核验执行或补救。" if not unsettled else "仍有待验证执行或补救事项。")
+        if unsettled:
+            ask("execution_clearance", "执行结果核验", "请先核对执行结果并完成补救。", step_key="exception_clearance")
 
-    evidence_by_key = {e.step_key: e for e in evidences}
-    order_locators = await _issue_order_locators(db, cycle.billing_month, evidences)
-    for step_key in DELIVERY_STEPS:
-        evidence = evidence_by_key.get(step_key)
-        label = STEP_LABELS[step_key]
-        ok = evidence is not None and not evidence.blocking_count
-        confirmed = (evidence is not None
-                     and snapshot["step_confirmation_hashes"].get(step_key) == evidence.evidence_hash)
-        check(f"step:{step_key}", label, ok,
-              "当前证据核对通过。" if ok else "仍有业务差异，请先处理后重新核验。")
-        if not ok:
-            issues = evidence.snapshot.get("issues", []) if evidence else []
-            for issue in issues:
-                if issue.get("source_type") in bad_sources:
-                    continue
-                code = str(issue.get("code") or "evidence_blocked")
-                subject = issue.get("subject") or label
-                resource = issue.get("resource_id") or issue.get("order_id") or issue.get("room_id") or subject
-                locator = order_locators.get(issue.get("order_id"))
-                if locator:
-                    subject = locator
-                ask(f"issue:{code}:{resource}", subject,
-                    f"{locator + '：' if locator else ''}{issue.get('cause') or issue.get('message') or '业务证据尚未核对完成。'} {issue.get('next_step') or '请核对对应原件和业务记录。'}",
-                    step_key=step_key, code=code)
-            if not issues and not (step_key == "source_collection" and bad_sources):
-                ask(f"step:{step_key}", label, "补齐本步骤业务证据并处理差异后，重新核验。", step_key=step_key)
-        # A blocked fact is one obligation; don't also ask to confirm it yet.
-        check(f"confirmation:{step_key}", f"{label}确认", confirmed,
-              "确认与当前证据一致。" if confirmed else "当前证据尚未确认或原确认已过期。")
-        if ok and not confirmed:
-            ask(f"confirmation:{step_key}", label, "请复核本步骤当前结果并完成确认。", step_key=step_key)
+    else:
+        work_log_checks = {}
+        for source in projection.sources:
+            if (source.source_type == "cleaning_statement" and source.state == "needs_action"
+                    and source.documents
+                    and all(d.analysis_state in {"ready", "work_log_ready"} for d in source.documents)
+                    and any(d.analysis_state == "work_log_ready" for d in source.documents)):
+                # Projection keeps recognized work logs actionable for navigation.
+                # Delivery uses the live activity and fee reconciliation instead.
+                from app.services.monthly_close.cleaning_work_log import parse_work_document, compare_cleaning_work_log
+                from app.services.monthly_close.work_record_fees import plan_work_fees
+                pending = await db.scalar(select(MonthlyCloseInboxItem.item_id).where(
+                    MonthlyCloseInboxItem.cycle_id == cycle.cycle_id,
+                    MonthlyCloseInboxItem.source_type == "cleaning_statement",
+                    MonthlyCloseInboxItem.status.not_in(("confirmed", "dismissed"))).limit(1))
+                for projected in source.documents:
+                    if projected.analysis_state != "work_log_ready":
+                        continue
+                    original = next((d for d in documents if d.document_id == projected.document_id), None)
+                    if original is None:
+                        continue
+                    entries = parse_work_document(original, cycle.billing_month)
+                    if entries is None:
+                        continue
+                    comparison = await compare_cleaning_work_log(db, entries, cycle.billing_month, original.document_id, source_scope=True)
+                    fees = await plan_work_fees(db, original, cycle.billing_month)
+                    work_log_checks[original.document_id] = {
+                        "complete": not pending and bool(entries) and not comparison.differences
+                                    and not fees["actions"] and not fees["unresolved"],
+                        "comparison": comparison.model_dump(mode="json"), "fees": fees,
+                    }
+        fingerprints["work_log_reconciliation"] = work_log_checks
+        bad_sources: set[str] = set()
+        for source in projection.sources:
+            key = f"source:{source.source_type}"
+            label = _SOURCE_LABELS.get(source.source_type, "月结资料")
+            originals = [d for d in documents if d.source_type == source.source_type]
+            damaged = [d for d in originals if not d.content or len(d.content) != d.byte_size
+                       or hashlib.sha256(d.content).hexdigest() != d.sha256]
+            reconciled_work_logs = (source.source_type == "cleaning_statement" and source.state == "needs_action"
+                and any(d.analysis_state == "work_log_ready" for d in source.documents)
+                and all(d.analysis_state == "ready" or work_log_checks.get(d.document_id, {}).get("complete")
+                        for d in source.documents))
+            ok = (source.state in {"completed", "not_applicable"} or reconciled_work_logs) and not damaged
+            if source.state == "not_applicable" and not source.not_applicable_reason:
+                ok = False
+            message = ("原件内容与保存记录不一致，请重新上传并核对。" if damaged else
+                       "请上传本月原始文件并完成识别、映射和核对；本月无此项时请说明原因。")
+            check(key, label, ok, "本月资料已处理或已有不适用说明。" if ok else message)
+            if not ok:
+                bad_sources.add(source.source_type)
+                ask(key, label, message, source_id=source.source_id, step_key="source_collection")
+        if not projection.sources:
+            check("sources_missing", "月结资料要求", False, "本月资料要求尚未建立。")
+            ask("sources_missing", "月结资料", "先建立本月资料清单，再上传原件或说明不适用原因。", step_key="source_collection")
 
-    unsettled = bool(snapshot["unresolved_issues"] or snapshot["open_remediation_ids"]
-                     or snapshot["unsafe_attempt_ids"])
-    check("execution_clearance", "异常与执行结果", not unsettled,
-          "无未完成异常或执行补救。" if not unsettled else "仍有异常、待验证执行或补救事项。")
-    if unsettled and not any(e.blocking_count for e in evidences if e.step_key != "owner_confirmation"):
-        ask("execution_clearance", "执行结果核验", "请核对未解决异常和待验证执行，完成补救后重新核验。", step_key="exception_clearance")
-    check("preflight", "最终结算体检", not snapshot["preflight"]["blocking"],
-          "结算体检通过。" if not snapshot["preflight"]["blocking"] else "结算体检仍有阻断项。")
+        evidence_by_key = {e.step_key: e for e in evidences}
+        order_locators = await _issue_order_locators(db, cycle.billing_month, evidences)
+        for step_key in DELIVERY_STEPS:
+            evidence = evidence_by_key.get(step_key)
+            label = STEP_LABELS[step_key]
+            ok = evidence is not None and not evidence.blocking_count
+            confirmed = (evidence is not None
+                         and snapshot["step_confirmation_hashes"].get(step_key) == evidence.evidence_hash)
+            check(f"step:{step_key}", label, ok,
+                  "当前证据核对通过。" if ok else "仍有业务差异，请先处理后重新核验。")
+            if not ok:
+                issues = evidence.snapshot.get("issues", []) if evidence else []
+                for issue in issues:
+                    if issue.get("source_type") in bad_sources:
+                        continue
+                    code = str(issue.get("code") or "evidence_blocked")
+                    subject = issue.get("subject") or label
+                    resource = issue.get("resource_id") or issue.get("order_id") or issue.get("room_id") or subject
+                    locator = order_locators.get(issue.get("order_id"))
+                    if locator:
+                        subject = locator
+                    ask(f"issue:{code}:{resource}", subject,
+                        f"{locator + '：' if locator else ''}{issue.get('cause') or issue.get('message') or '业务证据尚未核对完成。'} {issue.get('next_step') or '请核对对应原件和业务记录。'}",
+                        step_key=step_key, code=code)
+                if not issues and not (step_key == "source_collection" and bad_sources):
+                    ask(f"step:{step_key}", label, "补齐本步骤业务证据并处理差异后，重新核验。", step_key=step_key)
+            # A blocked fact is one obligation; don't also ask to confirm it yet.
+            check(f"confirmation:{step_key}", f"{label}确认", confirmed,
+                  "确认与当前证据一致。" if confirmed else "当前证据尚未确认或原确认已过期。")
+            if ok and not confirmed:
+                ask(f"confirmation:{step_key}", label, "请复核本步骤当前结果并完成确认。", step_key=step_key)
+
+        unsettled = bool(snapshot["unresolved_issues"] or snapshot["open_remediation_ids"]
+                         or snapshot["unsafe_attempt_ids"])
+        check("execution_clearance", "异常与执行结果", not unsettled,
+              "无未完成异常或执行补救。" if not unsettled else "仍有异常、待验证执行或补救事项。")
+        if unsettled and not any(e.blocking_count for e in evidences if e.step_key != "owner_confirmation"):
+            ask("execution_clearance", "执行结果核验", "请核对未解决异常和待验证执行，完成补救后重新核验。", step_key="exception_clearance")
+        check("preflight", "最终结算体检", not snapshot["preflight"]["blocking"],
+              "结算体检通过。" if not snapshot["preflight"]["blocking"] else "结算体检仍有阻断项。")
 
     settlements = snapshot["settlements"]
     check("settlements_present", "本月业主结算单", bool(settlements),
@@ -373,6 +405,6 @@ async def _verify(db, cycle, actor) -> dict[str, Any]:
           "业主结算均已确认。" if approved else "仍待业主正式确认；会计交付不替代业主同意。", informational=True)
     check("payment", "打款登记", paid,
           "全部结算已有打款登记；更正差额仍以支付凭证核对。" if paid else "尚未全部登记打款，不代表款项已经支付。", informational=True)
-    check("formal_close", "正式月结状态", cycle.status == "completed",
-          "周期记录为已完成。" if cycle.status == "completed" else "周期尚未正式关账。", informational=True)
+    check("formal_close", "业主对账完成状态", cycle.status == "completed",
+          "周期记录为已完成。" if cycle.status == "completed" else "核对并确认全部业主账单后，可完成本月业主对账。", informational=True)
     return result()

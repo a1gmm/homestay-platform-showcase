@@ -13,7 +13,7 @@ from app.services.audit import log_action_tx
 from app.services.monthly_close.cleaning_work_import import _admin, preview_work_import
 from app.services.monthly_close.cleaning_work_log import (
     compare_cleaning_work_log,
-    parse_cleaning_work_log,
+    parse_work_document,
 )
 from app.services.monthly_close.workflow import (
     MonthlyCloseConflict,
@@ -23,6 +23,11 @@ from app.services.monthly_close.workflow import (
 
 async def preview_work_resolution(db, cycle, document, actor_id, selection):
     report = (await preview_work_import(db, cycle, document, actor_id))["comparison"]
+    if selection["decision"] == "exclude_system":
+        # This API requires an explicit date, room, type and reason. Keep that
+        # targeted correction available without making a sheet a monthly inventory.
+        entries = parse_work_document(document, cycle.billing_month)
+        report = (await compare_cleaning_work_log(db, entries, cycle.billing_month, document.document_id)).model_dump()
     reason = selection["reason"].strip()
     if not 2 <= len(reason) <= 1000:
         raise MonthlyCloseConflict(
@@ -165,9 +170,7 @@ async def confirm_work_resolution(
             )
             db.add(record)
     await db.flush()
-    entries = parse_cleaning_work_log(
-        document.content, document.filename, cycle.billing_month
-    )
+    entries = parse_work_document(document, cycle.billing_month)
     raw = await compare_cleaning_work_log(
         db, entries, cycle.billing_month, document.document_id, apply_resolutions=False
     )
@@ -221,7 +224,7 @@ async def confirm_work_resolution(
     db.add(resolution)
     await db.flush()
     after = await compare_cleaning_work_log(
-        db, entries, cycle.billing_month, document.document_id
+        db, entries, cycle.billing_month, document.document_id, source_scope=True
     )
     result = {
         "resolution_id": resolution.resolution_id,

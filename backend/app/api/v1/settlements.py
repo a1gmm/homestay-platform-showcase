@@ -472,6 +472,7 @@ async def _build_settlement_financial_snapshot(
     month: int,
     *,
     rooms: list[Room] | None = None,
+    for_update: bool = True,
 ) -> SettlementFinancialSnapshot:
     """Recompute one owner/month using the generation accounting sources."""
     if rooms is None:
@@ -490,7 +491,7 @@ async def _build_settlement_financial_snapshot(
     total_owner_revenue_share = Decimal("0")
     total_owner_net = Decimal("0")
     sponsorship_income_by_room = await load_room_sponsorship_income(
-        db, [room.room_id for room in rooms], year, month, for_update=True
+        db, [room.room_id for room in rooms], year, month, for_update=for_update
     )
     for room in rooms:
         stat = await compute_room_month_owner_stat(
@@ -1027,7 +1028,7 @@ async def _generate_settlements_core(
             is_regen = True
 
         rooms_result = await db.execute(
-            select(Room).where(Room.owner_id == owner.owner_id)
+            select(Room).where(Room.owner_id == owner.owner_id).order_by(Room.room_id)
         )
         rooms = rooms_result.scalars().all()
         if not rooms:
@@ -1233,14 +1234,15 @@ async def generate_settlements(
         from app.services.monthly_close.finalization import (
             build_settlement_proposal,
         )
+        from app.services.monthly_close.control import MonthlyCloseControlError
 
-        proposal = await build_settlement_proposal(
-            db,
-            cycle,
-            current_user,
-            request_id=f"LEGACY-SETTLEMENT-{cycle.cycle_id}-{int(overwrite)}",
-            overwrite=overwrite,
-        )
+        try:
+            proposal = await build_settlement_proposal(
+                db, cycle, current_user, request_id=None, overwrite=overwrite,
+            )
+        except MonthlyCloseControlError as exc:
+            await db.rollback()
+            raise HTTPException(status_code=409, detail=exc.to_detail()) from exc
         response.status_code = 202
         return {
             "proposal_id": proposal.proposal_id,

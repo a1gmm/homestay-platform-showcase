@@ -74,7 +74,7 @@ def effective_owner_revenue_for_room(
     return None
 
 
-def clear_per_room_owner_revenue(order, *, reason: str, extra: dict | None = None) -> dict | None:
+def clear_per_room_owner_revenue(order, *, reason: str, extra: dict | None = None, rooms=None) -> dict | None:
     """清掉订单各房行手填的每房净房费（回退比例口径），并把清值事件**追加**到
     order.metadata['per_room_owner_revenue_cleared_log'] 列表留痕（多次清值不互相覆盖，
     保住审计链）；同时保留最近一次到 'per_room_owner_revenue_cleared' 便于旧读取方。
@@ -82,13 +82,16 @@ def clear_per_room_owner_revenue(order, *, reason: str, extra: dict | None = Non
     换房 / 单日改价 / 整单净房费改动与 Σ每房冲突时调用，避免结算拿旧每房值静默算错。
     返回被清的 {order_room_id: 旧净值str} 或 None（无手填值时）。
     """
+    # Callers with separately locked room rows can supply them without triggering
+    # an async ORM lazy load of order.rooms.
+    rooms = order.rooms if rooms is None else rooms
     manual = {
         r.order_room_id: str(r.ota_owner_revenue)
-        for r in order.rooms if r.ota_owner_revenue is not None
+        for r in rooms if r.ota_owner_revenue is not None
     }
     if not manual:
         return None
-    for r in order.rooms:
+    for r in rooms:
         if (r.metadata_ or {}).get("ota_owner_revenue") is not None:
             r.metadata_ = {k: v for k, v in r.metadata_.items() if k != "ota_owner_revenue"}
     entry = {"old": manual, "reason": reason, "at": datetime.now(timezone.utc).isoformat()}

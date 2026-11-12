@@ -29,6 +29,10 @@ function stringValue(value: unknown) {
 function changeLabel(command: MonthlyCloseProposalCommand, proposalType: string) {
   const before = command.before;
   const after = command.after;
+  if (proposalType === "generate_owner_settlements") {
+    const count = Array.isArray(after.settlements) ? after.settlements.length : 0;
+    return `${stringValue(after.billing_month)} · 生成 ${count} 份待确认业主账单`;
+  }
   if (proposalType === "operating_expense_import") {
     return `${stringValue(after.description)} · ${money(after.amount)}`;
   }
@@ -65,6 +69,7 @@ function proposalTitle(proposalType: string) {
     service_fee_reconciliation: "服务费方案",
     utility_reconciliation: "水电对账方案",
     operating_expense_import: "运营支出方案",
+    generate_owner_settlements: "业主账单生成方案",
   }[proposalType] ?? "月结方案";
 }
 
@@ -247,6 +252,20 @@ export function ProposalCard({
             style={{ border: "1px solid #eee", borderRadius: 12, padding: 12 }}
           >
             <div style={{ fontWeight: 500 }}>{changeLabel(command, proposal.proposal_type)}</div>
+            {proposal.proposal_type === "generate_owner_settlements" && Array.isArray(command.after.settlements) && (
+              <div style={{ display: "grid", gap: 12, marginTop: 12 }}>
+                {command.after.settlements.map((raw, index) => {
+                  const row = raw as Record<string, unknown>;
+                  return <section key={stringValue(row.settlement_id)} aria-label={`业主账单 ${index + 1}`}>
+                    <div>业主：{stringValue(row.owner_name ?? row.owner_id)}</div>
+                    <div>净收入 {money(row.total_net_revenue)} · 分成 {money(row.owner_amount)}</div>
+                    <div>扣除支出 {money(row.deducted_expenses)} · 应付业主 {money(row.actual_owner_amount)}</div>
+                    <div>房间：{Array.isArray(row.room_ids) ? row.room_ids.join("、") : "—"}</div>
+                  </section>;
+                })}
+                <p style={{ margin: 0 }}>仅生成待确认账单，不确认业主结算或登记收付款。人工核对发现差异时，应先修正再重算。</p>
+              </div>
+            )}
             <div>{isOta ? `OTA账单证据 · 第 ${index + 1} 条差异` : `原件与规则证据 · 第 ${index + 1} 项`}</div>
             {proposal.proposal_type === "ota_appeal_adjudication" && (
               <>
@@ -386,7 +405,8 @@ export function ProposalCard({
         {attemptState && <Alert type={attemptState.type} showIcon message={attemptState.message} />}
         {error && <Alert type="error" showIcon message={error} />}
 
-        {proposal.status === "rejected" && onEditRecipe && (
+        {(proposal.status === "rejected" || (isAdmin && proposal.proposal_type === "ota_reconciliation"
+          && ["approved", "executed"].includes(proposal.status) && attempt?.status === "failed_safe")) && onEditRecipe && (
           <Button
             style={actionStyle}
             disabled={pending !== null}
@@ -415,7 +435,7 @@ export function ProposalCard({
             disabled={pending !== null}
             onClick={() => void run("confirm-and-apply", onConfirmAndApply!)}
           >
-            确认并完成这项核对
+            {proposal.proposal_type === "generate_owner_settlements" ? "确认生成待核对账单" : "确认并完成这项核对"}
           </Button>
         )}
 

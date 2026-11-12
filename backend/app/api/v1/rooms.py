@@ -377,6 +377,20 @@ async def availability_calendar(
                 }
             current += timedelta(days=1)
 
+    # Keep planned nights/prices intact. Surface live overdue presence separately,
+    # including old stays outside the viewport, using the same resolver as booking guards.
+    from app.core.datetime_helpers import today_cn
+    from app.services.room_presence import current_room_presence
+    today = today_cn()
+    if month_start <= today <= month_end:
+        for presence in await current_room_presence(db, today):
+            if presence.checkout_date < today and presence.room_id in calendar:
+                calendar[presence.room_id]["overdue_stay"] = {
+                    "order_id": presence.order_id,
+                    "expected_checkout_date": presence.checkout_date.isoformat(),
+                    "as_of_date": today.isoformat(),
+                }
+
     return list(calendar.values())
 
 

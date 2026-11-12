@@ -398,15 +398,23 @@ class AssistantReply(_SafeReplyDTO):
             facts_model is WorkChatFacts and isinstance(self.facts.get("spec"), dict)
             and "repair_fees" not in self.facts["spec"]
         )
+        legacy_work_comparison = (
+            facts_model is WorkChatFacts and isinstance(self.facts.get("comparison"), dict)
+            and "outside_source_count" not in self.facts["comparison"]
+        )
         self.facts = facts_model.model_validate(self.facts).model_dump(
             mode="json", exclude_none=facts_model not in {CleaningInvestigationFacts, FinancialCaseFacts}
         )
         if legacy_work_spec:
             # Preserve the canonical bytes used to verify pre-fee chat history.
             self.facts["spec"].pop("repair_fees", None)
-        if facts_model is FinancialCaseFacts and self.facts.get("report_snapshot") is None:
-            # Preserve hashes of financial replies saved before full report exports.
-            self.facts.pop("report_snapshot", None)
+        if legacy_work_comparison:
+            self.facts["comparison"].pop("outside_source_count", None)
+        if facts_model is FinancialCaseFacts:
+            # Optional additions must preserve canonical hashes of saved replies.
+            for field in ("report_snapshot", "packet", "source_scope_ids"):
+                if self.facts.get(field) is None:
+                    self.facts.pop(field, None)
         if self.recommended_action:
             self.recommended_action = RecommendedActionDTO.model_validate(
                 self.recommended_action
@@ -1672,6 +1680,10 @@ async def answer_monthly_close_message(
         and (canonical_safe_intent(text) is None or context_run_id)
         else None
     )
+    if month_route in {'preflight', 'settlement_review', 'owner_confirmation'}:
+        # Exact read requests use live deterministic evidence. An older cleaning
+        # discussion or model interpretation must not narrow them to one fee.
+        use_semantic = False
     if not month_route and role == "admin" and context_run_id and not attachment_ids and not _looks_sensitive(text) and re.search(r"为什么|怎么|格式|需要什么|传过|发过|已经传|已经发", text) and not re.search(r"删|执行|确认|批准|补齐|恢复|撤销|取消", text):
         context_run = await db.get(MonthlyCloseRun, context_run_id)
         if context_run and context_run.actor_id == actor_id and context_run.cycle_id == cycle.cycle_id and context_run.status == "succeeded" and context_run.permission_snapshot.get("role") == role:
@@ -1949,7 +1961,7 @@ async def answer_monthly_close_message(
                 semantic_result = semantic_agent.SemanticDecision(tool="clarify", question=scope_question) if scope_question else fee_review if fee_review else semantic_agent.SemanticDecision.model_validate(local_read_reference) if local_read_reference else semantic_agent.SemanticDecision.model_validate(amount) if amount else _repeat_read_decision(text, semantic_refs, context_run_id)
                 repeated_read = semantic_result is not None and not scope_question
                 if semantic_result is None:
-                    semantic_result = semantic_agent.fee_repair_request(text)
+                    semantic_result = semantic_agent.cleaning_count_button(semantic_context) or semantic_agent.room_correction_decision(semantic_context) or semantic_agent.fee_repair_request(text)
                 if semantic_result is None:
                     if not settings.MONTHLY_CLOSE_ASSISTANT_MODEL_ENABLED or not settings.DEEPSEEK_API_KEY:
                         raise RuntimeError("semantic model unavailable")
@@ -1965,6 +1977,15 @@ async def answer_monthly_close_message(
         if semantic_result:
             if conversation_context.explanation_only(text) and semantic_result.tool in {"preview_cleaning", "preview_restore", "cancel_plan"}:
                 semantic_result = semantic_agent.SemanticDecision(tool="inspect_cleaning", mode="explain", context_ref=semantic_result.context_ref, document_ref=semantic_result.document_ref)
+            if (not semantic_result.context_ref and not semantic_result.document_ref
+                    and semantic_result.tool in {"inspect_work_fees", "preview_cleaning"}
+                    and (semantic_agent.work_fee_review_request(text) or semantic_agent.fee_repair_request(text))):
+                # Exact fee shortcuts inherit only the explicitly selected,
+                # verified cleaning reply, never an arbitrary earlier plan.
+                context_ref = semantic_context.get("explicit_context")
+                context_reply = semantic_refs.get(context_ref)
+                if context_reply and context_reply.tool == "cleaning_work_chat":
+                    semantic_result = semantic_result.model_copy(update={"context_ref": context_ref})
             prior_reply = semantic_refs.get(semantic_result.context_ref)
             if prior_reply and prior_reply.tool == "cleaning_work_chat":
                 previous_work_chat = WorkChatFacts.model_validate(prior_reply.facts)

@@ -1,4 +1,5 @@
 import type { AssistantProgress } from "@/lib/monthly-close-chat-stream";
+import type { ReviewContext } from "@/lib/monthly-close-review";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { monthlyCloseApi, settlementsApi } from "@/lib/api";
@@ -35,7 +36,7 @@ function snapshotMatchesScope(snapshot: MonthlyCloseProjection, storedScope: str
 }
 
 export type MonthlyCloseWorkspaceApi = Pick<typeof monthlyCloseApi,
-  "getProjection" | "listEvents" | "postMessage" | "getProjectionDocument" | "uploadDocument" | "receiveInbox"> & Partial<Pick<typeof monthlyCloseApi, "listMessages" | "postMessageStream">>;
+  "getProjection" | "listEvents" | "postMessage" | "getProjectionDocument" | "uploadDocument" | "receiveInbox"> & Partial<Pick<typeof monthlyCloseApi, "listMessages" | "postMessageStream" | "getReviewQueue">>;
 
 export function mergeMonthlyCloseEvents(current: MonthlyCloseEvent[], incoming: MonthlyCloseEvent[]) {
   const merged = [...current];
@@ -260,6 +261,13 @@ export function useMonthlyClose(month: string, enabled: boolean, managementEnabl
     };
   }, [authScope?.role, authScopeKey, clearSensitiveState, enabled, eventCursor, month, projectionKey, queryClient, refetchProjection, replayTick, scopedVisibleProjection?.cycle_id, workspaceApi]);
 
+  const reviewQueue = useQuery({
+    queryKey: ["monthly-close-review-queue", ...authScopeParts, month, projection.data?.input_hash],
+    enabled: enabled && authScope?.role === "admin" && !!scopedVisibleProjection && !!workspaceApi.getReviewQueue,
+    staleTime: 15_000,
+    refetchInterval: enabled ? 30_000 : false,
+    queryFn: async ({ signal }) => (await workspaceApi.getReviewQueue!(month, signal)).data,
+  });
   const history = useQuery({
     queryKey: ["monthly-close-chat-history", authScopeKey, month],
     enabled: enabled && !!scopedVisibleProjection && authScope?.role === "admin" && !!workspaceApi.listMessages,
@@ -280,7 +288,7 @@ export function useMonthlyClose(month: string, enabled: boolean, managementEnabl
   const stopMessage = () => activeChat.current?.abort();
   useEffect(() => () => { activeChat.current?.abort(); }, []);
   const sendMessage = useMutation({
-    mutationFn: async ({ text, attachmentIds = [], contextRunId }: { text: string; attachmentIds?: string[]; contextRunId?: string }) => {
+    mutationFn: async ({ text, attachmentIds = [], contextRunId, reviewContext }: { text: string; attachmentIds?: string[]; contextRunId?: string; reviewContext?: ReviewContext }) => {
       const requestScope = acceptedProjectionScope.current;
       const lastReply = replies[replies.length - 1];
       const context = contextRunId ?? (["investigate_cleaning", "cleaning_work_chat", "review_month", "agent_clarification", "get_document_status"].includes(lastReply?.tool ?? "") ? lastReply?.run_id : undefined);
@@ -291,7 +299,9 @@ export function useMonthlyClose(month: string, enabled: boolean, managementEnabl
         const response = workspaceApi.postMessageStream
           ? await workspaceApi.postMessageStream(month, text, attachmentIds, context, (progress) => {
             if (!controller.signal.aborted && requestScope === acceptedProjectionScope.current) setAssistantProgress(progress);
-          }, controller.signal)
+          }, controller.signal, reviewContext)
+          : reviewContext
+          ? await workspaceApi.postMessage(month, text, attachmentIds, context, reviewContext)
           : context
           ? await workspaceApi.postMessage(month, text, attachmentIds, context)
           : await workspaceApi.postMessage(month, text, attachmentIds);
@@ -312,6 +322,7 @@ export function useMonthlyClose(month: string, enabled: boolean, managementEnabl
         ? current
         : [...current, response.data]);
       await queryClient.invalidateQueries({ queryKey: projectionKey, exact: true });
+      await queryClient.invalidateQueries({ queryKey: ["monthly-close-review-queue", ...authScopeParts, month] });
     },
   });
   const loadEvidence = async (documentId: string): Promise<MonthlyCloseProjectedDocument> => {
@@ -504,6 +515,7 @@ export function useMonthlyClose(month: string, enabled: boolean, managementEnabl
   return {
     cycle,
     projection,
+    reviewQueue,
     sourceProposals,
     visibleProjection: scopedVisibleProjection,
     events,

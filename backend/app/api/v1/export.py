@@ -495,8 +495,8 @@ async def export_settlements(
     ws = wb.active
     ws.title = "房东结算"
 
-    # 房东分成/实际结算导出到厘（与页面一致）；净收入/扣除支出到分。
-    from app.services.owner_settlement import settlement_precise_amounts
+    # 与管理端、业主端共用正式分金额，并包含已追加的确认后更正。
+    from app.services.owner_settlement import settlement_current_amounts
     headers = ["结算ID", "房东ID", "结算月", "净收入", "房东分成", "扣除支出", "实际结算", "状态", "备注"]
     ws.append(headers)
     _style_header(ws, len(headers))
@@ -504,31 +504,28 @@ async def export_settlements(
     status_labels = {"pending": "待确认", "confirmed": "已确认", "paid": "已打款", "disputed": "有争议"}
 
     for s in settlements:
-        owner_amount_p, actual_p = settlement_precise_amounts(s.items)
-        # 无明细的旧版结算 precise 为 None → 回退到分（存库值），不显示 0
-        owner_amount_out = float(owner_amount_p if owner_amount_p is not None else s.owner_amount)
-        actual_out = float(actual_p if actual_p is not None else s.actual_owner_amount)
+        current = settlement_current_amounts(s)
         ws.append([
             s.settlement_id,
             s.owner_id,
             s.billing_month,
-            float(s.total_net_revenue),
-            owner_amount_out,
-            float(s.deducted_expenses),
-            actual_out,
+            float(current.total_net_revenue),
+            float(current.owner_amount),
+            float(current.deducted_expenses),
+            float(current.actual_owner_amount),
             status_labels.get(s.status.value if hasattr(s.status, "value") else s.status, str(s.status)),
             s.notes or "",
         ])
-        # 显式数字格式：分成/实际结算(E/G 列)到厘，净收入/扣除支出(D/F 列)到分。
+        # 所有金额统一到分；不对参考厘金额再次整体舍入。
         row = ws.max_row
         ws.cell(row=row, column=4).number_format = "0.00"
-        ws.cell(row=row, column=5).number_format = "0.000"
+        ws.cell(row=row, column=5).number_format = "0.00"
         ws.cell(row=row, column=6).number_format = "0.00"
-        ws.cell(row=row, column=7).number_format = "0.000"
+        ws.cell(row=row, column=7).number_format = "0.00"
 
     # 表尾说明：与页面小字一致，避免业主拿导出对不上到账金额。
     ws.append([])
-    ws.append(["说明：房东分成 / 实际结算精确至厘（元），实际打款按分四舍五入结算。"])
+    ws.append(["说明：结算金额按每个房间先取到分，再汇总；业主级费用另行扣除。应付金额不代表已打款。"])
 
     for col in ws.columns:
         max_len = max((len(str(cell.value or "")) for cell in col), default=10)
@@ -591,6 +588,7 @@ def _stmt_round(x) -> Decimal:
 def _build_statement_wb(settlement, owner, rooms_map: dict, desc_map: dict):
     """rooms_map: room_id -> (room_id, room_name, room_type, community_name)
     desc_map:  expense_id -> description（拆分保洁/续住保洁用）"""
+    from app.services.settlement_fee_export import fee_evidence_key
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = "分成明细"
@@ -660,13 +658,13 @@ def _build_statement_wb(settlement, owner, rooms_map: dict, desc_map: dict):
         tot_net += _stmt_round(i.owner_net_amount)
         tot_share += _stmt_round(_stmt_round(i.owner_net_amount) + _stmt_round(i.owner_expenses))
 
-        for e in (i.cost_share_breakdown or []):
+        for entry_index, e in enumerate(i.cost_share_breakdown or []):
             if e.get("category") == "平台补贴" or e.get("type") == "platform_subsidy":
                 tot_subsidy += _stmt_round(e.get("amount"))
                 continue
             oa = _stmt_round(e.get("owner_amount"))
             col = _statement_column_for(
-                e.get("category", ""), desc_map.get(e.get("expense_id"), "")
+                e.get("category", ""), desc_map.get(fee_evidence_key(i, entry_index, e), "")
             )
             totals[col] += oa
             if oa:
@@ -770,19 +768,9 @@ async def _settlement_export_context(db, settlement_id: str):
             .where(Room.room_id.in_(room_ids))
         )
         rooms_map = {row[0]: row for row in rr.all()}
-    expense_ids = {
-        e.get("expense_id")
-        for i in settlement.items
-        for e in (i.cost_share_breakdown or [])
-        if e.get("expense_id")
-    }
-    desc_map: dict = {}
-    if expense_ids:
-        er = await db.execute(
-            select(Expense.expense_id, Expense.description)
-            .where(Expense.expense_id.in_(expense_ids))
-        )
-        desc_map = {row[0]: row[1] for row in er.all()}
+    from app.services.settlement_fee_export import load_settlement_fee_evidence
+    fees = await load_settlement_fee_evidence(db, settlement)
+    desc_map = {key: fee.description for key, fee in fees.items()}
     return settlement, owner, rooms_map, desc_map
 
 
@@ -1137,6 +1125,25 @@ def _append_income_detail_sheets(wb, income_rows: list[dict], check_rows: list[d
 
 
 async def _append_settlement_fee_sheets(db, wb, settlement, rooms_map, *, full_names=False):
+    from app.services.settlement_fee_adjustments import load_fee_adjustments
+    amendments = await load_fee_adjustments(db, settlement)
+    if amendments:
+        corrections = wb.create_sheet('费用更正记录')
+        corrections.append(['房号','费用日期','原扣费','更正增加','现扣费','确认依据','更正编号'])
+        _style_header(corrections, 7)
+        for record, original, replacement in amendments:
+            corrections.append([original.room_id, str(original.expense_date), float(record.before_amount),
+                float(record.after_amount-record.before_amount), float(record.after_amount), record.reason, record.adjustment_id])
+        corrections.freeze_panes = 'C2'
+        for col in 'ABCDEFG':
+            corrections.column_dimensions[col].width = 24 if col != 'F' else 80
+        for cells in corrections.iter_rows(min_row=2):
+            corrections.row_dimensions[cells[0].row].height = 55
+            for cell in cells:
+                cell.alignment = Alignment(vertical='center', wrap_text=True)
+        corrections.page_setup.orientation = 'landscape'
+        corrections.page_setup.fitToWidth = 1
+        corrections.page_setup.fitToHeight = 0
     from app.services.settlement_fee_export import settlement_fee_rows
     rows = await settlement_fee_rows(db, settlement, rooms_map, full_names=full_names)
     summary = wb.create_sheet('费用汇总说明')
@@ -1210,7 +1217,10 @@ def _append_package_guide(wb, settlement, owner, internal):
     sheet.append(['状态',{'pending':'待确认','confirmed':'已确认，尚未登记打款','paid':'已登记打款','disputed':'有争议，待复核'}.get(settlement.status.value,'待复核')])
     sheet.append(['怎么查账','分成明细查看每间房分成和扣费；收入明细按客人姓名、房号和日期查订单；房号核对查看两表合计是否一致。'])
     sheet.append(['收入口径','按房段退房月份归属。平台到账日可能跨月；结算净收入不等于本月银行到账。'])
+    sheet.append(['金额口径','结算金额按每个房间先取到分，再汇总；业主级费用另行扣除。应付金额不代表已打款。'])
     sheet.append(['费用口径','逐笔扣费依据按客人、房号和日期列出本次扣费，合计与分成明细一致；公司承担费用不扣给业主。自住记录不列入业主订单明细。'])
+    if '费用更正记录' in wb.sheetnames:
+        sheet.append(['费用更正','本账单含管理员确认后的费用更正；原始账单和费用保留，逐笔扣费显示更正后金额，差额及原因见“费用更正记录”。'])
     sheet.append(['次数与晚数','订单条数不等于正常打扫次数，连续续住不能重复收正常保洁；续住打扫单列。跨月续住的日耗按最终退房合并计费，因此不一定等于本月收入明细晚数乘单价。'])
     sheet.append(['尾差说明','逐单四舍五入差额单独列示，不计到任何客人名下。'])
     sheet.append(['文件用途','公司内部核账，含完整客人姓名' if internal else '对外结算，客人姓名已脱敏'])

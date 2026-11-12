@@ -2,6 +2,9 @@ import type { AssistantReply } from "./monthly-close";
 
 export type AssistantProgress = { stage: "received" | "understanding" | "checking" | "planning" | "completed"; message: string };
 const stages = new Set(["received", "understanding", "checking", "planning", "completed"]);
+export class MonthlyCloseChatError extends Error {
+  name = "MonthlyCloseChatError";
+}
 
 /** XHR supplies cumulative responseText. Consume complete frames exactly once. */
 export function createChatStreamReader(onProgress: (progress: AssistantProgress) => void) {
@@ -24,8 +27,8 @@ export function createChatStreamReader(onProgress: (progress: AssistantProgress)
       }
     },
     finish() {
-      if (failure) throw new Error(failure);
-      if (!result?.run_id) throw new Error("连接中断，请刷新查看已保存的结果后再重试");
+      if (failure) throw new MonthlyCloseChatError(failure);
+      if (!result?.run_id) throw new MonthlyCloseChatError("连接中断，请刷新查看已保存的结果后再重试");
       return result;
     },
   };

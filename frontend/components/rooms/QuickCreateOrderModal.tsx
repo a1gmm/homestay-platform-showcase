@@ -1,10 +1,12 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
-import { Modal, Form, Select, Input, Row, Col, message, Alert, Radio } from "antd";
+import React, { useEffect, useRef, useState } from "react";
+import { Modal, Form, Select, Input, Row, Col, message, Alert, Radio, Button } from "antd";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { roomsApi, extractErrorMessage, isDuplicateOrderError } from "@/lib/api";
-import { createOrdersAndMarkSeen } from "@/lib/create-orders";
+import { extractConflictOrderId } from "@/lib/api-errors";
+import { createOrdersAndMarkSeen, PartialOrderCreationError } from "@/lib/create-orders";
+import { createOrderDecisionResolver } from "@/components/orders/confirmOrderCreation";
 import { useNewOrderStore } from "@/lib/new-order-store";
 import type { OrderCreate, RoomOut, BookingType } from "@/lib/types";
 import { isPhonePriceExempt } from "@/lib/types";
@@ -44,6 +46,7 @@ export function QuickCreateOrderModal({ open, initial, onClose, onSuccess }: Pro
   const isMobile = useIsMobile();
   const qc = useQueryClient();
   const [form] = Form.useForm();
+  const resumeGuest = useRef<string | null>(null);
   // 订单类型决定必填星号：试住/自住单豁免手机号、实收（客人实付已全局选填）。
   const bookingType = Form.useWatch("booking_type", form) as BookingType | undefined;
   const phonePriceExempt = isPhonePriceExempt(bookingType);
@@ -62,7 +65,8 @@ export function QuickCreateOrderModal({ open, initial, onClose, onSuccess }: Pro
     // allow_duplicate，只有第一张可能触发「同客重复单」拦截。
     // markSeen 在 helper 的循环内逐单调（不是等 onSuccess）——否则多房单建到一半时
     // 新订单轮询醒来，会把已建好的单弹给刚录完它的前台自己。
-    mutationFn: (payloads: OrderCreate[]) => createOrdersAndMarkSeen(payloads, markSeen),
+    mutationFn: (payloads: OrderCreate[]) => createOrdersAndMarkSeen(payloads, markSeen, createOrderDecisionResolver()),
+    meta: { silent: true },
     onSuccess: (_data, payloads: OrderCreate[]) => {
       const n = payloads?.length ?? 1;
       message.success(n > 1 ? `已按房间拆成 ${n} 张订单创建成功` : "订单创建成功");
@@ -72,8 +76,15 @@ export function QuickCreateOrderModal({ open, initial, onClose, onSuccess }: Pro
       onSuccess?.();
       onClose();
     },
-    // 重复单 409 走下方 mutateWithDupConfirm 的确认对话框，不再重复弹 toast。
+    // 确认由逐单创建助手处理；这里保留可重试的表单状态。
     onError: (e) => {
+      if (e instanceof PartialOrderCreationError) {
+        resumeGuest.current = form.getFieldValue("guest_name");
+        form.setFieldValue("rooms", (form.getFieldValue("rooms") ?? []).slice(e.createdIds.length));
+        form.setFieldValue("ota_owner_revenue", e.remainingPayloads.length === 1
+          ? e.remainingPayloads[0].ota_owner_revenue : undefined);
+        void qc.invalidateQueries({ queryKey: ["orders"] });
+      }
       if (isDuplicateOrderError(e)) return;
       // Keep one persistent error in the form instead of stacking identical toasts.
       void qc.invalidateQueries({ queryKey: ["rooms"] });
@@ -81,11 +92,13 @@ export function QuickCreateOrderModal({ open, initial, onClose, onSuccess }: Pro
   });
 
   const { reset: resetCreateMutation } = createMutation;
+  const conflictOrderId = extractConflictOrderId(createMutation.error);
 
   // 重置 + 应用预填值（甘特图点格子带进来的房间/日期作为第一行）
   useEffect(() => {
     if (!open) return;
     form.resetFields();
+    resumeGuest.current = null;
     resetCreateMutation();
     setChannel("self_acquired");
     if (initial) {
@@ -109,23 +122,8 @@ export function QuickCreateOrderModal({ open, initial, onClose, onSuccess }: Pro
     }
   }, [open, initial, form, resetCreateMutation]);
 
-  // 同客同日期重复单：后端 409（duplicate_order）拦下 → 弹确认，
-  // 用户确认「同名不同客」后第一张也带 allow_duplicate 重发整批。
-  const mutateWithDupConfirm = (payloads: OrderCreate[]) =>
-    createMutation.mutate(payloads, {
-      onError: (err) => {
-        if (!isDuplicateOrderError(err)) return;
-        Modal.confirm({
-          title: "疑似重复订单",
-          content: extractErrorMessage(err),
-          okText: "确为不同客人，继续创建",
-          cancelText: "返回检查",
-          okButtonProps: { danger: true },
-          onOk: () =>
-            createMutation.mutate(payloads.map((p) => ({ ...p, allow_duplicate: true }))),
-        });
-      },
-    });
+  // Decisions are handled inside the per-order loop, so an earlier room is never retried.
+  const submitOrders = (payloads: OrderCreate[]) => createMutation.mutate(payloads);
 
   // 试住/自住单：某行选了房且本行实收为空时，自动带入该房挂牌价（仅填空，不覆盖）。
   const fillRowBasePrice = (idx: number, roomId?: string | null) => {
@@ -150,6 +148,7 @@ export function QuickCreateOrderModal({ open, initial, onClose, onSuccess }: Pro
     const payload: OrderCreate = {
       channel: values.channel,
       guest_name: values.guest_name,
+      allow_duplicate: resumeGuest.current === values.guest_name || undefined,
       guest_phone: values.guest_phone || undefined, // issue#3: 选填
       booking_type: (values.booking_type || "normal") as BookingType, // issue#6
       rooms: roomPayload,
@@ -176,11 +175,11 @@ export function QuickCreateOrderModal({ open, initial, onClose, onSuccess }: Pro
         okText: "确定这样保存",
         cancelText: "返回修改",
         okButtonProps: { danger: true },
-        onOk: () => mutateWithDupConfirm(splitOrderPayloadByRoom(payload)),
+        onOk: () => submitOrders(splitOrderPayloadByRoom(payload)),
       });
       return;
     }
-    mutateWithDupConfirm(splitOrderPayloadByRoom(payload));
+    submitOrders(splitOrderPayloadByRoom(payload));
   };
 
   const isPlatform = PLATFORM_CHANNELS.has(channel);
@@ -204,6 +203,12 @@ export function QuickCreateOrderModal({ open, initial, onClose, onSuccess }: Pro
         <Alert
           type="error"
           message={extractErrorMessage(createMutation.error)}
+          description={conflictOrderId ? (
+            <Button href={`/orders?order_id=${encodeURIComponent(conflictOrderId)}`}
+              target="_blank" rel="noopener noreferrer" style={{ minHeight: 44 }}>
+              查看占用订单
+            </Button>
+          ) : undefined}
           style={{ marginBottom: 12, borderRadius: 8 }}
           showIcon
           closable
@@ -213,6 +218,7 @@ export function QuickCreateOrderModal({ open, initial, onClose, onSuccess }: Pro
 
       <Form
         form={form}
+        disabled={createMutation.isPending}
         layout="vertical"
         onFinish={onFinish}
         initialValues={{

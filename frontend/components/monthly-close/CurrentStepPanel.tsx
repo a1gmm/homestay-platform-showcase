@@ -226,7 +226,12 @@ export function CurrentStepPanel({
     params.set("returnTo", returnTo);
     router.push(`${action.path}?${params.toString()}`);
   };
-  const stepInstruction = step.status === "confirmed"
+  const isBillCheck = step.step_key === "preflight";
+  const stepInstruction = isBillCheck
+    ? step.blocking_count > 0
+      ? `本月账单检查发现 ${step.blocking_count} 项待核实问题，具体依据见下方。`
+      : "本月账单检查：当前未发现阻断问题。业主账单确认、付款登记和公司关账分别处理。"
+    : step.status === "confirmed"
     ? "已完成，下面内容仅供查看。"
     : waitingForPrevious
       ? `请先完成“${currentStepLabel}”，再处理这一步。`
@@ -254,7 +259,7 @@ export function CurrentStepPanel({
           <h2 className="serif" style={{ margin: 0, fontSize: 22, lineHeight: 1.4 }}>{step.label}</h2>
           <div style={{ marginTop: 4, color: tokens.color.text.secondary, lineHeight: 1.6 }}>{stepInstruction}</div>
         </div>
-        {(waitingForPrevious || staleWaitingForPrevious) && cycle.current_step && (
+        {!isBillCheck && (waitingForPrevious || staleWaitingForPrevious) && cycle.current_step && (
           <Button style={{ flex: "none" }} onClick={() => onSelectStep?.(cycle.current_step as string)}>
             回到{currentStepLabel} →
           </Button>

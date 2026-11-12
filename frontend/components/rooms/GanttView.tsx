@@ -36,6 +36,7 @@ import {
 import dayjs, { Dayjs } from "dayjs";
 import { StaySettlementLabel } from "@/components/ui/StaySettlementLabel";
 import { usePrivacyMode } from "@/hooks/usePrivacyMode";
+import { OverdueRoomNotice } from "./OverdueRoomNotice";
 
 const WEEKDAY_LABEL = ["日", "一", "二", "三", "四", "五", "六"];
 
@@ -993,6 +994,9 @@ export function GanttView({
                             }}
                           >
                             <div style={{ minWidth: 0, flex: 1 }}>
+                              {room.overdue_stay?.as_of_date === todayStr ? (
+                                <OverdueRoomNotice room={room} onOrderClick={onOrderClick} />
+                              ) : <>
                               <div
                                 style={{
                                   display: "flex",
@@ -1064,6 +1068,7 @@ export function GanttView({
                                   </Tag>
                                 )}
                               </div>
+                              </>}
                             </div>
                             {menuItems.length > 0 && (
                               <Dropdown
@@ -1098,6 +1103,7 @@ export function GanttView({
                             !!booking &&
                             (idx === days.length - 1 || !isSameBlock(booking, nextBooking));
                           const isToday = day === todayStr;
+                          const overdueEmptyCell = isToday && !booking && room.overdue_stay?.as_of_date === day;
                           const isBlock =
                             !!booking && (booking.order_id == null || String(booking.status).startsWith("block:"));
                           // 已离店的单（已退房/已完成）不该在「今天」盖住「保洁中」：客人已走、房在打扫，
@@ -1235,17 +1241,19 @@ export function GanttView({
                               onClick={() => {
                                 if (booking?.order_id && onOrderClick) {
                                   onOrderClick(booking.order_id);
+                                } else if (overdueEmptyCell) {
+                                  onOrderClick?.(room.overdue_stay!.order_id);
                                 } else if (!privacyMode && !booking && onCellClick) {
                                   onCellClick(room.room_id, day, null);
                                 }
                               }}
                               onDragOver={
-                                !privacyMode && onCellDragOver
+                                !privacyMode && !overdueEmptyCell && onCellDragOver
                                   ? (e) => onCellDragOver(room.room_id, day, booking ?? null, e)
                                   : undefined
                               }
                               onDrop={
-                                !privacyMode && onCellDrop
+                                !privacyMode && !overdueEmptyCell && onCellDrop
                                   ? (e) => onCellDrop(room.room_id, day, booking ?? null, e)
                                   : undefined
                               }
@@ -1556,7 +1564,13 @@ export function GanttView({
                                   );
                                 }
                                 return cellContent;
-                              })()) : cleaningEmptyCell ? (
+                              })()) : overdueEmptyCell ? (
+                                <div title={`原定 ${room.overdue_stay!.expected_checkout_date} 退房，系统仍记为在住；点击查看原订单`}
+                                  style={{ padding: 4, color: tokens.anyu.color.clay, textAlign: "center", fontSize: 11,
+                                    background: tokens.anyu.color.sand, border: `1px dashed ${tokens.anyu.color.clay}`, borderRadius: 8 }}>
+                                  超期未退
+                                </div>
+                              ) : cleaningEmptyCell ? (
                                 // 兜底金盒：今天格空、旁边也没有可叠标的已退房订单条
                                 //（客人早已离店、房仍没清扫）。整格金色「保洁中」，
                                 // 至少让前台知道这房还没清扫、不能进新客。

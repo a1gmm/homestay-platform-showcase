@@ -66,11 +66,26 @@ class WorkLogComparison(BaseModel):
     effective_record_count: int = 0
     resolutions: list[dict] = Field(default_factory=list)
     recorded_count: int = 0
+    outside_source_count: int = 0
     importable_count: int = 0
     records: list[dict] = Field(default_factory=list)
     differences: list[WorkLogDifference] = Field(default_factory=list)
     basis: str = "以表格的日期、房间和打扫类型为核对依据；忽略超出数量、续住打扫次数及金额。同格简写沿用前一个完整四位房号的前两位，例如1607.08读取为1607、1608。"
     note: str = "正常打扫按系统完成时间（北京时间）核对，续住打扫按申请日期及完成状态核对。管理员确认的历史打扫记录也作为完成依据；重复项和表外记录仍需单独核实。"
+
+
+def parse_work_document(document, billing_month):
+    entries = parse_cleaning_work_log(document.content, document.filename, billing_month)
+    if entries is None:
+        return None
+    corrections = (document.metadata_ or {}).get("work_log_room_corrections", [])
+    for correction in corrections:
+        if correction.get("document_sha256") != document.sha256:
+            raise ServiceStatementError("房号更正所依据的原表已变化，请重新核实")
+        for index, entry in enumerate(entries):
+            if all(getattr(entry, field) == correction[field] for field in ("source_sheet", "source_row", "service_date", "service_type")) and entry.room_ref == correction["original_room"]:
+                entries[index] = entry.model_copy(update={"room_ref": correction["room_ref"]})
+    return entries
 
 
 def parse_cleaning_work_log(
@@ -202,6 +217,7 @@ async def compare_cleaning_work_log(
     document_id: str | None = None,
     *,
     apply_resolutions: bool = True,
+    source_scope: bool = False,
 ) -> WorkLogComparison:
     year, month = map(int, billing_month.split("-"))
     first = date(year, month, 1)
@@ -351,9 +367,16 @@ async def compare_cleaning_work_log(
                     resolution.service_type,
                 )
             ] = (resolution, name)
-    for key in sorted(
-        set(table) | set(system) | (set(resolutions) if apply_resolutions else set())
-    ):
+    keys = set(table) | set(system) | (set(resolutions) if apply_resolutions else set())
+    if source_scope:
+        # A worker's sheet is evidence for its listed visits, not a complete
+        # inventory of everybody's work during the month.
+        keys = set(table) | (set(resolutions) if apply_resolutions else set())
+        result.outside_source_count = sum(len(found) for key, found in system.items() if key not in keys)
+        result.records = [row for row in result.records if (row["service_date"], row["room_ref"], row["service_type"]) in keys]
+        result.recorded_count = sum(row["quantity"] for row in result.records)
+        result.note = "仅核对本表列出的日期、房间和打扫类型；表外记录不算差异，也不会按本表删除。"
+    for key in sorted(keys):
         source, found = table[key], system[key]
         source_entries = [entry.model_dump() for entry in source]
         system_evidence = [

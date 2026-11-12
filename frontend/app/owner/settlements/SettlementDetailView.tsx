@@ -12,7 +12,7 @@ import dayjs from "dayjs";
 import type { SettlementBrief, SettlementDetail } from "@/lib/owner-api";
 import { SETTLEMENT_TERM_TIPS, formatShareRatio } from "@/lib/owner-settlement-terms";
 import { aggregateBreakdown, aggregateRoomBreakdown, round2, type ExpenseLineItem } from "@/lib/owner-expense-breakdown";
-import { fmtMille, MILLE_NOTE } from "@/lib/utils";
+import { fmtSettlementAmount, SETTLEMENT_ROUNDING_NOTE } from "@/lib/utils";
 
 export const STATUS_LABEL: Record<string, { label: string; color: string }> = {
   pending: { label: "待确认", color: "orange" },
@@ -21,17 +21,7 @@ export const STATUS_LABEL: Record<string, { label: string; color: string }> = {
   disputed: { label: "有争议", color: "red" },
 };
 
-export const fmt = (n: string | number | null | undefined) => {
-  // null/undefined = 隐藏金额账号后端置空 → 「——」（真实 0 仍显示 0.00）。
-  if (n === null || n === undefined) return "——";
-  const v = typeof n === "string" ? parseFloat(n) : n;
-  if (Number.isNaN(v)) return "——";
-  return v.toLocaleString("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-};
-
-// 到厘展示 + 小字统一走 lib/utils（管理端/业主端共用一处口径）。
-// 本文件转出，便于 page.tsx 与组件测试从同一处 import。
-export { fmtMille, MILLE_NOTE };
+export const fmt = fmtSettlementAmount;
 
 // 术语标签 + ⓘ 解释。trigger 带 click:手机上没有 hover,业主一定是点出来的;
 // padding 撑大可点区域(移动端军规,纯图标 11px 根本点不中)。
@@ -107,7 +97,7 @@ function ExpenseSummary({ totals, expected }: { totals: ExpenseLineItem[]; expec
   );
 }
 
-// 结算详情视图：概览深色卡（实际打款 + 净收入/扣除）+ 按房间明细。移动端 Drawer 与桌面右栏共用。
+// 结算详情视图：概览深色卡（本期应付 + 净收入/扣除）+ 按房间明细。移动端 Drawer 与桌面右栏共用。
 // 结算状态（待确认/已确认/已打款）是内部流转口径，业主端不展示，概览固定两列。
 export function SettlementDetailView({ detail }: { detail: SettlementDetail }) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
@@ -125,20 +115,20 @@ export function SettlementDetailView({ detail }: { detail: SettlementDetail }) {
     <div>
       <div data-testid="settlement-overview" style={{ background: "#2B2721", borderRadius: 16, padding: 20, color: "#FBF8F1", marginBottom: 16 }}>
         <div style={{ fontSize: 12, color: "#A89680" }}>
-          <Term label="实际打款金额" tipKey="actual_owner_amount" light /> · {detail.billing_month}
+          <Term label="本期应付金额" tipKey="actual_owner_amount" light /> · {detail.billing_month}
         </div>
         <div className="serif" style={{ fontSize: 32, fontWeight: 400, marginTop: 6, letterSpacing: 0 }}>
-          ¥{fmtMille(detail.actual_owner_amount_precise, detail.actual_owner_amount)}
+          ¥{fmt(detail.actual_owner_amount)}
         </div>
         {/* 口径前置：让业主看到扣除是公式的一部分，不是事后刨的。
             刻意不写「净收入 × 70%」——系统是逐房算分成再求和，总额乘一次会差
             1 分（张总 2026-06 实测 16579.39 vs 16579.38）。印一个业主一按计算器
             就对不上的算式，是自己制造信任事故。这两步是精确的。 */}
         <div style={{ marginTop: 12, fontSize: 11, color: "#A89680", lineHeight: 1.9 }}>
-          <div>分成 ¥{fmtMille(detail.owner_amount_precise, detail.owner_amount)}</div>
+          <div>分成 ¥{fmt(detail.owner_amount)}</div>
           <div>− 业主承担支出 ¥{fmt(detail.deducted_expenses)}</div>
-          <div style={{ color: "#FBF8F1" }}>= 实际打款 ¥{fmtMille(detail.actual_owner_amount_precise, detail.actual_owner_amount)}</div>
-          <div style={{ marginTop: 6, color: "#8A7B63" }}>{MILLE_NOTE}</div>
+          <div style={{ color: "#FBF8F1" }}>= 本期应付 ¥{fmt(detail.actual_owner_amount)}</div>
+          <div style={{ marginTop: 6, color: "#8A7B63" }}>{SETTLEMENT_ROUNDING_NOTE}</div>
         </div>
         <div
           style={{
@@ -188,7 +178,7 @@ export function SettlementDetailView({ detail }: { detail: SettlementDetail }) {
                 </div>
                 <Tooltip title={SETTLEMENT_TERM_TIPS.room_owner_net} trigger={["hover", "click"]}>
                   <div className="serif" style={{ color: "#2B2721", fontWeight: 400, letterSpacing: 0, cursor: "help" }}>
-                    ¥{fmtMille(it.owner_net_amount_precise, it.owner_net_amount)}
+                    ¥{fmt(it.owner_net_amount)}
                   </div>
                 </Tooltip>
               </div>
@@ -253,7 +243,7 @@ export function SettlementCard({ s, onClick, selected }: { s: SettlementBrief; o
         </div>
         <div style={{ textAlign: "right" }}>
           <div className="serif" style={{ fontSize: 18, fontWeight: 400, color: "#2B2721", letterSpacing: 0 }}>
-            ¥{fmtMille(s.actual_owner_amount_precise, s.actual_owner_amount)}
+            ¥{fmt(s.actual_owner_amount)}
           </div>
         </div>
       </div>

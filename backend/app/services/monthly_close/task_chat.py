@@ -117,7 +117,7 @@ async def answer_task_command(db, cycle, current, text, attachment_ids=None, con
     elif task["status"] in {"paused", "failed", "waiting_user", "waiting_approval"}:
         task = await resume_task(db, cycle.cycle_id, current["user_id"], expected_revision=task["revision"])
     message = (
-        "本月任务已完成交付核验，可在任务中下载业主结算单和订单明细。正式业主确认、付款和关账仍以系统中的实际记录为准。"
+        "本月任务已完成交付核验，可在任务中下载业主结算单和订单明细。确认全部业主账单后，可完成本月业主对账；实际打款另行登记。"
         if task["status"] == "succeeded" else
         "已开始本月完整核对。我会读取现有资料、准备补齐与费用方案，确认后继续推进，最后核验业主结算单和订单明细。进度保存在本月任务中，关闭页面后仍会继续；缺少的事实会集中列出。"
     )

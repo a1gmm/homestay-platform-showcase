@@ -54,7 +54,7 @@ async def find_checkout_continuations(db, order, statuses=_UPCOMING_STATUSES,
     )).scalars().all()
     return await _next_segments_per_room(
         db,
-        frontiers=[(r.room_id, r.check_out_date) for r in rooms],
+        frontiers=[(r.room_id, r.check_out_date, None) for r in rooms],
         exclude_order_ids=[order.order_id],
         guest_name=order.guest_name,
         statuses=statuses,
@@ -63,14 +63,15 @@ async def find_checkout_continuations(db, order, statuses=_UPCOMING_STATUSES,
 
 
 async def find_group_continuations(db, order, statuses=_LINKABLE_STATUSES,
-                                   require_same_name: bool = False) -> list[dict]:
+                                   require_same_name: bool = False,
+                                   candidate_order_id: str | None = None) -> list[dict]:
     """本单所在**续住组**（未成组 = 本单自己）里，每间房各自的续段候选，每间房至多一条。
 
     与 find_checkout_continuations 的差别只在**从哪儿往后找**：
 
     - 旧口径（`resolve_link_base`，#339）：把整组收敛成「退房日最晚的那一张单」，
       再从那张单的房间出发。
-    - 本函数：按**房间**逐间取组内该房的最晚退房日出发。
+    - 本函数：按**房间**逐间从连续段的退房日出发，先补中间缺口，再往末段续接。
 
     为什么必须按房间（生产事故 程鹏 2026-07-26）：携程「同客多间」是**一张单挂多间房**
     （ORD-20260723-0A1A = 1608+1609）。合并掉 1608 那条腿之后，组末段是只含 1608 的那张
@@ -78,24 +79,38 @@ async def find_group_continuations(db, order, statuses=_LINKABLE_STATUSES,
     从只剩 1608 的末段往后找会命中 1608 的**下一位客人**，一点关联就把陌生人拴进本组
     （= 一个门锁密码发给两拨客人）。
 
-    按房间走同时保留 #339 的扩段能力：某间房已经续到第 N 段，该房的出发点自然就是第 N 段
-    的退房日，N 段可无限续接（沈桑场景）。未成组时组 = 本单，行为与旧口径逐字节一致。
+    中间段删除/取消后，仍需能找回紧接缺口起点的补单；只取 max(退房日) 会让它永久
+    消失。补单不得跨入下一段已占日期。连续组仍只从末段续接，未成组时行为不变。
     """
     members = await _alive_group_members(db, order)
     member_ids = [m.order_id for m in members]
-    frontiers = (await db.execute(
-        select(OrderRoom.room_id, func.max(OrderRoom.check_out_date))
+    room_rows = (await db.execute(
+        select(OrderRoom.room_id, OrderRoom.check_in_date, OrderRoom.check_out_date)
         .where(OrderRoom.order_id.in_(member_ids), OrderRoom.room_id.isnot(None))
-        .group_by(OrderRoom.room_id)
-        .order_by(OrderRoom.room_id)      # 候选顺序确定，避免前端「第一条」漂移
+        .order_by(OrderRoom.room_id, OrderRoom.check_in_date, OrderRoom.check_out_date)
     )).all()
+    # Merge touching/overlapping allocations before looking for gaps. A candidate
+    # may fill only part of a gap, but must not overwrite the next linked segment.
+    intervals_by_room: dict[str, list] = {}
+    for rid, ci, co in room_rows:
+        intervals = intervals_by_room.setdefault(rid, [])
+        if intervals and ci <= intervals[-1][1]:
+            intervals[-1] = (intervals[-1][0], max(intervals[-1][1], co))
+        else:
+            intervals.append((ci, co))
+    frontiers = [
+        (rid, co, intervals[index + 1][0] if index + 1 < len(intervals) else None)
+        for rid, intervals in intervals_by_room.items()
+        for index, (_, co) in enumerate(intervals)
+    ]
     return await _next_segments_per_room(
         db,
-        frontiers=[(rid, co) for rid, co in frontiers],
+        frontiers=frontiers,
         exclude_order_ids=member_ids,
         guest_name=order.guest_name,
         statuses=statuses,
         require_same_name=require_same_name,
+        candidate_order_id=candidate_order_id,
     )
 
 
@@ -118,15 +133,19 @@ async def _alive_group_members(db, order) -> list[Order]:
 
 
 async def _next_segments_per_room(db, *, frontiers, exclude_order_ids, guest_name,
-                                  statuses, require_same_name: bool) -> list[dict]:
+                                  statuses, require_same_name: bool,
+                                  candidate_order_id: str | None = None) -> list[dict]:
     """「紧接着的下一段」的单一定义：同房 + 入住日 == 出发日 + 状态可关联（+ 可选同客）。
 
-    frontiers = [(room_id, 出发日)]；每间房至多返回一条。两个调用方（单张单 / 整组）只是
+    frontiers = [(room_id, 出发日, 下一段入住日或 None)]；每间房至多返回一条。两个调用方（单张单 / 整组）只是
     出发日算法不同，匹配口径必须同源，否则「看着像续住」提示、弹窗候选、实际关联会各说各话。
     """
     guest = (guest_name or "").strip()
     out: list[dict] = []
-    for room_id, frontier in frontiers:
+    matched_rooms: set[str] = set()
+    for room_id, frontier, next_start in frontiers:
+        if room_id in matched_rooms:
+            continue
         conds = [
             OrderRoom.room_id == room_id,
             OrderRoom.check_in_date == frontier,          # 首尾相连
@@ -134,6 +153,12 @@ async def _next_segments_per_room(db, *, frontiers, exclude_order_ids, guest_nam
             Order.is_deleted.is_(False),
             Order.order_status.in_(statuses),
         ]
+        if next_start is not None:
+            conds.append(OrderRoom.check_out_date <= next_start)
+        if candidate_order_id is not None:
+            # Validate the chosen order itself. A different candidate found first
+            # (including one hidden by the same-name hint) must not make it invalid.
+            conds.append(Order.order_id == candidate_order_id)
         if require_same_name:
             conds.append(func.trim(Order.guest_name) == guest)  # 同客（去空格，与建单去重同口径）
         nxt = (await db.execute(
@@ -144,6 +169,7 @@ async def _next_segments_per_room(db, *, frontiers, exclude_order_ids, guest_nam
             .limit(1)
         )).first()
         if nxt:
+            matched_rooms.add(room_id)
             out.append({
                 "room_id": room_id,
                 "next_order_id": nxt.order_id,

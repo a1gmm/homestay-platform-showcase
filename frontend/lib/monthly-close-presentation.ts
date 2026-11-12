@@ -53,7 +53,9 @@ export function presentDocumentProgress(
       detail: "请检查文件格式后重新上传；如果仍然失败，请联系管理员。",
     };
   }
+  if (document.work_review_state === "checked") return { stage: "completed", label: "打扫记录与续住费用已核对", detail: "当前记录和费用已对应。供应商付款、业主确认与整月关账分别处理。" };
   if (sourceState === "completed") return COMPLETED;
+  if (document.work_review_state === "fees_pending") return { stage: "needs_confirmation", label: "打扫记录已核对，续住费用待处理", detail: "不用再次补齐打扫记录。请继续核对已有费用与待补费用。" };
   if (document.work_record_count) return { stage: "needs_confirmation", label: `已补齐 ${document.work_record_count} 条历史打扫记录`, detail: "补齐结果已保存。打开核对界面可查看已补齐记录和剩余差异。" };
   if (document.analysis_state === "work_log_ready") return {
     stage: "needs_confirmation", label: "已识别打扫记录",
@@ -87,7 +89,11 @@ export function presentDocumentProgress(
       detail: "文件已经保存。请重新识别；仍然失败时，让管理员选择资料类型。",
     };
   }
-  if (["not_started", "queued", "running"].includes(document.analysis_state)) {
+  if (document.analysis_state === "not_started") return {
+    stage: "uploaded", label: "原件已保存，等待核对",
+    detail: "原件已保存，尚无正在运行的识别任务。请查看已有处理记录，再继续核对。",
+  };
+  if (["queued", "running"].includes(document.analysis_state)) {
     return {
       stage: "recognizing",
       label: "正在识别",

@@ -331,6 +331,35 @@ def recognize_mapping_coordinates(
     return candidates[0] if len(candidates) == 1 else None
 
 
+def recognize_platform_and_summary(sheets, coordinates):
+    """Recognize the complete Ctrip export header, never a filename hint.
+
+    Only a unique numeric settlement-period control is used as an independent
+    total. Multiple periods remain for manual selection rather than being summed.
+    """
+    header = {_normalized_label(value) for value in sheets[coordinates.sheet][coordinates.header_row]}
+    if not {"订单号", "结算价", "间夜", "订单折前底价", "底价折扣金额", "底价补款金额", "闪住杂费"} <= header:
+        return PlatformScope.all_ota, coordinates
+    controls = []
+    for sheet, rows in sheets.items():
+        for index, row in enumerate(rows):
+            labels = [_normalized_label(value) for value in row]
+            if not all(labels.count(label) == 1 for label in ("结算周期", "结算价", "间夜数")):
+                continue
+            period_col, amount_col = labels.index("结算周期"), labels.index("结算价")
+            for detail_index, detail in enumerate(rows[index + 1:], index + 1):
+                if not re.fullmatch(r"\d{8}-\d{8}", str(_cell(detail, period_col)).strip()):
+                    continue
+                value = _cell(detail, amount_col)
+                amount, invalid = _dec_checked(value)
+                if value is None or not str(value).strip() or invalid or not amount.is_finite():
+                    continue
+                controls.append(CellRef(sheet=sheet, row=detail_index, col=amount_col))
+    if len(controls) == 1:
+        coordinates = coordinates.model_copy(update={"summary_cell": controls[0]})
+    return PlatformScope.ctrip_family, coordinates
+
+
 def _mapped_business_labels(row: list, coordinates: MappingCoordinates) -> tuple[str, ...]:
     return tuple(_normalized_label(_cell(row, col)) for col in (
         coordinates.col_order_no,

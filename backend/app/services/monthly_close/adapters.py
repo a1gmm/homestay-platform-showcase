@@ -5767,10 +5767,12 @@ async def preflight_snapshot(
 async def settlement_review_snapshot(
     db: AsyncSession, cycle: MonthlyCloseCycle
 ) -> dict[str, Any]:
+    from sqlalchemy.orm import selectinload
+    from app.services.owner_settlement import settlement_current_amounts
     settlements = list(
         (
             await db.execute(
-                select(OwnerSettlement)
+                select(OwnerSettlement).options(selectinload(OwnerSettlement.items))
                 .where(OwnerSettlement.billing_month == cycle.billing_month)
                 .order_by(OwnerSettlement.settlement_id)
             )
@@ -5809,10 +5811,10 @@ async def settlement_review_snapshot(
         {
             "settlement_id": item.settlement_id,
             "owner_id": item.owner_id,
-            "total_net_revenue": str(Decimal(item.total_net_revenue or 0)),
-            "owner_amount": str(Decimal(item.owner_amount or 0)),
-            "deducted_expenses": str(Decimal(item.deducted_expenses or 0)),
-            "actual_owner_amount": str(Decimal(item.actual_owner_amount or 0)),
+            "total_net_revenue": str(settlement_current_amounts(item).total_net_revenue),
+            "owner_amount": str(settlement_current_amounts(item).owner_amount),
+            "deducted_expenses": str(settlement_current_amounts(item).deducted_expenses),
+            "actual_owner_amount": str(settlement_current_amounts(item).actual_owner_amount),
             "disputed": item.status == SettlementStatus.disputed,
         }
         for item in settlements

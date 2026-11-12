@@ -524,6 +524,7 @@ async def archive_document(
     *,
     document_id: str,
     user_id: str,
+    commit: bool = True,
 ) -> MonthlyCloseDocument:
     document = (
         await db.execute(
@@ -649,7 +650,10 @@ async def archive_document(
             "voided_expense_ids": derived_expense_ids,
         },
     )
-    await db.commit()
+    if commit:
+        await db.commit()
+    else:
+        await db.flush()
     await db.refresh(document)
     return document
 

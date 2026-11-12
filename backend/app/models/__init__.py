@@ -147,6 +147,7 @@ __all__ += ["CleaningWorkResolution"]
 from app.models.cleaning_work_removal import CleaningWorkRemoval
 
 from app.models.financial_case import FinancialCaseSource, FinancialCaseProposal
+from app.models.settlement_fee_adjustment import SettlementFeeAdjustment
 __all__ += ["FinancialCaseSource", "FinancialCaseProposal"]
 
 from app.models.monthly_close_task import MonthlyCloseTask
@@ -154,3 +155,6 @@ __all__ += ["MonthlyCloseTask"]
 
 from app.services.monthly_close.task_invalidation import register_task_invalidation
 register_task_invalidation()
+
+from app.models.monthly_close_feedback import MonthlyCloseFeedback
+__all__ += ["MonthlyCloseFeedback"]

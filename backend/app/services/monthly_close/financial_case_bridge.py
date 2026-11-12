@@ -123,9 +123,44 @@ async def reconcile_posted_other_month_facts(db: Any, cycle: Any, sources: list[
             "matches": matched["matches"] + list(verified.values())}
 
 
+_OTA_ROW_CODES = {"classification_unconfirmed", "platform_order_unmatched"}
+
+
+def _collapse_row_noise(pending: dict[tuple, dict], sources, reviews, add_issue) -> None:
+    """One question per real decision, not one per spreadsheet row.
+
+    - A platform bill whose batch is not yet reviewed and matched gets one card;
+      its per-order rows are checked in the platform statement panel, and they
+      clear together once that review matches current orders.
+    - A row asking who bears the cost needs no separate classification card:
+      the same confirmation records both.
+    """
+    payer_rows = {(i.get("source_id"), i.get("fact_key")) for i in pending.values()
+                  if i["code"] == "payer_unconfirmed" and i.get("fact_key")}
+    for identity, issue in list(pending.items()):
+        if (issue["code"] == "classification_unconfirmed"
+                and (issue.get("source_id"), issue.get("fact_key")) in payer_rows):
+            del pending[identity]
+    for source in sources:
+        if source.kind != "ota" or reviews.get(source.source_id, {}).get("state") == "matched":
+            continue
+        rows = [(k, i) for k, i in pending.items()
+                if i.get("source_id") == source.source_id and i["code"] in _OTA_ROW_CODES]
+        if not rows:
+            continue
+        for identity, _ in rows:
+            del pending[identity]
+        unmatched = len({i.get("fact_key") for _, i in rows if i["code"] == "platform_order_unmatched"})
+        total = len(source.parsed.get("facts", []))
+        detail = f"，其中 {unmatched} 单未对上系统订单" if unmatched else ""
+        add_issue({"code": "ota_statement_unreviewed", "source_id": source.source_id,
+                   "message": f"这份平台账单还没完成平台对账（共 {total} 单{detail}）。"
+                              "请打开这份账单确认格式，再逐笔处理差异；对上的订单会自动核销。"})
+
+
 async def build_financial_case_snapshot(db: Any, cycle: Any) -> dict[str, Any]:
     # Lazy import avoids the existing service -> workflow -> evidence import cycle.
-    from app.services.financial_case.service import load_sources, match_sources, source_payload
+    from app.services.financial_case.service import load_sources, match_sources
     from app.services.financial_case.reporting import build_report
 
     sources = [source for source in await load_sources(db, cycle.cycle_id)
@@ -134,13 +169,21 @@ async def build_financial_case_snapshot(db: Any, cycle: Any) -> dict[str, Any]:
         return {"sources": [], "pending_issues": [], "snapshot_hash": None}
     matched = await match_sources(db, cycle, sources)
     matched = await reconcile_posted_other_month_facts(db, cycle, sources, matched)
-    report = build_report([source_payload(s) for s in sources],
-                          {key: value for s in sources for key, value in (s.decisions or {}).items()},
+    from app.services.financial_case.reconciled_sources import report_decisions, report_sources
+    reviews = matched.get('source_reviews', {})
+    report = build_report(report_sources(sources, reviews),
+                          report_decisions(sources, reviews),
                           [cycle.billing_month])
     by_id = {source.source_id: source for source in sources}
     pending: dict[tuple, dict] = {}
 
     def add_issue(raw: dict[str, Any]) -> None:
+        # The source-only profit report cannot see saved owner bills. The fixed
+        # workflow's settlement_review / owner_confirmation adapters check them
+        # directly; charging this global report gap to a water row creates a
+        # circular prerequisite (finish bills before confirming utilities).
+        if raw['code'] == 'owner_settlement_missing':
+            return
         source = by_id.get(raw.get("source_id"))
         code = {"expense_payer_unconfirmed": "payer_unconfirmed"}.get(raw["code"], raw["code"])
         fact_key = raw.get("fact_key")
@@ -181,9 +224,11 @@ async def build_financial_case_snapshot(db: Any, cycle: Any) -> dict[str, Any]:
                    "fact_key": operation["fact_key"], "amount": operation["amount"],
                    "message": "原件解释已确认，这笔费用尚未入账；请查看并确认记账方案。"})
     for source in sources:
-        if not source.parsed.get("facts") and not any(i.get("source_id") == source.source_id for i in pending.values()):
+        if not source.parsed.get("facts") and reviews.get(source.source_id, {}).get('kind') != 'linked_expenses' and not any(i.get("source_id") == source.source_id for i in pending.values()):
             add_issue({"code": "source_facts_missing", "source_id": source.source_id,
                        "message": "原件已保存，但没有可核对的业务明细，请补充资料或核实文件结构。"})
+
+    _collapse_row_noise(pending, sources, reviews, add_issue)
 
     source_summaries = []
     for source in sources:
@@ -206,6 +251,8 @@ async def build_financial_case_snapshot(db: Any, cycle: Any) -> dict[str, Any]:
         state = ("reviewed" if all(i["code"] == "expense_not_posted" for i in source_pending) else "needs_review") if source_pending else (
             "posted" if expense_complete and posted_keys else "matched" if expense_complete and matched_expense_keys
             else "reviewed" if reviewed_count and reviewed_count == len(facts) else "parsed")
+        if not source_pending and reviews.get(source.source_id, {}).get('state') == 'matched':
+            state = 'matched'
         source_summaries.append({
             "source_id": source.source_id, "filename": source.filename, "kind": source.kind,
             "version": source.version, "document_id": source.document_id,
@@ -214,6 +261,9 @@ async def build_financial_case_snapshot(db: Any, cycle: Any) -> dict[str, Any]:
             "posted_fact_count": len(posted_keys), "matched_fact_count": len({m["fact_key"] for m in matches}),
             "pending_count": len(source_pending), "expense_complete": expense_complete,
             "has_expense_facts": bool(expense_keys),
+            "reconciliation_state": reviews.get(source.source_id, {}).get('state'),
+            "reconciled_record_count": reviews.get(source.source_id, {}).get('matched_count'),
+            "receipt_confirmation": reviews.get(source.source_id, {}).get('receipt_confirmation'),
         })
     issues = sorted(pending.values(), key=lambda i: i["issue_key"])
     material = {"sources": source_summaries, "pending_issues": issues,

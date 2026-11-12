@@ -12,6 +12,7 @@ import { ConversationMemoryReply } from "./ConversationMemoryReply";
 import { ChatWorkflowActions } from "./ChatWorkflowActions";
 import { FinancialCaseReply } from "./FinancialCaseReply";
 import { OrderIdentityChatReply } from "./OrderIdentityChatReply";
+import { conversationTurns, recognitionChanged } from "@/lib/monthly-close-current-result";
 
 const touchButton = { minHeight: 44, borderRadius: 999, padding: "0 16px", border: `1px solid ${tokens.anyu.color.linen}`, background: tokens.anyu.color.shell, color: tokens.anyu.color.ink.default } as const;
 const classificationLabel = { pending: "已上传，等待识别", needs_confirmation: "待你确认资料类型", confirmed: "资料类型已确认", failed: "资料类型未识别" } as const;
@@ -40,6 +41,7 @@ export function WorkTimeline({
   primaryDocumentId,
   primaryActionLabel,
   onPrimaryAction,
+  onReviewWorkLog,
   onRetryAnalysis,
   onConfirmFields,
   onSelectDocument,
@@ -59,18 +61,18 @@ export function WorkTimeline({
   primaryDocumentId?: string;
   primaryActionLabel?: string;
   onPrimaryAction?: () => void;
+  onReviewWorkLog?: (documentId: string) => void;
   onRetryAnalysis: (documentId: string) => void;
   onConfirmFields: (documentId: string) => void;
   onSelectDocument?: (documentId: string) => void;
   onRequestDelete?: (document: MonthlyCloseProjection["sources"][number]["documents"][number]) => void;
   onFollowUp?: (text: string, contextRunId: string, attachmentIds?: string[]) => void;
-  onPrepareReply?: (question: string, contextRunId: string) => void;
+  onPrepareReply?: (question: string, contextRunId: string, suggestedAnswer?: string) => void;
   onOpenOrder?: (orderId: string) => void;
   onOpenWorkflow?: (focus: string) => void;
   busy?: boolean;
 }) {
-  const turns = [...replies];
-  for (const exchange of exchanges) if (exchange.assistantReply && !turns.some((reply) => reply.run_id === exchange.assistantReply?.run_id)) turns.push(exchange.assistantReply);
+  const turns = conversationTurns(replies, exchanges);
   const latestFinancialCase = turns.findLastIndex((reply) => reply.tool === "financial_case");
   const latestWorkChange = turns.findLastIndex((reply) => reply.tool === "cleaning_work_chat" && (reply.facts.state !== "report" || Boolean(reply.facts.reason)));
   const latestOrderChange = turns.findLastIndex((reply) => reply.tool === "order_identity_chat" && reply.facts.state !== "clarification");
@@ -83,20 +85,19 @@ export function WorkTimeline({
         const isPrimaryTarget = primaryDocumentId === document.document_id && primaryActionLabel && onPrimaryAction;
         return (
           <li key={document.document_id} role="group" aria-label={`${filename} 的处理进度`} className="mcw-document-exchange">
-            <div className="mcw-message-row mcw-message-user">
-              <div className="mcw-bubble mcw-user-bubble mcw-file-bubble">
+            <div className="mcw-document-summary">
+              <div className="mcw-document-copy">
                 <div className="mcw-file-type">{sourceLabel(document.source_type)}</div>
                 <div className="mcw-file-name">{filename}</div>
-              </div>
-            </div>
-            <div className="mcw-message-row mcw-message-assistant">
-              <span className="mcw-avatar mcw-message-avatar" aria-hidden="true">月</span>
-              <div className="mcw-bubble mcw-assistant-bubble mcw-status-bubble">
                 <div className={`mcw-stage mcw-stage-${progress.stage}`}>{progress.label}</div>
-                <div className="mcw-status-detail">{progress.detail}</div>
+                {progress.stage === "problem" && <div className="mcw-status-detail">{progress.detail}</div>}
+              </div>
                 <div className="mcw-inline-actions">
-                  {isPrimaryTarget && (
-                    <button type="button" className="mcw-primary-button" style={{ ...touchButton, color: tokens.anyu.color.shell, background: tokens.anyu.color.ink.default, borderColor: tokens.anyu.color.ink.default }} onClick={onPrimaryAction}>
+                  {allowDocumentActions && projection.actor_role === "admin" && onReviewWorkLog && document.analysis_state === "work_log_ready" ? (
+                    <button type="button" className="mcw-secondary-button" style={touchButton} disabled={busy}
+                      aria-label={`${document.work_review_state === "checked" ? "复查记录" : "继续核对"} ${filename}`} onClick={() => onReviewWorkLog(document.document_id)}>{document.work_review_state === "checked" ? "复查记录" : document.work_review_state === "fees_pending" ? "继续核对费用" : "继续核对"}</button>
+                  ) : isPrimaryTarget && (
+                    <button type="button" className="mcw-secondary-button" style={touchButton} disabled={busy} onClick={onPrimaryAction}>
                       {primaryActionLabel}
                     </button>
                   )}
@@ -105,15 +106,14 @@ export function WorkTimeline({
                   )}
                   {allowDocumentActions && progress.stage === "problem" && document.storage_state === "stored" && (
                     <>
-                      <button type="button" className="mcw-secondary-button" style={touchButton} onClick={() => onRetryAnalysis(document.document_id)}>重新识别</button>
-                      <button type="button" className="mcw-secondary-button" style={touchButton} onClick={() => onConfirmFields(document.document_id)}>查看原表并确认列</button>
+                      <button type="button" className="mcw-secondary-button" style={touchButton} disabled={busy} onClick={() => onRetryAnalysis(document.document_id)}>重新识别</button>
+                      <button type="button" className="mcw-secondary-button" style={touchButton} disabled={busy} onClick={() => onConfirmFields(document.document_id)}>查看原表并确认列</button>
                     </>
                   )}
                   {allowDocumentActions && onRequestDelete && (
                     <button type="button" className="mcw-secondary-button mcw-danger-button" aria-label={`删除文件 ${filename}`} style={touchButton} onClick={() => onRequestDelete(document)}>删除文件</button>
                   )}
                 </div>
-              </div>
             </div>
           </li>
         );
@@ -148,10 +148,12 @@ export function WorkTimeline({
         if (reply.tool === "financial_case" && (projection.actor_role !== "admin" || reply.facts.billing_month !== projection.billing_month)) return null;
         const userText = exchanges.find((exchange) => exchange.assistantReply?.run_id === reply.run_id)?.userText
           ?? (typeof reply.facts.request_text === "string" ? reply.facts.request_text : undefined);
-        return <li key={reply.run_id} aria-label="助理判断" className="mcw-freeform-exchange">
+        const isCurrent = turnIndex === turns.length - 1;
+        const staleRecognition = recognitionChanged(reply, projection);
+        return <li key={reply.run_id} aria-label="助理判断" className="mcw-freeform-exchange" tabIndex={-1} data-current-result={isCurrent ? "true" : undefined}>
           {userText && <div className="mcw-message-row mcw-message-user"><div className="mcw-bubble mcw-user-bubble">{userText}</div></div>}
           <details open={turnIndex === turns.length - 1 || reply.facts.state === "proposal" && ((reply.tool === "financial_case" && turnIndex === latestFinancialCase) || (reply.tool === "cleaning_work_chat" && turnIndex === latestWorkChange) || (reply.tool === "order_identity_chat" && turnIndex === latestOrderChange))}>
-            <summary style={{ minHeight: 44, cursor: "pointer", color: "var(--stone)", display: "flex", alignItems: "center" }}>{turnIndex === turns.length - 1 ? "最近一次回复" : `查看此前回复 ${turnIndex + 1} · 当前进度以上方结果为准`}</summary>
+            <summary style={{ minHeight: 44, cursor: "pointer", color: "var(--stone)", display: "flex", alignItems: "center" }}>{isCurrent ? staleRecognition ? "资料已更新" : "当前核对结果" : `查看历史回复 ${turnIndex + 1}`}</summary>
           <div aria-label="助理判断" className="mcw-message-row mcw-message-assistant">
             <span className="mcw-avatar mcw-message-avatar" aria-hidden="true">月</span>
             <div className="mcw-bubble mcw-assistant-bubble">
@@ -169,9 +171,13 @@ export function WorkTimeline({
                   {(reply.facts.steps as Array<{ step_key: string; label: string; status: string; blocking_count: number }>).map((step) => <li key={step.step_key}>{step.label}：{step.status === "confirmed" ? "已确认" : step.blocking_count ? `${step.blocking_count} 项待处理` : "尚待确认"}</li>)}
                 </ul>
               </details>}
-              <FormattedResult reply={reply} projection={projection} />
+              {!staleRecognition && <FormattedResult reply={reply} projection={projection} />}
               <ProgressDetails key={`${reply.run_id}-${projection.billing_month}-${projection.actor_role}`} reply={reply} projection={projection} onSelectDocument={onSelectDocument} onOpenOrder={onOpenOrder} onOpenWorkflow={onOpenWorkflow} />
-              {!reply.output && <FinancialCaseReply key={`financial-case-${reply.run_id}-${projection.billing_month}-${projection.actor_role}`} reply={reply} projection={projection} onFollowUp={onFollowUp} onPrepareReply={onPrepareReply} onReviewDocument={allowDocumentActions ? onConfirmFields : undefined} busy={busy} historical={turnIndex < latestFinancialCase} />}
+              {(!reply.output || staleRecognition) && <FinancialCaseReply key={`financial-case-${reply.run_id}-${projection.billing_month}-${projection.actor_role}`} reply={reply} projection={projection} onFollowUp={onFollowUp} onPrepareReply={onPrepareReply} onReviewDocument={allowDocumentActions ? (documentId) => {
+                const document = projection.sources.flatMap((source) => source.documents).find((item) => item.document_id === documentId);
+                if (document?.source_type === "cleaning_statement" && document.analysis_state === "work_log_ready" && onReviewWorkLog) onReviewWorkLog(documentId);
+                else onConfirmFields(documentId);
+              } : undefined} busy={busy} historical={turnIndex < latestFinancialCase} />}
               {!reply.output && <CleaningWorkChatReply reply={reply} projection={projection} onFollowUp={onFollowUp} busy={busy} historical={turnIndex < latestWorkChange} />}
               {!reply.output && <OrderIdentityChatReply reply={reply} projection={projection} onFollowUp={onFollowUp} busy={busy} historical={turnIndex < latestOrderChange} />}
               {!reply.output && <CleaningInvestigationReply reply={reply} projection={projection} onFollowUp={onFollowUp} onSelectDocument={onSelectDocument} busy={busy} />}

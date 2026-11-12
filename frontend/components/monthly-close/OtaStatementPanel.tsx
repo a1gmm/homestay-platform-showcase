@@ -232,9 +232,9 @@ function RejectedRecipeEditor({
   };
 
   return (
-    <Card size="small" title="修改被拒绝方案的处置" style={{ borderRadius: 12 }}>
+    <Card size="small" title="修改未完成方案的处置" style={{ borderRadius: 12 }}>
       <Space direction="vertical" style={{ width: "100%" }}>
-        <div>调整选择或处置后会创建新的方案和请求编号，不会重放已拒绝方案。</div>
+        <div>调整选择或处置后会创建新方案，重新核对并确认后才能执行；不会自动重试原方案。</div>
         {diffs.map((diff) => {
           const action = actions[diff.diff_id];
           return (
@@ -487,10 +487,15 @@ export function OtaStatementPanel({
   const [currentVersion, setCurrentVersion] = useState<string | null>(null);
   const [verifiedVersion, setVerifiedVersion] = useState<string | null>(null);
   const [recon, setRecon] = useState<ReconBatchDetail | null>(null);
+  const [confirmedBatch, setConfirmedBatch] = useState<{ month: string; id: string } | null>(null);
   const [proposal, setProposal] = useState<MonthlyCloseProposalView | null>(null);
   const [proposalBillingMonth, setProposalBillingMonth] = useState(billingMonth);
   const [proposalLoading, setProposalLoading] = useState(false);
   const [proposalError, setProposalError] = useState<string | null>(null);
+  const [controlVersion, setControlVersion] = useState<number | null>(null);
+  const [enablingControl, setEnablingControl] = useState(false);
+  const [reloadBatch, setReloadBatch] = useState(0);
+  const currentMonth = useRef(billingMonth);
   const [editingRejected, setEditingRejected] = useState(false);
   const [adjudicationProposals, setAdjudicationProposals] = useState<MonthlyCloseProposalView[]>([]);
   const [editingRejectedAdjudicationId, setEditingRejectedAdjudicationId] = useState<string | null>(null);
@@ -509,8 +514,10 @@ export function OtaStatementPanel({
   const proposalRequestRecipeRef = useRef<string | null>(null);
   const proposalGenerationRef = useRef(0);
 
+  useEffect(() => { currentMonth.current = billingMonth; }, [billingMonth]);
+
   useEffect(() => {
-    const batchId = processed?.engine_id;
+    const batchId = confirmedBatch?.month === billingMonth ? confirmedBatch.id : processed?.engine_id;
     if (!batchId) return;
     let active = true;
     setRecon(null);
@@ -520,6 +527,8 @@ export function OtaStatementPanel({
     proposalRequestRecipeRef.current = null;
     setProposalRecipe(null);
     setProposalError(null);
+    setControlVersion(null);
+    setEnablingControl(false);
     setEditingRejected(false);
     setAdjudicationProposals([]);
     setEditingRejectedAdjudicationId(null);
@@ -527,21 +536,40 @@ export function OtaStatementPanel({
     void monthlyCloseApi.getOtaBatch(billingMonth, batchId).then((response) => {
       if (active) setRecon(response.data);
     }).catch((cause) => {
-      if (active) setProposalError(extractErrorMessage(cause, "OTA对账批次读取失败"));
+      if (!active) return;
+      const detail = cause?.response?.data?.detail;
+      if (detail?.code === "ota_control_legacy" && Number.isSafeInteger(detail.expected_version) && detail.expected_version >= 1) setControlVersion(detail.expected_version);
+      else setProposalError(extractErrorMessage(cause, "OTA对账批次读取失败"));
     });
     void monthlyCloseApi.getOtaAppealSettlementCandidates(billingMonth).then((response) => {
       if (active) setSettlementCandidates(response.data.items);
     }).catch((cause) => {
-      if (active) setProposalError(extractErrorMessage(cause, "历史申诉到账证据读取失败"));
+      if (active && cause?.response?.data?.detail?.code !== "ota_control_legacy") setProposalError(extractErrorMessage(cause, "历史申诉到账证据读取失败"));
     });
     void monthlyCloseApi.listOtaAppealAdjudicationProposals(billingMonth).then((response) => {
       if (!active) return;
       setAdjudicationProposals(normalizeAdjudicationQueue(response.data.items));
     }).catch((cause) => {
-      if (active) setProposalError(extractErrorMessage(cause, "申诉裁决方案读取失败"));
+      if (active && cause?.response?.data?.detail?.code !== "ota_control_legacy") setProposalError(extractErrorMessage(cause, "申诉裁决方案读取失败"));
     });
     return () => { active = false; };
-  }, [billingMonth, processed?.engine_id]);
+  }, [billingMonth, processed?.engine_id, confirmedBatch, reloadBatch]);
+
+  const enableControl = async () => {
+    if (role !== "admin" || disabled || enablingControl || controlVersion === null) return;
+    const month = billingMonth;
+    setEnablingControl(true); setProposalError(null);
+    try {
+      await monthlyCloseApi.enableProposalControl(month, controlVersion);
+      if (currentMonth.current === month) setReloadBatch((value) => value + 1);
+    } catch (cause) {
+      if (currentMonth.current === month) {
+        setProposalError(extractErrorMessage(cause, "本月核对暂未启用，请刷新后重试"));
+        const code = (cause as { response?: { data?: { detail?: { code?: string } } } })?.response?.data?.detail?.code;
+        if (code === "control_version_stale" || code === "write_control_noop") setReloadBatch((value) => value + 1);
+      }
+    } finally { if (currentMonth.current === month) setEnablingControl(false); }
+  };
 
   const actionable = (recon?.diffs ?? []).filter((diff: ReconDiffOut) => (
     diff.status === "pending"
@@ -837,15 +865,31 @@ export function OtaStatementPanel({
           description="这些差异不会被隐藏或自动忽略，也不会进入本次调账方案。"
         />
       )}
-      {recon && manual.map((diff) => (
-        <ManualDecisionCard
+      {role === "admin" && actionable.length > 0 && (
+        <section aria-label="平台调账逐笔依据">
+          <p>先核对具体订单和金额，再生成调整方案。</p>
+          <ul>
+            {actionable.map((diff) => (
+              <li key={diff.diff_id} style={{ overflowWrap: "anywhere", marginBottom: 12 }}>
+                <div>{diffClassLabel[diff.diff_class] ?? "待核实差异"} · 平台单号 {diff.platform_order_id ?? "待核实"}</div>
+                <div>系统订单 {diff.order_id ?? "待关联"} · 原表 ¥{diff.bill_amount ?? "待核实"} · 系统 ¥{diff.system_amount ?? "待核实"}</div>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+      {recon && manual.map((diff, index) => (
+        <details key={diff.diff_id} open={manual.length === 1} style={{ padding: "12px 0", borderBottom: "1px solid var(--linen)" }}>
+          <summary style={{ cursor: "pointer", minHeight: 44, lineHeight: 1.8, overflowWrap: "anywhere" }}>第 {index + 1} 笔 · 平台单号 {diff.platform_order_id ?? "待核实"} · 账单 ¥{diff.bill_amount ?? "待核实"} · 展开处理</summary>
+          <ManualDecisionCard
           key={diff.diff_id}
           billingMonth={billingMonth}
           batchId={recon.batch.batch_id}
           diff={diff}
           disabled={disabled || proposalLoading}
           onDecision={(decision) => createProposal({ selected_diff_ids: [], decisions: [decision] })}
-        />
+          />
+        </details>
       ))}
       {recon && actionable.length > 0 && !proposal && (
         <Button style={{ minHeight: 44, borderRadius: 12, fontWeight: 500 }} disabled={disabled} loading={proposalLoading} onClick={() => void createProposal()}>
@@ -855,8 +899,12 @@ export function OtaStatementPanel({
       {recon && actionable.length === 0 && manual.length === 0 && !proposal && (
         <Alert type="info" showIcon message="当前批次没有可生成方案的待处理差异" />
       )}
+      {controlVersion !== null && <Alert type="info" showIcon message="先启用本月方案确认，再继续核对"
+        description={<div><p>启用后，本月调账统一先展示方案，再由管理员确认执行；原对账入口将不能直接改账。已有账目保持原样。</p>
+          {role === "admin" ? <Button aria-label="启用本月方案确认" disabled={disabled || enablingControl} loading={enablingControl} onClick={() => void enableControl()}>启用本月方案确认</Button> : <p>请管理员启用后继续。</p>}</div>} />}
       {proposalError && <Alert type="error" showIcon message={proposalError} />}
-      {proposal?.status === "rejected" && proposal.proposal_type !== "ota_appeal_adjudication" && editingRejected && editableDiffs.length > 0 && (
+      {proposal && (proposal.status === "rejected" || (role === "admin" && ["approved", "executed"].includes(proposal.status)
+        && proposal.attempts?.at(-1)?.status === "failed_safe")) && proposal.proposal_type !== "ota_appeal_adjudication" && editingRejected && editableDiffs.length > 0 && (
         <RejectedRecipeEditor
           diffs={editableDiffs}
           initialRecipe={proposalRecipe}
@@ -1006,7 +1054,10 @@ export function OtaStatementPanel({
           try {
             const response = await monthlyCloseApi.confirmOta(billingMonth, target.document_id, input);
             message.success(`已生成 ${response.data.batch.bill_month} OTA对账批次`);
-            setRecon(response.data);
+            // Parsing succeeds under legacy control too. Read through the
+            // controlled endpoint before offering any proposal actions.
+            setRecon(null);
+            setConfirmedBatch({ month: billingMonth, id: response.data.batch.batch_id });
             setOpen(false);
             await onFinished();
           } catch (cause) {

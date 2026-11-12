@@ -176,12 +176,15 @@ async def report_snapshot(db, cycle, sources, months, rows=None):
         if not e.is_deleted:
             grouped[e.category.value] += e.amount
     payloads = [source_payload(s) for s in sources]
-    report = build_report(payloads, {k: v for s in sources for k, v in s.decisions.items()}, months,
+    from .reconciled_sources import review_linked_sources, report_decisions, report_sources, add_receipt_disclosures
+    reviews = await review_linked_sources(db, cycle, sources)
+    report = build_report(report_sources(sources, reviews), report_decisions(sources, reviews), months,
         ledger_summary={'total': f'{sum(grouped.values(), Decimal(0)):.2f}',
                         'by_category': {k: f'{v:.2f}' for k, v in grouped.items()}})
+    add_receipt_disclosures(report, reviews)
     evidence_hash = digest(dict(months=months, sources=payloads,
         originals=[dict(id=s.source_id, sha256=s.sha256, version=s.version) for s in sources],
-        ledger=ledger_snapshot(rows)))
+        ledger=ledger_snapshot(rows), source_reviews=reviews))
     return report, dict(evidence_hash=evidence_hash, issue_count=len(report['issues']))
 
 
@@ -228,9 +231,10 @@ async def match_sources(db, cycle, sources):
                 continue
             image_candidate = fact.get('kind')=='image_expense_candidate'
             if image_candidate and (decision.get('status')!='confirmed' or decision.get('candidate_confirmed') is not True):
-                issues.append(_issue('image_amount_unconfirmed',f"{source.filename}：已识别出可能的费用 {fact.get('amount','')} 元，请先核实图片金额、用途和期间。",source,fact));continue
+                evidence_label = '补充说明中的' if source.kind == 'note' else '图片'
+                issues.append(_issue('image_amount_unconfirmed',f"{source.filename}：已识别出可能的费用 {fact.get('amount','')} 元，请先核实{evidence_label}金额、用途和期间。",source,fact));continue
             if image_candidate and decision.get('paid_by') not in ('company','owner'):
-                issues.append(_issue('image_payment_unconfirmed','请说明图片中的这笔费用实际由公司还是业主支付，再生成记账方案。',source,fact));continue
+                issues.append(_issue('image_payment_unconfirmed','请说明原始凭据中的这笔费用实际由公司还是业主支付，再生成记账方案。',source,fact));continue
             if image_candidate:
                 from .image_facts import effective_image_fact
                 fact=effective_image_fact(fact,decision)
@@ -314,19 +318,26 @@ async def match_sources(db, cycle, sources):
     ota = [(s,f) for s in sources for f in s.parsed.get('facts', []) if f.get('platform_order_id')]
     ids = {f['platform_order_id'] for _,f in ota}
     orders = list((await db.scalars(select(Order).where(Order.platform_order_id.in_(ids),Order.is_deleted.is_(False)))).all()) if ids else []
+    # 携程账单同时结算去哪儿/同程/智行分销单，系统按子渠道记单（与平台对账口径一致）。
+    from app.services.billing_recon.engine import CTRIP_FAMILY
+    ctrip_family = {c.value for c in CTRIP_FAMILY}
     for source, fact in ota:
+        allowed = ctrip_family if fact.get('channel') == 'ctrip' else {fact.get('channel')}
         candidates = [o for o in orders if o.platform_order_id == fact['platform_order_id']
-                      and getattr(o.channel,'value',o.channel) == fact.get('channel')]
+                      and getattr(o.channel,'value',o.channel) in allowed]
         if len(candidates) != 1:
             channel_name = {'ctrip':'携程','douyin':'抖音','meituan':'美团','airbnb':'爱彼迎'}.get(fact.get('channel'),'平台')
             issues.append(_issue('platform_order_unmatched',f"{channel_name}订单 {fact['platform_order_id']} 未唯一对应系统订单；需要入住日期和房间，不能仅凭券或房型创建订单。",source,fact))
         else:
             matches.append(dict(source_id=source.source_id,fact_key=fact['key'],order_id=candidates[0].order_id))
+    from .reconciled_sources import review_linked_sources, merge_live_reviews
+    reviews = await review_linked_sources(db, cycle, sources)
+    issues, matches = merge_live_reviews(sources, issues, matches, reviews)
     from app.services.monthly_close.financial_case_bridge import normalize_financial_case_issues
     issues = normalize_financial_case_issues(sources, issues)
     snapshot = dict(sources=[dict(id=s.source_id,sha=s.sha256,version=s.version,decisions=s.decisions) for s in sources],
-                    ledger=ledger_snapshot(rows),rooms=[dict(id=r.room_id,owner=r.owner_id) for r in rooms])
-    return dict(operations=operations,issues=issues,matches=matches,snapshot_hash=digest(snapshot),ledger=rows)
+                    ledger=ledger_snapshot(rows),rooms=[dict(id=r.room_id,owner=r.owner_id) for r in rooms], source_reviews=reviews)
+    return dict(operations=operations,issues=issues,matches=matches,snapshot_hash=digest(snapshot),ledger=rows,source_reviews=reviews)
 
 
 async def match_case(db, cycle, sources, months=None):
@@ -376,7 +387,11 @@ async def confirm_proposal(db, cycle, actor, context_run_id):
         return initial,True
     months=normalize_months(initial.payload.get('selection',{}).get('months'),cycle.billing_month)
     owners=sorted(set(initial.payload.get('owner_ids',[])) | {op['owner_id'] for op in initial.payload.get('operations',[]) if op.get('owner_id')})
-    await lock_writable_months(db,normalize_months(months+[cycle.billing_month]),actor_id(actor),owner_ids=owners)
+    if initial.payload.get('type') == 'settlement_fee_correction':
+        from .settlement_fee_correction import lock_scope
+        await lock_scope(db, cycle, initial)
+    else:
+        await lock_writable_months(db,normalize_months(months+[cycle.billing_month]),actor_id(actor),owner_ids=owners)
     cycle = await require_cycle_writable(db, cycle)
     await require_admin(db, actor, lock=True)
     proposal = await db.scalar(select(FinancialCaseProposal).where(
@@ -388,6 +403,18 @@ async def confirm_proposal(db, cycle, actor, context_run_id):
         return proposal, True
     if proposal.status != 'pending':
         raise ValueError('这份方案已取消或失效，请重新生成')
+    if proposal.payload.get('type') == 'settlement_fee_correction':
+        from .settlement_fee_correction import execute
+        await execute(db, cycle, actor, proposal)
+        return proposal, False
+    if proposal.payload.get('type') == 'source_acknowledgement':
+        from .source_acknowledgement import execute
+        await execute(db,cycle,actor,proposal)
+        return proposal,False
+    if proposal.payload.get('type') == 'expense_payment':
+        from .expense_payment import execute
+        await execute(db,cycle,actor,proposal)
+        return proposal,False
     if proposal.payload.get('type') == 'business_correction':
         from .operations import execute
         await execute(db,cycle,actor,proposal)
@@ -521,9 +548,50 @@ async def _respond(db, cycle, actor, text, attachment_ids, context_run_id=None, 
     await require_admin(db,actor)
     await validate_attachments(db,cycle.cycle_id,attachment_ids)
     sources = await load_sources(db,cycle.cycle_id)
+    all_sources = sources
+    from .chat import previous_reply
+    previous = await previous_reply(db, cycle, actor, context_run_id)
+    previous_packet = previous.facts.get('packet') if previous and previous.tool == 'financial_case' else None
+    previous_scope = previous.facts.get('source_scope_ids') if previous and previous.tool == 'financial_case' else None
+    selected_ids = attachment_ids or previous_scope or ([s['source_id'] for s in previous_packet['sources']] if previous_packet else [])
+    from .source_acknowledgement import wants as wants_acknowledgement
+    if wants_acknowledgement(text):
+        selected_ids = []  # Explicit source IDs supersede an earlier conversational selection.
+    if selected_ids:
+        await validate_attachments(db, cycle.cycle_id, selected_ids)
+        by_id = {s.source_id: s for s in sources}
+        sources = [by_id[source_id] for source_id in selected_ids]
     facts = dict(projection_version=VERSION,billing_month=cycle.billing_month,state='result',message='',
         sources=[{k:v for k,v in receipt(s).items() if k in ('source_id','filename','kind','fact_count')} for s in sources],
-        metrics=[],issues=[],details=[],proposal_id=None,report_months=_months(text,cycle.billing_month,sources),export_ready=True)
+        metrics=[],issues=[],details=[],proposal_id=None,report_months=_months(text,cycle.billing_month,sources),export_ready=True,
+        source_scope_ids=list(selected_ids) if selected_ids else None)
+    from . import expense_confirmation
+    if expense_confirmation.wants(text):
+        facts.update(await expense_confirmation.respond(db, cycle, text, previous))
+        return facts
+    from .packet import wants_packet, supplementary_note, build_packet, receive_note
+    note = supplementary_note(text)
+    if wants_packet(text) or note:
+        selected = list(sources)
+        notes = list(previous_packet.get('notes', [])) if previous_packet and (
+            not attachment_ids or set(attachment_ids) == {s['source_id'] for s in previous_packet['sources']}) else []
+        if note:
+            notes.append(note)
+            note_source = await receive_note(db, cycle, actor, note)
+            if note_source.source_id not in {s.source_id for s in selected}:
+                selected.append(note_source)
+            all_sources = await load_sources(db, cycle.cycle_id)
+        matched = await match_case(db, cycle, selected, [cycle.billing_month])
+        packet = await build_packet(db, cycle, selected, all_sources, matched, notes)
+        facts.update(packet=packet, source_scope_ids=[s.source_id for s in selected], sources=[{k:v for k,v in receipt(s).items()
+                     if k in ('source_id','filename','kind','fact_count')} for s in selected],
+                     report_months=[cycle.billing_month], export_ready=False,
+                     message=f"已整理本批 {len(selected)} 份资料。先看每份表的识别结果，再逐项核对；需要补充的实际情况集中列在下面。")
+        facts['issues'] = matched['issues']
+        facts['metrics'] = [dict(label='已保存来源', value=str(len(selected))),
+                            dict(label='已对应系统记录', value=str(len(matched['matches']))),
+                            dict(label='可新增支出', value=str(len(matched['operations'])))]
+        return facts
     from .explanations import business_explanation
     if explanation := business_explanation(text):
         facts.update(explanation)
@@ -534,6 +602,17 @@ async def _respond(db, cycle, actor, text, attachment_ids, context_run_id=None, 
                 proposal,replayed=await confirm_proposal(db,cycle,actor,context_run_id)
         except (ValueError, MonthlyCloseConflict) as exc:
             facts.update(state='needs_information',message=str(exc));return facts
+        if proposal.result.get('kind') == 'source_acknowledgement':
+            facts.update(state='completed', message='已保存本次资料确认，处理依据和历史记录可追溯；未新增收付款或费用。',
+                proposal_id=proposal.proposal_id, proposal_kind='business_correction', details=proposal.result['details'], export_ready=False)
+            active_ids = {s.source_id for s in await load_sources(db,cycle.cycle_id)}
+            facts['sources'] = [s for s in facts['sources'] if s['source_id'] in active_ids]
+            facts['source_scope_ids'] = None
+            return facts
+        if proposal.result.get('kind') == 'settlement_fee_correction':
+            facts.update(state='completed', message=f"已更正{proposal.result['count']}笔房东自住保洁，业主扣费增加{proposal.result['amount']}元、应付相应减少。原费用和原账单均保留，更正记录已追加；请重新下载当前账单。尚未登记打款。",
+                proposal_id=proposal.proposal_id, proposal_kind='business_correction', details=proposal.result['details'], export_ready=False)
+            return facts
         if proposal.result.get('kind')=='business_correction':
             facts.update(state='completed',message=f"已处理 {proposal.result['count']} 项确认内容。具体修改见下方；来源解释不代表已经入账，结算需按更新后的账目重新复核。",proposal_id=proposal.proposal_id,proposal_kind='business_correction',details=proposal.result['details'])
             return facts
@@ -567,7 +646,9 @@ async def _respond(db, cycle, actor, text, attachment_ids, context_run_id=None, 
         facts['message']='已取消这份待执行方案。';return facts
     from .feedback import review_return
     if any(s.source_id in attachment_ids and s.kind=='feedback' for s in sources):
-        returned=await review_return(db,cycle,actor,sources,attachment_ids,run_id,text)
+        # Returned checklists carry bound references to earlier originals.
+        # Their validator needs that evidence without widening the selected edits.
+        returned=await review_return(db,cycle,actor,all_sources,attachment_ids,run_id,text)
         proposal=returned['proposal']
         facts.update(state='proposal' if proposal else 'needs_information',
             message=f"已根据回填整理 {len(proposal.payload['operations'])+len(proposal.payload.get('source_changes',[]))} 项可执行变更；另有 {len(returned['issues'])} 项需要补充。请先核对方案。" if proposal else '回填原件已保存，请补充下列事项，尚未修改账目。',
@@ -575,6 +656,39 @@ async def _respond(db, cycle, actor, text, attachment_ids, context_run_id=None, 
             proposal_kind='business_correction' if proposal else None,export_ready=False)
         return facts
     from .operations import wants_operation, propose
+    from . import settlement_fee_correction
+    if settlement_fee_correction.wants(text):
+        try:
+            proposal = await settlement_fee_correction.propose(db, cycle, actor, text, run_id)
+        except (ValueError, MonthlyCloseConflict) as exc:
+            facts.update(state='needs_information', message=str(exc), export_ready=False)
+            return facts
+        facts.update(state='proposal', proposal_kind='business_correction', proposal_id=proposal.proposal_id,
+            message='请核对原费用和更正后的金额。确认后追加账单更正记录，保留原账单；不登记付款。',
+            details=proposal.payload['details'], export_ready=False)
+        return facts
+    from . import source_acknowledgement
+    if source_acknowledgement.wants(text):
+        try:
+            proposal = await source_acknowledgement.propose(db, cycle, actor, text, run_id)
+        except (ValueError, MonthlyCloseConflict) as exc:
+            facts.update(state='needs_information', message=str(exc), export_ready=False)
+            return facts
+        facts.update(state='proposal', proposal_kind='business_correction', proposal_id=proposal.proposal_id,
+            message='请核对资料及关联记录，再确认本次处理。已有账目不会重复记入。',
+            details=proposal.payload['details'], export_ready=False)
+        return facts
+    from . import expense_payment
+    if expense_payment.wants(text):
+        try:
+            proposal = await expense_payment.propose(db, cycle, actor, text, run_id)
+        except (ValueError, MonthlyCloseConflict) as exc:
+            facts.update(state='needs_information', message=str(exc), export_ready=False)
+            return facts
+        facts.update(state='proposal', proposal_kind='business_correction', proposal_id=proposal.proposal_id,
+            message=f"已整理 {len(proposal.payload['operations'])} 笔已有费用的付款人更正。请核对后确认，不新增支出。",
+            details=proposal.payload['details'], export_ready=False)
+        return facts
     from .order_scope import wants_order_query, refers_to_scope
     if wants_order_query(text):
         from .order_scope import query
@@ -669,12 +783,12 @@ async def _respond(db, cycle, actor, text, attachment_ids, context_run_id=None, 
         except (ValueError, MonthlyCloseConflict) as exc:
             facts.update(state='needs_information',message=f'{exc}，请补充具体来源；本次尚未生成方案。')
             return facts
-        current=await match_case(db,cycle,sources)
+        current=await match_case(db,cycle,all_sources)
         proposal=FinancialCaseProposal(proposal_id='FCP-'+uuid4().hex[:20].upper(),cycle_id=cycle.cycle_id,
             run_id=run_id,created_by=actor_id(actor),snapshot_hash=current['snapshot_hash'],
             payload=dict(type='interpretation',changes=changes),status='pending')
         db.add(proposal);await db.flush()
-        labels={'category':'分类','business_month':'业务月份','payer':'费用承担方','paid_by':'实际付款人','include':'是否计入','note':'依据','matching_fact_keys':'对应依据','room_ref':'房间','expense_date':'费用日期','date_basis':'记账日期口径','candidate_confirmed':'图片金额已核实','discount_allocation':'优惠分摊规则','independent_cost':'已核实为独立费用','owner_distribution_basis':'业主分成口径'}
+        labels={'category':'分类','business_month':'业务月份','payer':'费用承担方','paid_by':'实际付款人','include':'是否计入','note':'依据','matching_fact_keys':'对应依据','room_ref':'房间','expense_date':'费用日期','date_basis':'记账日期口径','candidate_confirmed':'原始金额已核实','discount_allocation':'优惠分摊规则','independent_cost':'已核实为独立费用','owner_distribution_basis':'业主分成口径'}
         values={**CATEGORIES,'company':'公司','owner':'业主','unconfirmed':'待核实','source_date':'使用原始日期','month_end_accrual':'按业务月末归集，保留原付款日','proportional':'按各房原金额比例分摊','net':'扣费后净额','gross':'扣费前毛额'}
         description='；'.join(f"{labels.get(k,'说明')}：{values.get(v,v) if isinstance(v,str) else ('是' if v is True else '否' if v is False else str(len(v))+' 条原始依据')}" for k,v in interpretation.items())
         facts.update(state='proposal',proposal_id=proposal.proposal_id,proposal_kind='interpretation',message=f'将按你的说明调整 {len(changes)} 条来源的分类或归属。请先核对范围与解释；确认后再重算报告，尚未记入支出。')
@@ -703,10 +817,13 @@ async def _respond(db, cycle, actor, text, attachment_ids, context_run_id=None, 
                  and s.decisions.get(f['key'],{}).get('business_month',f.get('business_month')) == bulk_month]
         if changes:
             await apply_decisions(db,cycle,actor,changes)
-            sources=await load_sources(db,cycle.cycle_id)
+            all_sources=await load_sources(db,cycle.cycle_id)
+            sources=[s for s in all_sources if not selected_ids or s.source_id in selected_ids]
             facts['details'].append(dict(label='已记录你的说明',value=f'{len(changes)} 条费用的承担方已明确。记账前仍会展示具体方案。'))
-    matched = await match_case(db,cycle,sources,facts['report_months'])
-    facts['issues'] = matched['issues']
+    # Revalidate the whole evidence/ledger snapshot on confirmation, while the
+    # proposed operations remain bounded to the attachments or current packet.
+    matched = await match_case(db,cycle,all_sources,facts['report_months'])
+    facts['issues'] = [issue for issue in matched['issues'] if not selected_ids or not issue.get('source_id') or issue['source_id'] in selected_ids]
     rows=matched['ledger']
     total=sum((e.amount for e in rows if not e.is_deleted),Decimal(0))
     grouped=defaultdict(Decimal)
@@ -724,6 +841,11 @@ async def _respond(db, cycle, actor, text, attachment_ids, context_run_id=None, 
         if 'utility' in selection['categories']:
             selection['categories']=[c for c in selection['categories'] if c!='utility']+['water','electricity','utilities']
     if (semantic and semantic.action=='plan') or re.search(r'生成记账方案|补齐费用|补齐支出|生成费用方案',text):
+        if selected_ids:
+            selection['source_ids'] = [sid for sid in selected_ids if not selection.get('source_ids') or sid in selection['source_ids']]
+            if not selection['source_ids']:
+                facts.update(state='needs_information', message='所选范围不属于这批资料，请重新选择来源后生成方案。')
+                return facts
         matched['operations']=select_operations(matched['operations'],selection)
         if not matched['operations']:
             facts.update(state='needs_information',message='当前没有可直接新增的支出。已存在的记录不会重复记账；请先处理下方承担方、房间或月份问题。');return facts

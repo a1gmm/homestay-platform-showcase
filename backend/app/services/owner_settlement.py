@@ -112,10 +112,13 @@ def settlement_current_amounts(settlement) -> SettlementCurrentAmounts:
     payable_delta = sum(
         (Decimal(item.owner_net_amount) for item in correction_lines), Decimal("0.00")
     )
+    fee_lines = [item for item in settlement.items if getattr(item, 'fee_adjustment_id', None)]
+    fee_delta = sum((Decimal(item.owner_expenses) for item in fee_lines), Decimal('0'))
+    payable_delta += sum((Decimal(item.owner_net_amount) for item in fee_lines), Decimal('0'))
     return SettlementCurrentAmounts(
         total_net_revenue=Decimal(settlement.total_net_revenue) + net_delta,
         owner_amount=Decimal(settlement.owner_amount) + owner_delta,
-        deducted_expenses=Decimal(settlement.deducted_expenses),
+        deducted_expenses=Decimal(settlement.deducted_expenses) + fee_delta,
         actual_owner_amount=Decimal(settlement.actual_owner_amount) + payable_delta,
     )
 
@@ -237,10 +240,9 @@ async def build_company_sponsored_payable(
     )
 
 
-# ── 账面「到厘」显示（王总 2026-07-19）───────────────────────────────────
-# 结算页/业主端把「业主分成·业主应得」显示到小数第三位，让人看到真实分成值；
-# 但**打款金额不变**——存库的 owner_amount/actual_owner_amount 仍是到分的值，
-# 实际转账按分四舍五入（人民币最小单位是分）。这里只从**已存明细**重算展示值，
+# ── 兼容旧接口的「到厘」参考值 ────────────────────────────────────────
+# 2026-10-15 确认：正式账单按每房先取分再汇总，使用存库金额（含追加更正），
+# 页面和导出均不以参考厘金额重新整体舍入。以下字段仅为旧接口兼容而保留，
 # 不落库、不改打款、不需重跑历史。
 #
 # 口径：逐房 net_revenue × share_ratio 量化到 0.001（与存库到分同一乘式，只是
@@ -262,9 +264,8 @@ def settlement_precise_amounts(items) -> tuple[Optional[Decimal], Optional[Decim
     """整单的（业主分成·到厘, 业主应得·到厘）。items 为结算明细行（含
     net_revenue / share_ratio_snapshot / owner_expenses 三字段即可）。
 
-    无明细（旧版结算，前端 emptyText「未生成按房号的明细」）返回 (None, None)
-    —— 绝不能返回 (0, 0)，否则前端把 0 当有效到厘值，把真实到分打款额（如
-    ¥5244.69）盖成 ¥0.000。返回 None 让前端回退显示存库的到分金额。"""
+    无明细的旧版结算返回 (None, None)，表示没有厘参考值，不能把缺失
+    伪装成零。正式账单始终使用存库的分金额（含已追加更正）。"""
     if not items:
         return None, None
     owner_amount = Decimal("0")
@@ -398,18 +399,11 @@ async def compute_room_period_owner_stat(
 
     exp_rows = (
         await db.execute(
-            select(Expense, Order.booking_type, Order.metadata_)
+            select(Expense, Order.booking_type, Order.metadata_, Order.channel)
             .outerjoin(Order, Order.order_id == Expense.order_id)
             .where(Expense.room_id == room.room_id)
             .where(Expense.is_deleted == False)
             .where(or_(Expense.paid_by.is_(None), Expense.paid_by != ExpensePayer.owner))
-            .where(or_(
-                Expense.order_id.is_(None),
-                not_(or_(
-                    Order.booking_type == BookingType.owner_self,
-                    Order.channel == Channel.self_used,
-                )),
-            ))
             .where(Expense.expense_date >= start_date)
             .where(Expense.expense_date <= end_date)
         )
@@ -422,13 +416,16 @@ async def compute_room_period_owner_stat(
     ).scalars().all()
     rule_lookup: dict = {(r.booking_type, r.expense_category): r for r in rule_rows}
 
-    for expense, booking_type, order_metadata in exp_rows:
+    for expense, booking_type, order_metadata, order_channel in exp_rows:
         from app.services.reconciliation_policy import confirmed_cost_bearer
-        if confirmed_cost_bearer(order_metadata) == ExpensePayer.company:
+        bearer = confirmed_cost_bearer(order_metadata)
+        if bearer == ExpensePayer.company:
+            continue
+        if (booking_type == BookingType.owner_self or order_channel == Channel.self_used) and bearer != ExpensePayer.owner:
             continue
         # Newly distinguished business costs are not owner service charges. A
         # confirmed company-borne cost must not inherit a room's legacy rules.
-        if expense.payer == ExpensePayer.company and expense.category in {
+        if bearer != ExpensePayer.owner and expense.payer == ExpensePayer.company and expense.category in {
             ExpenseCategory.payroll, ExpenseCategory.social_insurance,
             ExpenseCategory.bank_fee, ExpenseCategory.rent, ExpenseCategory.operating_expense,
             ExpenseCategory.cleaning_supplier_cost, ExpenseCategory.laundry_supplier_cost,
@@ -438,7 +435,8 @@ async def compute_room_period_owner_stat(
         # 的硬规则或 RoomCostShareRule 重新分配给业主。系统自动服务费
         # (is_service_fee=True) 仍按既有规则由业主承担。
         if (
-            expense.category == ExpenseCategory.cleaning
+            bearer != ExpensePayer.owner
+            and expense.category == ExpenseCategory.cleaning
             and expense.payer == ExpensePayer.company
             and not getattr(expense, "is_service_fee", False)
         ):
@@ -447,7 +445,8 @@ async def compute_room_period_owner_stat(
         # 系统自动生成的服务费按 is_service_fee 标记认定。二者都强制 100%、不受占比/
         # 忽略类目影响。手工录的洗涤/日耗（is_service_fee=False）仍走占比规则。
         is_forced_owner_fee = (
-            expense.category == ExpenseCategory.cleaning
+            bearer == ExpensePayer.owner
+            or expense.category == ExpenseCategory.cleaning
             or getattr(expense, "is_service_fee", False)
         )
         # 强制全担费**不受 owner_ignored_categories 抑制**——否则某房把 cleaning/日耗

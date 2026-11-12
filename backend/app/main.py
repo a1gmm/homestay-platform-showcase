@@ -27,6 +27,7 @@ if not logging.getLogger().handlers:
 logging.getLogger("app").setLevel(logging.INFO)
 
 logger = logging.getLogger(__name__)
+from app.api.v1 import monthly_close_support
 from app.api.v1 import auth, orders, rooms, finance, tasks, dashboard, audit, guests, settlements, room_blocks, notifications, export as export_api, search as search_api, owners, booking, customer_auth, owner_portal, staff_auth, staff_portal, unified_auth, admin_demo, hosting_leads, feishu_callback, reconciliation, lock_events, deposit_receipt, billing_recon, miniapp_content_shared, miniapp_content_guides, miniapp_content_owner, assistant, utility_recon, monthly_close
 from app.api.v1 import release_announcements as release_announcements_api
 from app.api.v1.miniapp_content_errors import install_content_exception_handlers
@@ -502,6 +503,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=settings.CORS_METHODS,
     allow_headers=["*"],
+    expose_headers=["X-Conflict-Order-Id"],
 )
 app.add_middleware(MonthlyCloseIntakeBodyLimitMiddleware)
 app.add_middleware(PrivacyModeMiddleware)
@@ -577,6 +579,7 @@ app.include_router(miniapp_content_guides.router, prefix=settings.API_PREFIX)
 app.include_router(miniapp_content_owner.router, prefix=settings.API_PREFIX)
 app.include_router(utility_recon.router, prefix=settings.API_PREFIX)
 app.include_router(monthly_close.router, prefix=settings.API_PREFIX)
+app.include_router(monthly_close_support.router, prefix=settings.API_PREFIX)
 from app.api.v1 import financial_case
 app.include_router(financial_case.router, prefix=settings.API_PREFIX)
 app.include_router(assistant.router, prefix=settings.API_PREFIX)
