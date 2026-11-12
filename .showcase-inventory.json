@@ -2577,8 +2577,8 @@
     {
       "executable": false,
       "path": "backend/requirements.txt",
-      "sha256": "2ef7cfc996051def45c6c1548a4d77b1a4a968f00b50f3f256d5f3b63cad1485",
-      "size": 836
+      "sha256": "2c49f1c8bbab7cefb50ac1818dba01ff62c710cba1d78c3c746ec71376727356",
+      "size": 1153
     },
     {
       "executable": false,
@@ -4699,6 +4699,6 @@
       "size": 920
     }
   ],
-  "revision": "98c947f898f5bc552017a352817a83d0b8b1a265",
+  "revision": "61c5ef5d6863a5309d9f819b700b27d11f3f29c6",
   "version": 1
 }
