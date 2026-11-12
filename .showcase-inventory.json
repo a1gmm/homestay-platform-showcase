@@ -1923,8 +1923,8 @@
     {
       "executable": false,
       "path": "backend/app/services/monthly_close/cleaning_work_log.py",
-      "sha256": "18666444b08156e2ec877fa573106b85300869ac9e1056f0f32f57f8915e2e38",
-      "size": 19480
+      "sha256": "917a283aba4d286ef352e5fbcfeb9dbf9928ff4d7569384603739fbe8c584a96",
+      "size": 19487
     },
     {
       "executable": false,
@@ -2108,9 +2108,15 @@
     },
     {
       "executable": false,
+      "path": "backend/app/services/monthly_close/review_linking.py",
+      "sha256": "6ddbcf6aff86b785a103605ce9c4540f5d0724fb8302fbbf8eb8dbaebe6ff426",
+      "size": 7454
+    },
+    {
+      "executable": false,
       "path": "backend/app/services/monthly_close/review_queue.py",
-      "sha256": "06c1b9ded373cfa554bd40eb6b08d394e1810fb788ce9dcd9501bc00b9b91f7d",
-      "size": 9613
+      "sha256": "ce389bd164fa9c5f3beb215252174d72d31cc6fa6dfff0dbf6f59086b1e42fde",
+      "size": 20441
     },
     {
       "executable": false,
@@ -3333,8 +3339,8 @@
     {
       "executable": false,
       "path": "frontend/components/monthly-close/MonthlyCloseWorkspace.tsx",
-      "sha256": "ce4d450623c280c7a872f958112f4e516a08f3622521ad7b4fff49b7f5159bab",
-      "size": 67194
+      "sha256": "d97434771f7991f1d2141ffe0438d88ccf4ce91e3d6e92d7c59161d9c219af9b",
+      "size": 68165
     },
     {
       "executable": false,
@@ -3453,8 +3459,8 @@
     {
       "executable": false,
       "path": "frontend/components/monthly-close/ThreeStepReview.tsx",
-      "sha256": "d6f76a9db54df675eca7ed1ce0e8a8b669313ed3c756e29e13d552320bc28c6a",
-      "size": 9234
+      "sha256": "5f4ac379e80a8e5669b7ec8d2cd2a74193a4740ee9edcc2b88135c1e0eab63ed",
+      "size": 13460
     },
     {
       "executable": false,
@@ -4311,8 +4317,8 @@
     {
       "executable": false,
       "path": "frontend/lib/monthly-close-review.ts",
-      "sha256": "1a1dc71e971c905bd4530bc50c13991677c59e519b8172dfc85e2431c0de3658",
-      "size": 698
+      "sha256": "3041b7a5f4006653640de6684bf8eea7e5f4494952152834bf17cbfddd26f647",
+      "size": 1521
     },
     {
       "executable": false,
@@ -4699,6 +4705,6 @@
       "size": 920
     }
   ],
-  "revision": "61c5ef5d6863a5309d9f819b700b27d11f3f29c6",
+  "revision": "27b56c83b5274a7dcaed8a93b8cc347c45163755",
   "version": 1
 }

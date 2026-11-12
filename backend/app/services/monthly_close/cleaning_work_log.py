@@ -33,7 +33,7 @@ from app.services.monthly_close.service_statement import (
 
 LOCAL_TIME = CN_TZ
 MAX_RECORDS = 5000
-NO_SERVICE_MARKERS = {"", "无", "0", "-", "—", "休班", "上午休班", "下午休班", "休息"}
+NO_SERVICE_MARKERS = {"", "无", "0", "-", "—", "休", "休班", "上午休班", "下午休班", "休息"}
 
 
 class WorkLogEntry(BaseModel):

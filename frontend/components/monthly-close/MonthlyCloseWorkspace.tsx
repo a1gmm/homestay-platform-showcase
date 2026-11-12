@@ -561,6 +561,22 @@ export function MonthlyCloseWorkspace({
           if (generation !== uploadRequest.current) return;
           setConversationOpen(true);
           onRefreshReviewQueue?.();
+        }}
+        onAction={(group) => {
+          if (group.target === "refresh") { onRefreshReviewQueue?.(); return; }
+          setConversationOpen(true);
+          if (group.target === "command" && group.command) { void followUpInvestigation(group.command).then(() => onRefreshReviewQueue?.()); return; }
+          if (group.target === "document" && group.document_id && onReviewDocument) { onReviewDocument(group.document_id); return; }
+          if (group.focus) onOpenWorkflow?.(group.focus);
+        }}
+        onBatch={async (group) => {
+          if (!group.batch) return;
+          const generation = uploadRequest.current;
+          // Same executor command a person could type; it only produces a plan to review and confirm.
+          await followUpInvestigation(group.batch.command, undefined, group.batch.attachment_ids);
+          if (generation !== uploadRequest.current) return;
+          setConversationOpen(true);
+          onRefreshReviewQueue?.();
         }} />
       <button type="button" className={styles.conversationToggle} aria-expanded={conversationOpen || !!inlineReview} disabled={!!inlineReview}
         onClick={() => setConversationOpen(open => !open)}>{inlineReview ? "资料或账单已在下方打开，可点击“返回对账工作台”关闭" : conversationOpen ? "收起对话与处理结果" : "补充说明 / 查看对话与处理结果"}</button>

@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import type { MonthlyCloseProjection } from "@/lib/monthly-close";
-import type { ReviewQuestion, ReviewQueue } from "@/lib/monthly-close-review";
+import type { ReviewGroup, ReviewQuestion, ReviewQueue } from "@/lib/monthly-close-review";
 import { extractErrorMessage } from "@/lib/api-errors";
 import styles from "./ThreeStepReview.module.css";
 
@@ -12,9 +12,13 @@ interface Props {
   onRefresh: () => void; onUpload: () => void; onFiles: () => void;
   onBills: () => void; onCheck: (question: ReviewQuestion) => void;
   onAnswer: (question: ReviewQuestion, answer: string) => Promise<void>;
+  /** Grouped queues: run a step (open the file, refresh, generate a plan). */
+  onAction?: (group: ReviewGroup) => void;
+  /** Grouped queues: send the group's existing executor command; it only previews a plan. */
+  onBatch?: (group: ReviewGroup) => Promise<void>;
 }
 
-function QuestionCard({ question, busy, readOnly, checking, onAnswer, onCheck }: Pick<Props, "busy" | "readOnly" | "onAnswer" | "onCheck"> & { question: ReviewQuestion; checking: boolean }) {
+function QuestionCard({ question, busy, readOnly, checking, onAnswer, onCheck, flags = [] }: Pick<Props, "busy" | "readOnly" | "onAnswer" | "onCheck"> & { question: ReviewQuestion; checking: boolean; flags?: string[] }) {
   const [answer, setAnswer] = useState("");
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -32,6 +36,7 @@ function QuestionCard({ question, busy, readOnly, checking, onAnswer, onCheck }:
     <h3>{question.title}</h3>
     <p className={styles.subject}>{question.subject}{question.amount != null && <span> · ¥{question.amount}</span>}</p>
     <p>{question.message}</p>
+    {flags.map(flag => <p key={flag} className={styles.error}><span aria-hidden="true">⚠ </span><span>{flag}</span></p>)}
     {question.source_name && <p className={styles.source}>依据：{question.source_name}{question.source_row_label ? ` · ${question.source_row_label}` : ""}</p>}
     {!needsAction && <>{question.suggestions.length > 0 && <div className={styles.choices} aria-label="可选实际情况">{question.suggestions.map(text =>
       <button type="button" key={text} disabled={busy || sending || readOnly} onClick={() => { setAnswer(text); setSubmitted(false); }}>{text}</button>)}</div>}
@@ -51,6 +56,48 @@ function QuestionCard({ question, busy, readOnly, checking, onAnswer, onCheck }:
   </article>;
 }
 
+function ActionStep({ group, busy, readOnly, onAction }: { group: ReviewGroup; busy: boolean; readOnly: boolean; onAction?: Props["onAction"] }) {
+  const writes = group.target === "command";
+  return <article className={styles.card} aria-label={group.title}>
+    <h3>{group.title}</h3>
+    {group.subject && <p className={styles.subject}>{group.subject}</p>}
+    <p>{group.message}</p>
+    <div className={styles.actions}><button type="button" className={styles.primary} disabled={busy || (writes && readOnly) || !onAction}
+      onClick={() => onAction?.(group)}>{group.title}</button></div>
+  </article>;
+}
+
+function QuestionGroup({ group, cards, ...props }: Props & { group: ReviewGroup; cards: Map<string, ReviewQuestion>; checking: boolean }) {
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const members = group.member_ids.map(id => cards.get(id)).filter((q): q is ReviewQuestion => !!q);
+  const flags = new Map((group.flags ?? []).map(f => [f.question_id, f.messages]));
+  const via = group.answer_via ? cards.get(group.answer_via) : undefined;
+  const memberCards = (via ? [via] : members).map(q =>
+    <QuestionCard key={q.question_id + q.evidence_hash} question={q} flags={flags.get(q.question_id)} {...props} />);
+  if (members.length === 1 && !group.batch && !via) return <>{memberCards}</>;
+  async function runBatch() {
+    if (!props.onBatch || sending) return;
+    setSending(true); setError(null);
+    try { await props.onBatch(group); }
+    catch (e) { setError(extractErrorMessage(e, "没有生成方案，请刷新核查后重试；账目没有改动。")); }
+    finally { setSending(false); }
+  }
+  return <section className={styles.card} aria-label={group.title}>
+    <h3>{group.title}</h3>
+    <p>{group.message}</p>
+    {group.batch && <>
+      <div className={styles.actions}><button type="button" className={styles.primary}
+        disabled={props.busy || props.readOnly || props.checking || sending || !props.onBatch} onClick={() => void runBatch()}>{sending ? "正在生成方案…" : group.batch.label}</button></div>
+      <p className={styles.source}>点了以后会先生成方案给你看，确认后才会改账。不一样的请在下面单独填写。</p>
+    </>}
+    {error && <p role="alert" className={styles.error}>{error}</p>}
+    {group.batch && members.length > 3
+      ? <details><summary>逐笔查看 / 单独回答（{members.length} 笔）</summary>{memberCards}</details>
+      : memberCards}
+  </section>;
+}
+
 export function ThreeStepReview(props: Props) {
   const { projection, fileCount, busy, readOnly, onRefresh, onUpload, onFiles, onBills } = props;
   const queue = props.queue?.cycle_id === projection.cycle_id && props.queue.billing_month === projection.billing_month ? props.queue : undefined;
@@ -65,18 +112,19 @@ export function ThreeStepReview(props: Props) {
     <nav className={styles.steps} aria-label="对账步骤">
       {["交资料", "回答待核问题", "查看业主账单"].map((label, index) => <button type="button" key={label}
         aria-current={selected === index + 1 ? "step" : undefined} onClick={() => setSelection(index + 1)}>
-        <span className={styles.number}>{index + 1}</span><span>{label}<small>{index === 0 ? `已保存 ${fileCount} 份` : index === 1 ? ready ? `${queue!.pending_count} 项待核实` : "正在取得核查结果" : `已生成 ${review.settlement_count} 份`}</small></span>
+        <span className={styles.number}>{index + 1}</span><span>{label}<small>{index === 0 ? `已保存 ${fileCount} 份` : index === 1 ? ready ? countLabel(queue!) : "正在取得核查结果" : `已生成 ${review.settlement_count} 份`}</small></span>
       </button>)}
     </nav>
     <div className={styles.panel}>
       {selected === 1 && <><h3>像发微信一样，把本月资料交过来</h3><p>平台账单、保洁表、水电表可一起上传。临时支出直接补充一句，已有资料不必重复交。</p>
         <div className={styles.actions}><button type="button" className={styles.primary} onClick={onUpload} disabled={busy || readOnly}>添加本月资料</button><button type="button" onClick={onFiles}>查看已交资料（{fileCount} 份）</button>{fileCount > 0 && <button type="button" onClick={() => setSelection(2)}>继续核对问题 →</button>}</div>
         <p className={styles.source}>原件保存后，点击“开始核对这些资料”。识别失败的文件会单独提示，成功的文件会保留。</p></>}
-      {selected === 2 && <><h3>统一待核清单{ready ? ` · ${queue!.pending_count} 项` : ""}</h3><p>按房间、日期和金额逐项补充。暂时不清楚的留在这里，不需要重新上传整批资料。</p>
+      {selected === 2 && <><h3>统一待核清单{ready ? queue!.groups ? ` · ${countLabel(queue!)}` : ` · ${queue!.pending_count} 项` : ""}</h3><p>按房间、日期和金额逐项补充。暂时不清楚的留在这里，不需要重新上传整批资料。</p>
         {props.error && <p role="alert" className={styles.error}>待核清单暂未更新，不能当作已经对平。已有输入保留，请点击“刷新核查”重试后再提交。</p>}
         {!queue ? !props.error && <p role="status">正在核查当前订单、原件、收款和费用…</p> : <>
           {props.loading && <p role="status">正在更新，以下是上次核查结果…</p>}
-          {queue.questions.map(question => <QuestionCard key={question.question_id + question.evidence_hash} question={question} {...props} checking={props.loading || props.error} />)}
+          {queue.groups ? <GroupedQueue queue={queue} {...props} checking={props.loading || props.error} />
+            : queue.questions.map(question => <QuestionCard key={question.question_id + question.evidence_hash} question={question} {...props} checking={props.loading || props.error} />)}
           {!queue.pending_count && ready && <div className={styles.clear}><h3>{fileCount ? "当前未发现影响业主账单的待核问题" : "先交本月资料，再开始核对"}</h3><p>{fileCount ? "已回答的事项按当前业务记录重新检查。仍可补充资料或说明，依据变化后会重新提示。" : "目前没有原始资料，空清单不代表已经对账完成。"}</p><button type="button" className={styles.primary} onClick={() => setSelection(fileCount ? 3 : 1)} disabled={props.loading}>{fileCount ? "继续查看业主账单" : "去交资料"}</button></div>}
         </>}
       </>}
@@ -90,4 +138,22 @@ export function ThreeStepReview(props: Props) {
       </>}
     </div>
   </section>;
+}
+
+function countLabel(queue: ReviewQueue) {
+  if (!queue.groups) return `${queue.pending_count} 项待核实`;
+  const parts = [queue.question_count ? `${queue.question_count} 组待回答` : null, queue.action_count ? `${queue.action_count} 步待操作` : null].filter(Boolean);
+  return parts.length ? parts.join(" · ") : "0 项待核实";
+}
+
+function GroupedQueue({ queue, ...props }: Props & { queue: ReviewQueue; checking: boolean }) {
+  const cards = new Map(queue.questions.map(q => [q.question_id, q]));
+  const actions = queue.groups!.filter(g => g.kind === "action");
+  const questions = queue.groups!.filter(g => g.kind === "question");
+  return <>
+    {actions.length > 0 && <section aria-label="先做这几步"><h3>先做这几步</h3>
+      {actions.map(g => <ActionStep key={g.group_id} group={g} busy={props.busy || props.checking} readOnly={props.readOnly} onAction={props.onAction} />)}</section>}
+    {questions.length > 0 && <section aria-label="需要你回答"><h3>需要你回答</h3>
+      {questions.map(g => <QuestionGroup key={g.group_id} group={g} cards={cards} {...props} />)}</section>}
+  </>;
 }
