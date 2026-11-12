@@ -2079,8 +2079,8 @@
     {
       "executable": false,
       "path": "backend/app/services/monthly_close/processing.py",
-      "sha256": "02b3eabc1ecfb5e845761aad64ae5282588945eb873d5a1fdab3619f4965a708",
-      "size": 55343
+      "sha256": "751a202f197b4f34ad4f983abca77470b407323f1762af612bfb5e98853668a4",
+      "size": 55692
     },
     {
       "executable": false,
@@ -4705,6 +4705,6 @@
       "size": 920
     }
   ],
-  "revision": "27b56c83b5274a7dcaed8a93b8cc347c45163755",
+  "revision": "99a8ed2b961f1c458b9c83632a5d4289952bcd94",
   "version": 1
 }

@@ -44,6 +44,10 @@ DEFAULT_ANALYZER_VERSION = "monthly-close-analysis-v1"
 ANALYSIS_RESULT_SCHEMA_VERSION = "monthly-close-analysis-result-v1"
 MAX_SAFE_PROCESSING_ATTEMPTS = 3
 SAFE_TRANSIENT_PROCESSING_FAILURE = "SAFE_TRANSIENT_PROCESSING_FAILURE"
+# monthly_close_outbox is shared by several topics. Only this one is a broker
+# message (payload {"job_id"}) that dispatch_processing_outbox publishes;
+# issue_history / domain_changed rows are durable records with other payloads.
+PROCESS_DOCUMENT_TOPIC = "monthly_close.process_document"
 _PROCESSOR_SYSTEM_ACTOR = MonthlyCloseSystemActor(
     actor_id="monthly_close_processor",
     verified=True,
@@ -192,7 +196,7 @@ async def enqueue_processing_job(
     outbox = MonthlyCloseOutbox(
         outbox_id="MCO-" + uuid4().hex[:20].upper(),
         cycle_id=item.cycle_id,
-        topic="monthly_close.process_document",
+        topic=PROCESS_DOCUMENT_TOPIC,
         payload={"job_id": job.job_id},
         dedupe_key=f"processing-job:{job.job_id}",
     )
@@ -362,7 +366,7 @@ async def enqueue_analysis_job(
             MonthlyCloseOutbox(
                 outbox_id="MCO-" + uuid4().hex[:20].upper(),
                 cycle_id=item.cycle_id,
-                topic="monthly_close.process_document",
+                topic=PROCESS_DOCUMENT_TOPIC,
                 payload={"job_id": job.job_id},
                 dedupe_key=f"processing-job:{job.job_id}",
             ),
@@ -613,6 +617,7 @@ async def dispatch_processing_outbox(
                     await claim_db.scalars(
                         select(MonthlyCloseOutbox)
                         .where(
+                            MonthlyCloseOutbox.topic == PROCESS_DOCUMENT_TOPIC,
                             or_(
                                 and_(
                                     MonthlyCloseOutbox.status == "pending",
