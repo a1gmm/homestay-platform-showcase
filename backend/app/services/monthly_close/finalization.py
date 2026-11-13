@@ -27,6 +27,8 @@ from app.models.monthly_close_control import (
     MonthlyCloseExecutionAttempt,
     MonthlyCloseIssueInstance,
     MonthlyCloseOutbox,
+    OUTBOX_DOMAIN_CHANGED_TOPIC,
+    OUTBOX_ISSUE_HISTORY_TOPIC,
     MonthlyCloseProposal,
     MonthlyCloseRemediation,
     MonthlyCloseVerification,
@@ -318,7 +320,7 @@ async def list_issue_history(
         await db.scalars(
             select(MonthlyCloseOutbox)
             .where(
-                MonthlyCloseOutbox.topic == "monthly_close.issue_history",
+                MonthlyCloseOutbox.topic == OUTBOX_ISSUE_HISTORY_TOPIC,
             )
             .order_by(MonthlyCloseOutbox.created_at, MonthlyCloseOutbox.outbox_id)
         )
@@ -428,7 +430,7 @@ async def invalidate_monthly_close_subject(
             MonthlyCloseOutbox(
                 outbox_id=f"MCO-{uuid4().hex[:20].upper()}",
                 cycle_id=cycle_id,
-                topic="monthly_close.issue_history",
+                topic=OUTBOX_ISSUE_HISTORY_TOPIC,
                 payload={
                     "issue_id": issue.issue_id,
                     "kind": "domain_change_reopen",
@@ -526,7 +528,7 @@ async def invalidate_monthly_close_subject(
         MonthlyCloseOutbox(
             outbox_id=f"MCO-{uuid4().hex[:20].upper()}",
             cycle_id=cycle_id,
-            topic="monthly_close.domain_changed",
+            topic=OUTBOX_DOMAIN_CHANGED_TOPIC,
             payload={
                 "actor_id": actor_id,
                 "cause": cause,

@@ -85,6 +85,14 @@ ISSUE_STATUSES = (
 )
 REMEDIATION_STATUSES = ("open", "investigating", "compensating", "resolved", "rework")
 OUTBOX_STATUSES = ("pending", "leased", "delivered", "failed", "dead_letter")
+# monthly_close_outbox also stores durable records that no dispatcher consumes.
+# They stay ``pending`` forever by design, so backlog / drain checks must skip
+# them (prod 2026-11: they pinned outbox to degraded and blocked cutover).
+OUTBOX_ISSUE_HISTORY_TOPIC = "monthly_close.issue_history"
+OUTBOX_DOMAIN_CHANGED_TOPIC = "monthly_close.domain_changed"
+OUTBOX_RECORD_TOPICS = frozenset(
+    {OUTBOX_ISSUE_HISTORY_TOPIC, OUTBOX_DOMAIN_CHANGED_TOPIC}
+)
 ANALYSIS_STATUSES = ("queued", "processing", "needs_review", "completed", "failed_safe")
 
 

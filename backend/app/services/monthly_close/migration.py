@@ -33,6 +33,7 @@ from app.models.monthly_close_control import (
     MonthlyCloseEvent,
     MonthlyCloseExecutionAttempt,
     MonthlyCloseOutbox,
+    OUTBOX_RECORD_TOPICS,
     MonthlyCloseRemediation,
     MonthlyCloseVerification,
 )
@@ -322,6 +323,7 @@ async def _assert_switch_boundary_drained(
             select(func.count(MonthlyCloseOutbox.outbox_id)).where(
                 MonthlyCloseOutbox.cycle_id == cycle_id,
                 MonthlyCloseOutbox.status.in_(UNDRAINED_OUTBOX_STATES),
+                MonthlyCloseOutbox.topic.not_in(OUTBOX_RECORD_TOPICS),
             )
         )
         or 0

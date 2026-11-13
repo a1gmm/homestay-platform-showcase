@@ -27,6 +27,7 @@ from app.models.monthly_close_control import (
     MonthlyCloseEvent,
     MonthlyCloseExecutionAttempt,
     MonthlyCloseOutbox,
+    OUTBOX_RECORD_TOPICS,
     MonthlyCloseProposal,
     MonthlyCloseRemediation,
     MonthlyCloseRun,
@@ -382,15 +383,18 @@ async def collect_monthly_close_metrics(
         if satisfied_at is not None and _seconds_since(satisfied_at, now) >= 3600:
             stale_approval_count += 1
     unknown_count = sum(item.status == "unknown" for item in attempts)
+    queue_rows = [
+        item for item in outbox_rows if item.topic not in OUTBOX_RECORD_TOPICS
+    ]
     outbox_backlog_count = sum(
         item.status in {"pending", "leased", "failed", "dead_letter"}
-        for item in outbox_rows
+        for item in queue_rows
     )
-    dead_letter_count = sum(item.status == "dead_letter" for item in outbox_rows)
+    dead_letter_count = sum(item.status == "dead_letter" for item in queue_rows)
     outbox_lag = max(
         (
             _seconds_since(item.available_at, now)
-            for item in outbox_rows
+            for item in queue_rows
             if item.status in {"pending", "leased", "failed", "dead_letter"}
         ),
         default=0.0,
@@ -498,7 +502,8 @@ async def monthly_close_rollout_health(db: AsyncSession) -> dict[str, Any]:
             select(func.count(MonthlyCloseOutbox.outbox_id)).where(
                 MonthlyCloseOutbox.status.in_(
                     ("pending", "leased", "failed", "dead_letter")
-                )
+                ),
+                MonthlyCloseOutbox.topic.not_in(OUTBOX_RECORD_TOPICS),
             )
         )
         or 0

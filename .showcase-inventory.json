@@ -1011,8 +1011,8 @@
     {
       "executable": false,
       "path": "backend/app/models/monthly_close_control.py",
-      "sha256": "dddb54c42fd88ee367be7d19435f2dac05437a38d8ab7aa6379cc7d190a9c55b",
-      "size": 39230
+      "sha256": "e6459fff8051b8bdaed4c3b875a386b842de1d957f57d460df836b47249f42a2",
+      "size": 39682
     },
     {
       "executable": false,
@@ -1983,8 +1983,8 @@
     {
       "executable": false,
       "path": "backend/app/services/monthly_close/finalization.py",
-      "sha256": "e5d1107da312c7ebcb099a0c166ff69d517ab918573a600067d90120e6f6c1d9",
-      "size": 62877
+      "sha256": "c1d3149f32b5c92ac9024eb31a68970458cd045864644be9874242061a203315",
+      "size": 62933
     },
     {
       "executable": false,
@@ -2031,14 +2031,14 @@
     {
       "executable": false,
       "path": "backend/app/services/monthly_close/migration.py",
-      "sha256": "6e8d036e9e80c9160755e61249727e16efa6297a29151f75f6b2d36065361bcb",
-      "size": 23233
+      "sha256": "1327d7f39a6d0df257c80aad7a9309d995691f361b5134f136bc75a81fbffa5d",
+      "size": 23330
     },
     {
       "executable": false,
       "path": "backend/app/services/monthly_close/monitor.py",
-      "sha256": "a6e2828a7d2a83ff3566e465b6d922a79a46c45e1b8643617eb226feeb2f0e5a",
-      "size": 27255
+      "sha256": "b7e47196a4675ee71648a1c930602352c56e1743494904d6b33d2e92442ffbfa",
+      "size": 27454
     },
     {
       "executable": false,
@@ -2157,8 +2157,8 @@
     {
       "executable": false,
       "path": "backend/app/services/monthly_close/source_contract.py",
-      "sha256": "d374ab8188ca7702f08848885d330d6205bf8aa791633ea318b011c196f68c73",
-      "size": 12599
+      "sha256": "220fb7dcfdce7b9cd8d00c14bbded7e4cc25cf5b0945cf0670f5f51d8ca9334e",
+      "size": 12628
     },
     {
       "executable": false,
@@ -4705,6 +4705,6 @@
       "size": 920
     }
   ],
-  "revision": "99a8ed2b961f1c458b9c83632a5d4289952bcd94",
+  "revision": "a688c107359642356427b0b4684382d91a1f6b60",
   "version": 1
 }

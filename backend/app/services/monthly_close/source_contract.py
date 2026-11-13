@@ -19,6 +19,7 @@ from app.models.monthly_close import MonthlyCloseCycle
 from app.models.monthly_close_control import (
     MonthlyCloseIssueInstance,
     MonthlyCloseOutbox,
+    OUTBOX_ISSUE_HISTORY_TOPIC,
 )
 from app.services.monthly_close.control import (
     CanonicalCommand,
@@ -171,7 +172,7 @@ async def bind_source_command_issues(
                         MonthlyCloseOutbox(
                             outbox_id=f"MCO-{uuid4().hex[:20].upper()}",
                             cycle_id=cycle.cycle_id,
-                            topic="monthly_close.issue_history",
+                            topic=OUTBOX_ISSUE_HISTORY_TOPIC,
                             payload={
                                 "issue_id": issue.issue_id,
                                 "kind": "evidence_changed_reopen",
